@@ -1,9 +1,29 @@
-import streamlit as st
+from google.oauth2 import service_account
+from googleapiclient.discovery import buildimport streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import datetime
 
 st.set_page_config(page_title="Mission Control", layout="wide")
+# --- CALENDAR API SETUP ---
+# Map your dropdown categories to the actual Google Calendar IDs
+CALENDAR_MAP = {
+    "Kevin Nguyen": "24ktkn@gmail.com",
+    "Family": "family05668227215423587251@group.calendar.google.com",
+    "School": "0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com",
+    "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
+}
+
+# Use the exact same secrets from the Google Sheets connection to authenticate the Calendar
+def get_calendar_service():
+    creds_info = st.secrets["connections"]["gsheets"]
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info,
+        scopes=['https://www.googleapis.com/auth/calendar']
+    )
+    return build('calendar', 'v3', credentials=creds)
+
+cal_service = get_calendar_service()
 st.title("🚀 Mission Control")
 
 # Connect to Google Sheets
@@ -33,11 +53,42 @@ with tab1:
         
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         if st.form_submit_button("Push to Master Tracker") and item_name:
-            new_row = {"Status": False, "Item Name": item_name, "Type": item_type, "Calendar": calendar_cat, "Date": str(target_date), "Time": str(start_time), "Duration (Mins)": int(duration), "Scheduled?": False, "Notes": notes}
-            updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            conn.update(data=updated_df, 
-            spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-            st.success(f"✅ '{item_name}' added to {calendar_cat} backlog!")
+            # 1. Prepare the Google Calendar Event Payload
+            target_cal_id = CALENDAR_MAP.get(calendar_cat)
+            
+            # Combine Date and Time for the API
+            start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00" # Assuming EST timezone
+            end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
+            end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
+
+            event_body = {
+                'summary': item_name,
+                'description': notes,
+                'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
+                'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
+            }
+
+            try:
+                # 2. Push to Google Calendar
+                created_event = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
+                new_event_id = created_event.get('id')
+                
+                # 3. Create the row for the Google Sheet (Including the new Event ID)
+                new_row = {
+                    "Status": False, "Item Name": item_name, "Type": item_type, 
+                    "Calendar": calendar_cat, "Date": str(target_date), 
+                    "Time": str(start_time), "Duration (Mins)": int(duration), 
+                    "Scheduled?": True, "Notes": notes, "Event ID": new_event_id
+                }
+                
+                updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                
+                st.success(f"✅ '{item_name}' added to Sheet AND Calendar!")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Failed to sync with Calendar: {e}")
 
 with tab2:
     st.header("Master Task Tracker")
