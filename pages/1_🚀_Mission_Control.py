@@ -73,7 +73,7 @@ with tab2:
                         required=True,
                     ),
                     "Status": st.column_config.CheckboxColumn(
-                        "Done?",
+                        "Status",
                         help="Check to mark as complete",
                         default=False,
                     )
