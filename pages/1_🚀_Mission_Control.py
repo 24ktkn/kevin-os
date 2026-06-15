@@ -56,15 +56,15 @@ with tab2:
                 display_df = df.copy()
             else:
                 display_df = df[df["Calendar"] == category].copy()
-
-            # Show the editor for this specific category
+            
             st.write(f"### {category} Tasks")
             
-            # The data_editor with visual organization
+            # ADD THE KEY PARAMETER HERE
             edited_df = st.data_editor(
                 display_df, 
                 use_container_width=True, 
                 hide_index=True,
+                key=f"editor_{category}", # <--- THIS IS THE FIX
                 column_config={
                     "Calendar": st.column_config.SelectboxColumn(
                         "Calendar Category",
@@ -80,7 +80,15 @@ with tab2:
                 }
             )
             
-            # ... (the rest of your save button logic)
+            # Save button for this category (also give it a unique key)
+            if st.button(f"💾 Save {category} Changes", key=f"btn_{category}"):
+                df.update(edited_df)
+                conn.update(
+                    data=df, 
+                    spreadsheet=st.secrets.connections.gsheets.mission_control_sheet
+                )
+                st.success(f"Updated {category} list!")
+                st.rerun()
 
 with tab3:
     st.header("Consolidated Calendar View")
