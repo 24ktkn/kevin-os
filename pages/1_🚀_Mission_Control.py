@@ -40,19 +40,46 @@ with tab1:
 
 with tab2:
     st.header("Master Task Tracker")
-    col1, col2 = st.columns(2)
-    with col1: view_filter = st.selectbox("Filter by Calendar:", ["All", "Kevin Nguyen", "Family", "School", "Volunteering"])
-    with col2: type_filter = st.selectbox("Filter by Type:", ["All", "Task", "Event"])
+    
+    # 1. Define your categories
+    categories = ["All", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    
+    # 2. Create sub-tabs for each category
+    task_tabs = st.tabs(categories)
+    
+    # 3. Loop through categories to create a filtered view for each
+    for i, category in enumerate(categories):
+        with task_tabs[i]:
+            # Filter the dataframe based on the category
+            if category == "All":
+                display_df = df.copy()
+            else:
+                display_df = df[df["Calendar"] == category].copy()
 
-    filtered_df = df.copy()
-    if view_filter != "All": filtered_df = filtered_df[filtered_df["Calendar"] == view_filter]
-    if type_filter != "All": filtered_df = filtered_df[filtered_df["Type"] == type_filter]
-
-    edited_df = st.data_editor(filtered_df, use_container_width=True, hide_index=True)
-    if st.button("💾 Save Edits to Google Sheet"):
-        df.update(edited_df)
-        conn.update(data=df)
-        st.success("Master database updated successfully!")
+            # Show the editor for this specific category
+            st.write(f"### {category} Tasks")
+            
+            # The data_editor with visual organization
+            edited_df = st.data_editor(
+                display_df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Calendar": st.column_config.SelectboxColumn(
+                        "Calendar Category",
+                        help="The task list this belongs to",
+                        options=["Kevin Nguyen", "Family", "School", "Volunteering"],
+                        required=True,
+                    ),
+                    "Status": st.column_config.CheckboxColumn(
+                        "Done?",
+                        help="Check to mark as complete",
+                        default=False,
+                    )
+                }
+            )
+            
+            # ... (the rest of your save button logic)
 
 with tab3:
     st.header("Consolidated Calendar View")
