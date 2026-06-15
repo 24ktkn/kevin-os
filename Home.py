@@ -6,7 +6,7 @@ st.title("🔌 Final Connection Tester")
 sheet_url = st.secrets.connections.gsheets.mission_control_sheet
 bot_email = st.secrets.connections.gsheets.client_email
 
-st.write("### 🔍 What the bot is seeing:")
+st.write("### 🔍 What the bot is trying to do:")
 st.write(f"**Bot Email:** `{bot_email}`")
 st.write(f"**Target URL:** `{sheet_url}`")
 
