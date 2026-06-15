@@ -56,4 +56,4 @@ with tab2:
 
 with tab3:
     st.header("Google Calendar Overview")
-    st.info("https://calendar.google.com/calendar/ical/24ktkn%40gmail.com/private-151fd2f903e599ca1efa9ec437faf4e2/basic.ics")
+    st.info("Paste your Google Calendar iframe embed link in the code to see it here.")
