@@ -1,17 +1,13 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-st.title("🔌 Final Connection Tester")
+st.title("🔌 Deep Error Diagnostic")
 
-sheet_url = st.secrets.connections.gsheets.mission_control_sheet
-bot_email = st.secrets.connections.gsheets.client_email
-
-st.write("### 🔍 What the bot is trying to do:")
-st.write(f"**Bot Email:** `{bot_email}`")
-st.write(f"**Target URL:** `{sheet_url}`")
+st.write("Checking connection...")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
+    sheet_url = st.secrets.connections.gsheets.mission_control_sheet
     df = conn.read(spreadsheet=sheet_url, ttl=0)
     
     st.success("🎉 SUCCESS! The bot is inside the Google Sheet.")
@@ -19,4 +15,13 @@ try:
     
 except Exception as e:
     st.error("🚨 FAILED to connect.")
-    st.write("Error Details:", e)
+    st.write("### 🛑 The Exact Reason Google Blocked It:")
+    
+    # This rips the hidden JSON error out of Google's response
+    if hasattr(e, 'response'):
+        try:
+            st.json(e.response.json())
+        except:
+            st.write(e.response.text)
+    else:
+        st.write(str(e))
