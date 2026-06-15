@@ -1,17 +1,22 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-st.title("🔌 Connection Tester")
+st.title("🔌 Final Connection Tester")
+
+sheet_url = st.secrets.connections.gsheets.mission_control_sheet
+bot_email = st.secrets.connections.gsheets.client_email
+
+st.write("### 🔍 What the bot is seeing:")
+st.write(f"**Bot Email:** `{bot_email}`")
+st.write(f"**Target URL:** `{sheet_url}`")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Pulling directly from the Mission Control URL in secrets
-    df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+    df = conn.read(spreadsheet=sheet_url, ttl=0)
     
-    st.success("SUCCESS! The bot is inside the Google Sheet.")
-    st.write("Here is the data it found:", df)
+    st.success("🎉 SUCCESS! The bot is inside the Google Sheet.")
+    st.dataframe(df)
     
 except Exception as e:
-    st.error("FAILED to connect.")
+    st.error("🚨 FAILED to connect.")
     st.write("Error Details:", e)
-    st.write("Email the bot is using:", st.secrets.connections.gsheets.client_email)
