@@ -35,7 +35,8 @@ with tab1:
         if st.form_submit_button("Push to Master Tracker") and item_name:
             new_row = {"Status": False, "Item Name": item_name, "Type": item_type, "Calendar": calendar_cat, "Date": str(target_date), "Time": str(start_time), "Duration (Mins)": int(duration), "Scheduled?": False, "Notes": notes}
             updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            conn.update(data=updated_df)
+            conn.update(data=updated_df, 
+            spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
             st.success(f"✅ '{item_name}' added to {calendar_cat} backlog!")
 
 with tab2:
