@@ -157,7 +157,7 @@ with tab1:
             item_type = st.selectbox("Type", ["Task", "Event"])
             calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
             
-            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before", "2 days before"]
+            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before"]
             selected_reminders = st.multiselect(
                 "Notifications (Pop-up)", 
                 options=notification_options, 
@@ -169,6 +169,12 @@ with tab1:
             all_day = st.checkbox("All-day / No specific time")
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
+            
+            # NEW: Recurrence Dropdown
+            repeat_option = st.selectbox(
+                "Repeat", 
+                ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"]
+            )
         
         location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building or 123 Main St")
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
@@ -178,7 +184,8 @@ with tab1:
             
             reminder_map = {
                 "At time of event": 0, "10 minutes before": 10,
-                "30 minutes before": 30, "1 hour before": 60, "2 hours before": 120, "1 day before": 1440, "2 days before": 2880
+                "30 minutes before": 30, "1 hour before": 60, 
+                "2 hours before": 120, "1 day before": 1440
             }
 
             if selected_reminders:
@@ -214,10 +221,23 @@ with tab1:
                 time_str = str(start_time)
                 duration_val = int(duration)
 
+            # --- NEW RECURRENCE LOGIC ---
+            rrule_map = {
+                "Daily": "RRULE:FREQ=DAILY",
+                "Weekly": "RRULE:FREQ=WEEKLY",
+                "Monthly": "RRULE:FREQ=MONTHLY",
+                "Every Weekday (Mon-Fri)": "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+            }
+            
+            if repeat_option != "None":
+                event_body['recurrence'] = [rrule_map[repeat_option]]
+            # ----------------------------
+
             try:
                 created_event = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
                 new_event_id = created_event.get('id')
                 
+                # We log the very first instance immediately to the sheet
                 new_row = {
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
