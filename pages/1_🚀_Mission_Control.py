@@ -426,9 +426,38 @@ with tab2:
                         date_changed = str(original_row["Date"]) != str(row["Date"])
                         time_changed = str(original_row["Time"]) != str(row["Time"])
 
+                        # --- NEW: AUTO-UPDATE THE SCHEDULED NOTE TEXT ---
+                        if time_changed and item_type == "Task":
+                            try:
+                                t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
+                                new_time_dt = pd.to_datetime(t_str)
+                                new_time_display = new_time_dt.strftime('%I:%M %p') # Format back to AM/PM
+                                
+                                current_notes = str(row["Notes"]) if str(row["Notes"]) not in ["None", "nan", ""] else ""
+                                lines = current_notes.split('\n')
+                                
+                                found = False
+                                for i, line in enumerate(lines):
+                                    if "⏰ Scheduled:" in line:
+                                        lines[i] = f"⏰ Scheduled: {new_time_display}"
+                                        found = True
+                                        break
+                                
+                                if not found:
+                                    updated_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes}" if current_notes else f"⏰ Scheduled: {new_time_display}"
+                                else:
+                                    updated_notes = "\n".join(lines).strip()
+                                    
+                                row["Notes"] = updated_notes
+                                edited_df.at[idx, "Notes"] = updated_notes
+                                notes_changed = True # Force the API to push the new text
+                            except Exception:
+                                pass
+                        # ------------------------------------------------
+
                         if any([s_changed, name_changed, notes_changed, date_changed, time_changed]):
                             if item_type == "Task":
-                                # 1. Update the Google Task (Date & Text only, per Google API rules)
+                                # 1. Update the Google Task
                                 t_id = TASKLIST_MAP.get(cal_name, "@default")
                                 body = {}
                                 if s_changed: body['status'] = 'completed' if row["Status"] else 'needsAction'
@@ -485,11 +514,9 @@ with tab2:
                                         dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                         end_dt = start_dt + pd.Timedelta(minutes=dur)
 
-                                        # Clean payload: strictly local time + native timezone
                                         body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         
-                                        # Instantly format the user's typed string back to clean 24h format for the Sheet
                                         edited_df.at[idx, "Time"] = start_dt.strftime('%H:%M:%S')
                                     except Exception as e:
                                         st.warning(f"Time format issue for '{row['Item Name']}': {e}")
