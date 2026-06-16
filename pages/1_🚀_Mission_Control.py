@@ -377,3 +377,32 @@ with tab3:
     style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
     components.html(calendar_iframe, height=600)
+
+
+    # ==========================================
+# TEMPORARY CODE: RUN ONCE TO FIND TASK LIST IDs
+# ==========================================
+st.write("### 🔍 Your Google Task List IDs")
+try:
+    # Safely build the service directly inside this block
+    creds_info = st.secrets["tasks_api"]
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    
+    temp_creds = Credentials(
+        token=None,
+        refresh_token=creds_info["refresh_token"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=creds_info["client_id"],
+        client_secret=creds_info["client_secret"]
+    )
+    temp_tasks_service = build('tasks', 'v1', credentials=temp_creds)
+    
+    lists_result = temp_tasks_service.tasklists().list().execute()
+    tasklists = lists_result.get('items', [])
+    
+    for tl in tasklists:
+        st.code(f"Title: {tl['title']} | ID: {tl['id']}")
+except Exception as e:
+    st.error(f"Could not fetch task lists: {e}")
+# ==========================================

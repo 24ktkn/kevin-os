@@ -9,16 +9,3 @@ st.markdown("""
 * **🏋️ Workout Tracker:** Log your 6-day split, track cable machine sets, and monitor progress.
 """)
 
-# ==========================================
-# TEMPORARY CODE: RUN ONCE TO FIND TASK LIST IDs
-# ==========================================
-st.write("### 🔍 Your Google Task List IDs")
-try:
-    lists_result = tasks_service.tasklists().list().execute()
-    tasklists = lists_result.get('items', [])
-    
-    for tl in tasklists:
-        st.code(f"Title: {tl['title']} | ID: {tl['id']}")
-except Exception as e:
-    st.error(f"Could not fetch task lists: {e}")
-# ==========================================
