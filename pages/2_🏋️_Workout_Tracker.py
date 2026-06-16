@@ -175,7 +175,13 @@ with tab1:
                         else:
                             last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
                             last_reps_str = f"{int(last_session['Reps'])} reps"
-                        last_date_str = last_session['Date'].strftime('%b %d, %Y')
+                        
+                        # --- NEW: THE NAT SAFETY NET ---
+                        if pd.isna(last_session['Date']):
+                            last_date_str = "Unknown Date"
+                        else:
+                            last_date_str = last_session['Date'].strftime('%b %d, %Y')
+                        # -------------------------------
                     else:
                         last_weight_str = "No history"
                         last_reps_str = "Clear to start"
