@@ -41,13 +41,20 @@ def sync_calendars_to_sheet(df, service, connection):
     
     sheet_updated = False
     
-    # Ensure 'Event ID' column exists in the dataframe
+    # --- DATA CLEANING AND TYPE PROTECTION ---
     if "Event ID" not in df.columns:
         df["Event ID"] = None
+        
+    if "Duration (Mins)" in df.columns:
+        # Replace empty strings or whitespace with 0, fill NaNs with 0, and force to int
+        df["Duration (Mins)"] = df["Duration (Mins)"].replace(r'^\s*$', 0, regex=True)
+        df["Duration (Mins)"] = pd.to_numeric(df["Duration (Mins)"], errors='coerce').fillna(0).astype(int)
+    else:
+        df["Duration (Mins)"] = 0
+    # ----------------------------------------
 
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
-            # Fetch events from this specific calendar within our time window
             events_result = service.events().list(
                 calendarId=cal_id, 
                 timeMin=time_min, 
@@ -63,19 +70,15 @@ def sync_calendars_to_sheet(df, service, connection):
                 summary = event.get('summary', 'Untitled Event')
                 description = event.get('description', '')
                 
-                # Parse start time and duration
                 start_info = event.get('start', {})
                 end_info = event.get('end', {})
                 
-                # Skip all-day events for now, focus on timed items
                 if 'dateTime' not in start_info:
                     continue
                     
                 start_raw = start_info.get('dateTime')
                 end_raw = end_info.get('dateTime')
                 
-                # Clean up ISO strings into native Python datetimes
-                # Handles '2026-06-15T14:00:00-04:00' format safely
                 start_dt = datetime.datetime.fromisoformat(start_raw[:19])
                 end_dt = datetime.datetime.fromisoformat(end_raw[:19])
                 
@@ -84,26 +87,29 @@ def sync_calendars_to_sheet(df, service, connection):
                 date_str = start_dt.strftime('%Y-%m-%d')
                 time_str = start_dt.strftime('%H:%M:%S')
 
-                # Check if this event already exists in our local sheet data
+                # Filter down to the matching row
                 matching_rows = df[df["Event ID"] == gcal_id]
                 
                 if not matching_rows.empty:
-                    # INDEX MATCH FOUND: Check if anything changed on your phone
                     idx = matching_rows.index[0]
                     
-                    # If details mismatch, update the sheet with the new calendar data
+                    # Safe comparison now that types are guaranteed matching numbers
+                    try:
+                        current_duration = int(df.at[idx, "Duration (Mins)"])
+                    except (ValueError, TypeError):
+                        current_duration = 0
+                    
                     if (df.at[idx, "Item Name"] != summary or 
                         str(df.at[idx, "Date"]) != date_str or 
-                        int(df.at[idx, "Duration (Mins)"]) != duration_mins):
+                        current_duration != duration_mins):
                         
                         df.at[idx, "Item Name"] = summary
                         df.at[idx, "Date"] = date_str
                         df.at[idx, "Time"] = time_str
-                        df.at[idx, "Duration (Mins)"] = duration_mins
+                        df.at[idx, "Duration (Mins)"] = int(duration_mins)
                         df.at[idx, "Notes"] = description
                         sheet_updated = True
                 else:
-                    # NO MATCH FOUND: This is a brand new item created externally!
                     new_row = {
                         "Status": False,
                         "Item Name": summary,
@@ -111,7 +117,7 @@ def sync_calendars_to_sheet(df, service, connection):
                         "Calendar": cal_name,
                         "Date": date_str,
                         "Time": time_str,
-                        "Duration (Mins)": duration_mins,
+                        "Duration (Mins)": int(duration_mins),
                         "Scheduled?": True,
                         "Notes": description,
                         "Event ID": gcal_id
@@ -122,7 +128,6 @@ def sync_calendars_to_sheet(df, service, connection):
         except Exception as e:
             st.error(f"Error reading calendar '{cal_name}': {e}")
             
-    # If any changes were gathered, push the clean compiled state back to Google Sheets
     if sheet_updated:
         connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
         st.toast("✅ Master Sheet perfectly synchronized with Google Calendars!")
