@@ -3,14 +3,14 @@ import pandas as pd
 import datetime
 from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
-from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
 st.title("🚀 Mission Control")
 
-# --- CALENDAR API SETUP ---
+# --- CALENDAR API SETUP (Service Account) ---
 CALENDAR_MAP = {
     "Kevin Nguyen": "24ktkn@gmail.com",
     "Family": "family05668227215423587251@group.calendar.google.com",
@@ -28,7 +28,7 @@ def get_calendar_service():
 
 cal_service = get_calendar_service()
 
-# --- TASKS API SETUP (OAuth 2.0) ---
+# --- TASKS API SETUP (OAuth 2.0 Identity) ---
 def get_tasks_service():
     creds_info = st.secrets["tasks_api"]
     creds = Credentials(
@@ -42,6 +42,7 @@ def get_tasks_service():
 
 tasks_service = get_tasks_service()
 
+# --- SYNCHRONIZATION ENGINE ---
 def sync_calendars_to_sheet(df, service, connection):
     st.toast("🔄 Scanning Google Calendars for updates...")
     now = datetime.datetime.utcnow()
@@ -49,7 +50,7 @@ def sync_calendars_to_sheet(df, service, connection):
     time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
     sheet_updated = False
     
-    # --- IRONCLAD TYPE SHIELD ---
+    # Ironclad Type Shield
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location"]
     for col in text_columns:
         if col not in df.columns:
@@ -65,7 +66,6 @@ def sync_calendars_to_sheet(df, service, connection):
         if col not in df.columns:
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
-    # ----------------------------
 
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
@@ -185,7 +185,6 @@ with tab1:
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
             
-            # NEW: Recurrence Dropdown
             repeat_option = st.selectbox(
                 "Repeat", 
                 ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"]
@@ -236,7 +235,6 @@ with tab1:
                 time_str = str(start_time)
                 duration_val = int(duration)
 
-            # --- NEW RECURRENCE LOGIC ---
             rrule_map = {
                 "Daily": "RRULE:FREQ=DAILY",
                 "Weekly": "RRULE:FREQ=WEEKLY",
@@ -246,23 +244,18 @@ with tab1:
             
             if repeat_option != "None":
                 event_body['recurrence'] = [rrule_map[repeat_option]]
-            # ----------------------------
 
-           try:
+            try:
                 if item_type == "Event":
-                    # Push to Calendar
                     created_item = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
                     new_item_id = created_item.get('id')
                 else:
-                    # Push to Google Tasks using your new identity token
-                    # Google Tasks uses RFC3339 timestamps for due dates
                     due_date = f"{target_date}T00:00:00.000Z"
                     task_body = {
                         'title': item_name,
                         'notes': notes,
                         'due': due_date
                     }
-                    # '@default' targets your primary Google Tasks list
                     created_item = tasks_service.tasks().insert(tasklist='@default', body=task_body).execute()
                     new_item_id = created_item.get('id')
                 
