@@ -76,8 +76,8 @@ def sync_calendars_to_sheet(df, service, connection):
                 
                 # Clean up ISO strings into native Python datetimes
                 # Handles '2026-06-15T14:00:00-04:00' format safely
-                start_dt = datetime.datetime.fromisoformat(start_raw.split('-')[0].split('+')[0])
-                end_dt = datetime.datetime.fromisoformat(end_raw.split('-')[0].split('+')[0])
+                start_dt = datetime.datetime.fromisoformat(start_raw[:19])
+                end_dt = datetime.datetime.fromisoformat(end_raw[:19])
                 
                 duration_mins = int((end_dt - start_dt).total_seconds() / 60)
                 
@@ -201,7 +201,7 @@ with tab2:
         df, was_updated = sync_calendars_to_sheet(df, cal_service, conn)
         if was_updated:
             st.rerun()
-            
+
     categories = ["All", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
