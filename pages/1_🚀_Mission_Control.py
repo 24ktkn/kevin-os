@@ -21,9 +21,9 @@ CALENDAR_MAP = {
 # --- NEW: TASK LISTS MAP (OAuth 2.0) ---
 TASKLIST_MAP = {
     "Kevin Nguyen": "@default", 
-    "Family": "@default",        # Put your custom Task List ID here when ready
-    "School": "@default",        # Put your custom Task List ID here when ready
-    "Volunteering": "@default"   # Put your custom Task List ID here when ready
+    "Family": "Um85a3gwMVZqTXN4X0M3Wg",        # Put your custom Task List ID here when ready
+    "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        # Put your custom Task List ID here when ready
+    "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"   # Put your custom Task List ID here when ready
 }
 
 def get_calendar_service():
@@ -255,16 +255,30 @@ with tab1:
 
             try:
                 if item_type == "Event":
+                    # Push to Calendar
                     created_item = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
                     new_item_id = created_item.get('id')
                 else:
+                    # Push to Google Tasks
+                    # 1. Map to the specific Task List ID
+                    target_tasklist_id = TASKLIST_MAP.get(calendar_cat, "@default")
+                    
+                    # 2. Handle due date formatting (RFC3339 midnight UTC prevents timezone day-shifting)
                     due_date = f"{target_date}T00:00:00.000Z"
+                    
+                    # 3. Handle Time visibility (since Google Tasks hides times, append it to the notes)
+                    task_notes = notes
+                    if not all_day:
+                        time_display = start_time.strftime('%I:%M %p')
+                        task_notes = f"⏰ Scheduled: {time_display}\n\n{notes}" if notes else f"⏰ Scheduled: {time_display}"
+
                     task_body = {
                         'title': item_name,
-                        'notes': notes,
+                        'notes': task_notes,
                         'due': due_date
                     }
-                    created_item = tasks_service.tasks().insert(tasklist='@default', body=task_body).execute()
+                    
+                    created_item = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute()
                     new_item_id = created_item.get('id')
                 
                 new_row = {
@@ -377,32 +391,3 @@ with tab3:
     style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
     components.html(calendar_iframe, height=600)
-
-
-    # ==========================================
-# TEMPORARY CODE: RUN ONCE TO FIND TASK LIST IDs
-# ==========================================
-st.write("### 🔍 Your Google Task List IDs")
-try:
-    # Safely build the service directly inside this block
-    creds_info = st.secrets["tasks_api"]
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    
-    temp_creds = Credentials(
-        token=None,
-        refresh_token=creds_info["refresh_token"],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=creds_info["client_id"],
-        client_secret=creds_info["client_secret"]
-    )
-    temp_tasks_service = build('tasks', 'v1', credentials=temp_creds)
-    
-    lists_result = temp_tasks_service.tasklists().list().execute()
-    tasklists = lists_result.get('items', [])
-    
-    for tl in tasklists:
-        st.code(f"Title: {tl['title']} | ID: {tl['id']}")
-except Exception as e:
-    st.error(f"Could not fetch task lists: {e}")
-# ==========================================
