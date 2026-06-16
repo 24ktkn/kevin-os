@@ -201,23 +201,30 @@ with tab2:
         df, was_updated = sync_calendars_to_sheet(df, cal_service, conn)
         if was_updated:
             st.rerun()
-
-    categories = ["All", "Kevin Nguyen", "Family", "School", "Volunteering"]
+            
+    # 1. Added "All Events" and "All Tasks" to your view options
+    categories = ["All", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
+            # 2. Advanced filtering logic based on selection
             if category == "All":
                 display_df = df.copy()
+            elif category == "All Events":
+                display_df = df[df["Type"] == "Event"].copy()
+            elif category == "All Tasks":
+                display_df = df[df["Type"] == "Task"].copy()
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-            st.write(f"### {category} Tasks")
+            st.write(f"### {category}")
+            
             edited_df = st.data_editor(
                 display_df, 
                 use_container_width=True, 
                 hide_index=True,
-                key=f"editor_{category}",
+                key=f"editor_{category.lower().replace(' ', '_')}", # Safe key naming convention
                 column_config={
                     "Calendar": st.column_config.SelectboxColumn(
                         "Calendar",
@@ -232,7 +239,7 @@ with tab2:
                 }
             )
             
-            if st.button(f"💾 Save {category} Changes", key=f"btn_{category}"):
+            if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
                 df.update(edited_df)
                 conn.update(
                     data=df, 
