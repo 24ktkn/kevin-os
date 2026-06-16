@@ -163,7 +163,12 @@ with tab1:
             guide_data = []
             for exe in exercises:
                 if not df_logs.empty:
-                    exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
+                    # --- NEW: THE GHOST HUNTER ---
+                    # Actively ignores any rows in your sheet where the date is broken/blank
+                    clean_logs = df_logs[df_logs["Date"].notna()]
+                    exe_history = clean_logs[clean_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
+                    # -----------------------------
+                    
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
                         if split == "Cardio (Treadmill)":
@@ -176,12 +181,8 @@ with tab1:
                             last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
                             last_reps_str = f"{int(last_session['Reps'])} reps"
                         
-                        # --- NEW: THE NAT SAFETY NET ---
-                        if pd.isna(last_session['Date']):
-                            last_date_str = "Unknown Date"
-                        else:
-                            last_date_str = last_session['Date'].strftime('%b %d, %Y')
-                        # -------------------------------
+                        # We can safely format the date now because we filtered out the broken ones!
+                        last_date_str = last_session['Date'].strftime('%b %d, %Y')
                     else:
                         last_weight_str = "No history"
                         last_reps_str = "Clear to start"
