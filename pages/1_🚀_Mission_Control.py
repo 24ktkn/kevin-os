@@ -333,10 +333,10 @@ with tab2:
             elif category == "All Tasks": display_df = df[df["Type"] == "Task"].copy()
             else: display_df = df[df["Calendar"] == category].copy()
             
-            # --- NEW: SORT ALL TABS BY DATE DESCENDING ---
-            # This cleanly sorts the data frame before it gets rendered by the editor.
-            display_df = display_df.sort_values(by=["Date", "Time"], ascending=[False, False])
-            # ---------------------------------------------
+            # --- THE FIX: ASCENDING SORT ---
+            # Sorts the dataframe by Date and Time from oldest to newest
+            display_df = display_df.sort_values(by=["Date", "Time"], ascending=[True, True])
+            # -------------------------------
             
             # 1. Safely generate the column first so Pandas doesn't throw a KeyError
             display_df = display_df.assign(**{"🗑️ Delete?": False})
