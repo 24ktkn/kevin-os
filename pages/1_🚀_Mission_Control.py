@@ -4,6 +4,7 @@ import datetime
 from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
@@ -26,6 +27,20 @@ def get_calendar_service():
     return build('calendar', 'v3', credentials=creds)
 
 cal_service = get_calendar_service()
+
+# --- TASKS API SETUP (OAuth 2.0) ---
+def get_tasks_service():
+    creds_info = st.secrets["tasks_api"]
+    creds = Credentials(
+        token=None,
+        refresh_token=creds_info["refresh_token"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=creds_info["client_id"],
+        client_secret=creds_info["client_secret"]
+    )
+    return build('tasks', 'v1', credentials=creds)
+
+tasks_service = get_tasks_service()
 
 def sync_calendars_to_sheet(df, service, connection):
     st.toast("🔄 Scanning Google Calendars for updates...")
@@ -233,27 +248,40 @@ with tab1:
                 event_body['recurrence'] = [rrule_map[repeat_option]]
             # ----------------------------
 
-            try:
-                created_event = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
-                new_event_id = created_event.get('id')
+           try:
+                if item_type == "Event":
+                    # Push to Calendar
+                    created_item = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
+                    new_item_id = created_item.get('id')
+                else:
+                    # Push to Google Tasks using your new identity token
+                    # Google Tasks uses RFC3339 timestamps for due dates
+                    due_date = f"{target_date}T00:00:00.000Z"
+                    task_body = {
+                        'title': item_name,
+                        'notes': notes,
+                        'due': due_date
+                    }
+                    # '@default' targets your primary Google Tasks list
+                    created_item = tasks_service.tasks().insert(tasklist='@default', body=task_body).execute()
+                    new_item_id = created_item.get('id')
                 
-                # We log the very first instance immediately to the sheet
                 new_row = {
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
                     "Time": time_str, "Duration (Mins)": duration_val, 
-                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_event_id,
+                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_item_id,
                     "Location": location_input
                 }
                 
                 updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                 
-                st.success(f"✅ '{item_name}' added to Sheet AND Calendar!")
+                st.success(f"✅ '{item_name}' added to Sheet and {'Google Tasks' if item_type == 'Task' else 'Calendar'}!")
                 st.rerun()
 
             except Exception as e:
-                st.error(f"Failed to sync with Calendar: {e}")
+                st.error(f"Failed to sync with Google: {e}")
 
 with tab2:
     st.header("Master Task Tracker")
