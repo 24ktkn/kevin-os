@@ -236,9 +236,8 @@ with tab2:
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
-            # 3. Advanced filtering logic based on selection
+            # 1. Advanced filtering logic based on selection
             if category == "Upcoming Focus":
-                # Filter: Status is False AND Date is between today and 4 weeks from now
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
             elif category == "All History":
@@ -250,6 +249,9 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
+            # 2. Add the temporary explicit deletion column to the far left
+            display_df.insert(0, "🗑️ Delete?", False)
+            
             st.write(f"### {category}")
             
             edited_df = st.data_editor(
@@ -258,6 +260,11 @@ with tab2:
                 hide_index=True,
                 key=f"editor_{category.lower().replace(' ', '_')}", 
                 column_config={
+                    "🗑️ Delete?": st.column_config.CheckboxColumn(
+                        "Delete Action",
+                        help="Check this box and click Save to permanently delete this item.",
+                        default=False
+                    ),
                     "Calendar": st.column_config.SelectboxColumn(
                         "Calendar",
                         options=["Kevin Nguyen", "Family", "School", "Volunteering"],
@@ -272,12 +279,40 @@ with tab2:
             )
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
-                df.update(edited_df)
+                
+                # --- PHASE 1: Handle Deletions ---
+                rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
+                
+                for idx, row in rows_to_delete.iterrows():
+                    gcal_id = str(row.get("Event ID", ""))
+                    cal_name = row.get("Calendar")
+                    
+                    # 1a. If it has a Calendar ID, command Google Calendar to delete it
+                    if gcal_id and gcal_id not in ["None", "", "nan"]:
+                        cal_id = CALENDAR_MAP.get(cal_name)
+                        if cal_id:
+                            try:
+                                cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
+                            except Exception:
+                                # Ignore errors if the event was already deleted manually
+                                pass
+                    
+                    # 1b. Drop the row entirely from our Master Dataframe
+                    if idx in df.index:
+                        df = df.drop(index=idx)
+                
+                # --- PHASE 2: Handle Standard Edits ---
+                # Strip out the temporary delete column and update the master sheet with remaining data
+                rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
+                df.update(rows_to_keep)
+                
+                # --- PHASE 3: Push to Cloud ---
                 conn.update(
                     data=df, 
                     spreadsheet=st.secrets.connections.gsheets.mission_control_sheet
                 )
-                st.success(f"Updated {category} list!")
+                
+                st.success(f"✅ Updates and deletions saved for {category}!")
                 st.rerun()
 
 with tab3:
