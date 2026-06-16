@@ -232,9 +232,8 @@ with tab2:
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
-            # 2. Updated the matching string to "Upcoming"
+            # 1. Advanced filtering logic based on selection
             if category == "Upcoming":
-                # This mask naturally spans across ALL 4 calendars
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
             elif category == "All History":
@@ -246,7 +245,8 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-            display_df.insert(0, "🗑️ Delete?", False)
+            # FIXED: Assigning directly appends the column to the far right side
+            display_df["🗑️ Delete?"] = False
             
             st.write(f"### {category}")
             
@@ -293,6 +293,7 @@ with tab2:
                     if idx in df.index:
                         df = df.drop(index=idx)
                 
+                # FIXED: Strip out the right-aligned column before merging remaining edits
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
                 
