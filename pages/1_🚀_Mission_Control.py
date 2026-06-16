@@ -28,6 +28,108 @@ def get_calendar_service():
     return build('calendar', 'v3', credentials=creds)
 
 cal_service = get_calendar_service()
+def sync_calendars_to_sheet(df, service, connection):
+    st.toast("🔄 Scanning Google Calendars for updates...")
+    
+    # Invert the map so we can determine the category from the Calendar ID
+    REVERSE_MAP = {v: k for k, v in CALENDAR_MAP.items()}
+    
+    # Define a time window to scan (e.g., from 7 days ago to 30 days ahead)
+    now = datetime.datetime.utcnow()
+    time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
+    time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
+    
+    sheet_updated = False
+    
+    # Ensure 'Event ID' column exists in the dataframe
+    if "Event ID" not in df.columns:
+        df["Event ID"] = None
+
+    for cal_name, cal_id in CALENDAR_MAP.items():
+        try:
+            # Fetch events from this specific calendar within our time window
+            events_result = service.events().list(
+                calendarId=cal_id, 
+                timeMin=time_min, 
+                timeMax=time_max,
+                singleEvents=True, 
+                orderBy='startTime'
+            ).execute()
+            
+            events = events_result.get('items', [])
+            
+            for event in events:
+                gcal_id = event.get('id')
+                summary = event.get('summary', 'Untitled Event')
+                description = event.get('description', '')
+                
+                # Parse start time and duration
+                start_info = event.get('start', {})
+                end_info = event.get('end', {})
+                
+                # Skip all-day events for now, focus on timed items
+                if 'dateTime' not in start_info:
+                    continue
+                    
+                start_raw = start_info.get('dateTime')
+                end_raw = end_info.get('dateTime')
+                
+                # Clean up ISO strings into native Python datetimes
+                # Handles '2026-06-15T14:00:00-04:00' format safely
+                start_dt = datetime.datetime.fromisoformat(start_raw.split('-')[0].split('+')[0])
+                end_dt = datetime.datetime.fromisoformat(end_raw.split('-')[0].split('+')[0])
+                
+                duration_mins = int((end_dt - start_dt).total_seconds() / 60)
+                
+                date_str = start_dt.strftime('%Y-%m-%d')
+                time_str = start_dt.strftime('%H:%M:%S')
+
+                # Check if this event already exists in our local sheet data
+                matching_rows = df[df["Event ID"] == gcal_id]
+                
+                if not matching_rows.empty:
+                    # INDEX MATCH FOUND: Check if anything changed on your phone
+                    idx = matching_rows.index[0]
+                    
+                    # If details mismatch, update the sheet with the new calendar data
+                    if (df.at[idx, "Item Name"] != summary or 
+                        str(df.at[idx, "Date"]) != date_str or 
+                        int(df.at[idx, "Duration (Mins)"]) != duration_mins):
+                        
+                        df.at[idx, "Item Name"] = summary
+                        df.at[idx, "Date"] = date_str
+                        df.at[idx, "Time"] = time_str
+                        df.at[idx, "Duration (Mins)"] = duration_mins
+                        df.at[idx, "Notes"] = description
+                        sheet_updated = True
+                else:
+                    # NO MATCH FOUND: This is a brand new item created externally!
+                    new_row = {
+                        "Status": False,
+                        "Item Name": summary,
+                        "Type": "Event",
+                        "Calendar": cal_name,
+                        "Date": date_str,
+                        "Time": time_str,
+                        "Duration (Mins)": duration_mins,
+                        "Scheduled?": True,
+                        "Notes": description,
+                        "Event ID": gcal_id
+                    }
+                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    sheet_updated = True
+                    
+        except Exception as e:
+            st.error(f"Error reading calendar '{cal_name}': {e}")
+            
+    # If any changes were gathered, push the clean compiled state back to Google Sheets
+    if sheet_updated:
+        connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+        st.toast("✅ Master Sheet perfectly synchronized with Google Calendars!")
+        return df, True
+        
+    st.toast("🌟 Already up to date.")
+    return df, False
 
 # --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -93,6 +195,13 @@ with tab1:
 
 with tab2:
     st.header("Master Task Tracker")
+    
+    # Add a manual trigger button at the top of the ledger view
+    if st.button("🔄 Sync Calendar Changes to Sheet"):
+        df, was_updated = sync_calendars_to_sheet(df, cal_service, conn)
+        if was_updated:
+            st.rerun()
+            
     categories = ["All", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
