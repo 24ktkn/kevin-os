@@ -173,13 +173,18 @@ with tab1:
             item_name = st.text_input("Item Name", placeholder="e.g., Study Pathology")
             item_type = st.selectbox("Type", ["Task", "Event"])
             calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
+            
+            # NEW: Multi-select for stacking custom notifications
+            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "1 day before"]
+            selected_reminders = st.multiselect(
+                "Notifications (Pop-up)", 
+                options=notification_options, 
+                default=["30 minutes before"] # Keeps your preferred default!
+            )
+
         with col2:
             target_date = st.date_input("Date", datetime.date.today())
-            
-            # NEW: All-Day Checkbox
             all_day = st.checkbox("All-day / No specific time")
-            
-            # Time and duration grey out if the box is checked
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
         
@@ -188,19 +193,35 @@ with tab1:
         if st.form_submit_button("Push to Master Tracker") and item_name:
             target_cal_id = CALENDAR_MAP.get(calendar_cat)
             
-            # --- API Payload Logic ---
+            # --- NOTIFICATION PAYLOAD LOGIC ---
+            reminder_map = {
+                "At time of event": 0,
+                "10 minutes before": 10,
+                "30 minutes before": 30,
+                "1 hour before": 60,
+                "1 day before": 1440
+            }
+
+            if selected_reminders:
+                # If you selected custom times, tell Google to ignore defaults and use these
+                overrides = [{'method': 'popup', 'minutes': reminder_map[r]} for r in selected_reminders]
+                reminders_payload = {'useDefault': False, 'overrides': overrides}
+            else:
+                # If you clear the box entirely, just use whatever Google Calendar normally does
+                reminders_payload = {'useDefault': True}
+            
+            # --- API PAYLOAD LOGIC ---
             if all_day:
-                # Google Calendar's exact format for floating/all-day tasks
                 event_body = {
                     'summary': item_name,
                     'description': notes,
                     'start': {'date': target_date.strftime('%Y-%m-%d')},
                     'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
+                    'reminders': reminders_payload # Injecting your alerts
                 }
                 time_str = ""
                 duration_val = 0
             else:
-                # Standard format for timed blocks
                 start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
                 end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
                 end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
@@ -210,6 +231,7 @@ with tab1:
                     'description': notes,
                     'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
                     'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
+                    'reminders': reminders_payload # Injecting your alerts
                 }
                 time_str = str(start_time)
                 duration_val = int(duration)
@@ -218,7 +240,6 @@ with tab1:
                 created_event = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
                 new_event_id = created_event.get('id')
                 
-                # Push to Google Sheet with empty time variables if all-day
                 new_row = {
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
