@@ -7,7 +7,6 @@ from streamlit_gsheets import GSheetsConnection
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Custom PPL Fitness Tracker", layout="wide", initial_sidebar_state="expanded")
 
-# Custom Dark Theme Styling via Markdown
 st.markdown("""
     <style>
     .main { background-color: #121212; color: #FFFFFF; }
@@ -15,28 +14,32 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS DATABASE CONFIGURATION ---
+# --- GOOGLE SHEETS CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
 
-# --- THE MASTER CLEANER ---
-required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp"]
-for col in required_cols:
-    if col not in raw_df.columns:
-        raw_df[col] = ""
+# --- SESSION STATE ARCHITECTURE (THE CACHE BYPASS) ---
+if "master_workout_df" not in st.session_state:
+    raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
+    
+    required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp"]
+    for col in required_cols:
+        if col not in raw_df.columns:
+            raw_df[col] = ""
 
-df_logs = raw_df[raw_df["Exercise"].astype(str).str.strip() != ""].copy()
-df_logs = df_logs[df_logs["Exercise"].notna()]
+    df_logs = raw_df[raw_df["Exercise"].astype(str).str.strip() != ""].copy()
+    df_logs = df_logs[df_logs["Exercise"].notna()]
 
-df_logs["Exercise"] = df_logs["Exercise"].astype(str).str.strip()
-df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
-df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
-df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
+    df_logs["Exercise"] = df_logs["Exercise"].astype(str).str.strip()
+    df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
+    df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
+    df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
+    df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
+    df_logs = df_logs[df_logs["Date"].notna()]
+    
+    st.session_state.master_workout_df = df_logs
 
-# Force strings before converting to datetime to prevent silent mix-type drops
-df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
-df_logs = df_logs[df_logs["Date"].notna()]
-# ---------------------------
+# Always pull from local super-fast memory
+df_logs = st.session_state.master_workout_df
 
 # --- EXERCISE DATABASE ---
 exercises_dict = {
@@ -72,7 +75,7 @@ if split_input == "Cardio (Treadmill)":
         duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
         if st.form_submit_button("Log Cardio Session"):
             new_row = {
-                "Date": date_input.strftime('%Y-%m-%d'),
+                "Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')),
                 "Split Day": split_input,
                 "Exercise": exercise_input,
                 "Set Number": 1,
@@ -82,18 +85,22 @@ if split_input == "Cardio (Treadmill)":
                 "Timestamp": datetime.now().strftime("%H:%M:%S")
             }
             updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
-            # Force Date to strict string format before cloud push
-            updated_df["Date"] = updated_df["Date"].astype(str)
+            
+            # Format strictly for Google Cloud
+            push_df = updated_df.copy()
+            push_df["Date"] = push_df["Date"].astype(str)
+            
             try:
-                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
-                st.cache_data.clear() # <-- THE CACHE BUSTER
+                conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.cache_data.clear()
+                # Inject directly into local memory for instant UI update
+                st.session_state.master_workout_df = updated_df
                 st.sidebar.success("Cardio logged!")
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"Save failed: {e}")
 else:
     is_bodyweight = exercise_input in ["Pull-Ups", "Hanging Knee Raises"]
-
     last_weight = 135.0
     if not df_logs.empty and not is_bodyweight:
         past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
@@ -111,7 +118,6 @@ else:
             
         st.write("### Reps Per Set")
         captured_sets = []
-        
         for i in range(int(num_sets)):
             r_val = st.number_input(f"Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
             captured_sets.append({"set": i+1, "r": r_val})
@@ -122,13 +128,9 @@ else:
             if valid_sets:
                 new_rows = []
                 for s in valid_sets:
-                    if is_bodyweight:
-                        est_1rm = 0.0
-                    else:
-                        est_1rm = round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight
-                        
+                    est_1rm = 0.0 if is_bodyweight else (round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight)
                     new_rows.append({
-                        "Date": date_input.strftime('%Y-%m-%d'),
+                        "Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')),
                         "Split Day": split_input,
                         "Exercise": exercise_input,
                         "Set Number": s["set"],
@@ -139,11 +141,16 @@ else:
                     })
                 
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
-                # Force Date to strict string format before cloud push
-                updated_df["Date"] = updated_df["Date"].astype(str)
+                
+                # Format strictly for Google Cloud
+                push_df = updated_df.copy()
+                push_df["Date"] = push_df["Date"].astype(str)
+                
                 try:
-                    conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
-                    st.cache_data.clear() # <-- THE CACHE BUSTER
+                    conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                    st.cache_data.clear()
+                    # Inject directly into local memory for instant UI update
+                    st.session_state.master_workout_df = updated_df
                     st.sidebar.success(f"Logged {len(valid_sets)} sets{'!' if is_bodyweight else f' at {master_weight} lbs!'}")
                     st.rerun()
                 except Exception as e:
@@ -163,6 +170,11 @@ with tab1:
     st.markdown("### Your Active 6-Day Home Gym Routine")
     st.write("Below is your weekly plan paired with a live reminder of your **last recorded working weight** to guide your next session.")
     
+    if st.button("🔄 Force Cloud Sync (Pull latest from Sheet)"):
+        st.cache_data.clear()
+        del st.session_state["master_workout_df"]
+        st.rerun()
+
     for split, exercises in exercises_dict.items():
         with st.expander(f"➔ {split}", expanded=True):
             guide_data = []
@@ -191,16 +203,11 @@ with tab1:
                     last_reps_str = "Clear to start"
                     last_date_str = "-"
                 
-                if "Raises" in exe or "Curls" in exe or "Extensions" in exe:
-                    target_range = "3 Sets x 10-12 Reps (60s rest)"
-                elif "Squats" in exe or "Press" in exe or "Row" in exe:
-                    target_range = "3 Sets x 8-12 Reps (90s rest)"
-                elif "Cardio" in split:
-                    target_range = "45-60 Mins (Treadmill)"
-                elif "Pull-Ups" in exe:
-                    target_range = "3 Sets x AMRAP (90s rest)"
-                else:
-                    target_range = "3-4 Sets x 8-12 Reps"
+                if "Raises" in exe or "Curls" in exe or "Extensions" in exe: target_range = "3 Sets x 10-12 Reps (60s rest)"
+                elif "Squats" in exe or "Press" in exe or "Row" in exe: target_range = "3 Sets x 8-12 Reps (90s rest)"
+                elif "Cardio" in split: target_range = "45-60 Mins (Treadmill)"
+                elif "Pull-Ups" in exe: target_range = "3 Sets x AMRAP (90s rest)"
+                else: target_range = "3-4 Sets x 8-12 Reps"
 
                 guide_data.append({
                     "Exercise Name": exe,
@@ -221,34 +228,15 @@ with tab2:
         st.markdown("### Trajectory Analytics")
         all_exercises = df_logs["Exercise"].dropna().unique()
         selected_chart_exe = st.selectbox("Select Exercise to Visualize", all_exercises)
-        
         filtered_df = df_logs[df_logs["Exercise"] == selected_chart_exe].sort_values(by="Date")
         
         if not filtered_df.empty:
             if "Treadmill" in selected_chart_exe:
-                fig = px.line(
-                    filtered_df, 
-                    x="Date", y="Reps", 
-                    markers=True,
-                    title= f"Cardio Endurance Over Time: {selected_chart_exe}",
-                    labels={"Reps": "Session Duration (Minutes)", "Date": "Training Date"}
-                )
+                fig = px.line(filtered_df, x="Date", y="Reps", markers=True, title= f"Cardio Endurance Over Time: {selected_chart_exe}", labels={"Reps": "Session Duration (Minutes)", "Date": "Training Date"})
             elif selected_chart_exe in ["Pull-Ups", "Hanging Knee Raises"]:
-                fig = px.line(
-                    filtered_df, 
-                    x="Date", y="Reps", 
-                    markers=True,
-                    title= f"Bodyweight Endurance Over Time: {selected_chart_exe}",
-                    labels={"Reps": "Reps Completed", "Date": "Training Date"}
-                )
+                fig = px.line(filtered_df, x="Date", y="Reps", markers=True, title= f"Bodyweight Endurance Over Time: {selected_chart_exe}", labels={"Reps": "Reps Completed", "Date": "Training Date"})
             else:
-                fig = px.line(
-                    filtered_df, 
-                    x="Date", y="Estimated 1RM", 
-                    markers=True,
-                    title= f"Strength Progression Curve: {selected_chart_exe}",
-                    labels={"Estimated 1RM": "Calculated 1RM (lbs)", "Date": "Training Date"}
-                )
+                fig = px.line(filtered_df, x="Date", y="Estimated 1RM", markers=True, title= f"Strength Progression Curve: {selected_chart_exe}", labels={"Estimated 1RM": "Calculated 1RM (lbs)", "Date": "Training Date"})
             fig.update_traces(line_color='#00CC66', marker=dict(size=8))
             fig.update_layout(template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
@@ -261,14 +249,11 @@ with tab3:
         display_ledger = df_logs.copy()
         display_ledger['Date'] = pd.to_datetime(display_ledger['Date']).dt.date
         display_ledger["🗑️ Delete?"] = False
-        
-        # Sort for easy reading
         display_ledger = display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False])
         
         edited_ledger = st.data_editor(
             display_ledger, 
-            use_container_width=True, 
-            hide_index=True,
+            use_container_width=True, hide_index=True,
             column_config={
                 "🗑️ Delete?": st.column_config.CheckboxColumn("Delete Action", default=False),
                 "Date": st.column_config.DateColumn("Date")
@@ -282,11 +267,12 @@ with tab3:
             rows_to_keep = edited_ledger[edited_ledger["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
             updated_df.update(rows_to_keep)
             
-            # Force Date to strict string format before cloud push
-            updated_df["Date"] = updated_df["Date"].astype(str)
+            push_df = updated_df.copy()
+            push_df["Date"] = push_df["Date"].astype(str)
             try:
-                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
-                st.cache_data.clear() # <-- THE CACHE BUSTER
+                conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.cache_data.clear()
+                st.session_state.master_workout_df = updated_df
                 st.success("✅ Ledger updated successfully!")
                 st.rerun()
             except Exception as e:
@@ -297,7 +283,5 @@ with tab3:
 with tab4:
     st.markdown("### In-Workout Precision Rest Timer")
     col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Compound Movements (Squats, Bench, Rows, Pull-Ups)", "90 - 120 sec")
-    with col2:
-        st.metric("Isolation Movements (Raises, Curls, Extensions)", "60 sec")
+    with col1: st.metric("Compound Movements (Squats, Bench, Rows, Pull-Ups)", "90 - 120 sec")
+    with col2: st.metric("Isolation Movements (Raises, Curls, Extensions)", "60 sec")
