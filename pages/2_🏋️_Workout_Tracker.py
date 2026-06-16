@@ -100,7 +100,7 @@ if st.sidebar.button("Log Set to Dashboard"):
     # The fixed line (make sure to match your exact secret name)
     conn.update(
         data=updated_df, 
-        spreadsheet=st.secrets.connections.gsheets.st.secrets.connections.gsheets.workout_tracker_sheet
+        spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet
     )
     
     st.sidebar.success("✅ Cloud sync complete!")
