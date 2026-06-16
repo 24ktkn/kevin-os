@@ -333,10 +333,15 @@ with tab2:
             elif category == "All Tasks": display_df = df[df["Type"] == "Task"].copy()
             else: display_df = df[df["Calendar"] == category].copy()
             
+            # --- NEW: SORT ALL TABS BY DATE DESCENDING ---
+            # This cleanly sorts the data frame before it gets rendered by the editor.
+            display_df = display_df.sort_values(by=["Date", "Time"], ascending=[False, False])
+            # ---------------------------------------------
+            
             # 1. Safely generate the column first so Pandas doesn't throw a KeyError
             display_df = display_df.assign(**{"🗑️ Delete?": False})
             
-            # 2. Force native Python types (Location is now strictly tracked!)
+            # 2. Force native Python types
             display_df = display_df.astype({
                 "🗑️ Delete?": bool,
                 "Status": bool,
@@ -430,7 +435,6 @@ with tab2:
                                 if notes_changed: body['notes'] = row["Notes"]
                                 if date_changed: 
                                     try:
-                                        # Forces YYYY-MM-DD padding (e.g., 2026-06-01 instead of 2026-6-1)
                                         body['due'] = pd.to_datetime(row['Date']).strftime('%Y-%m-%dT00:00:00.000Z')
                                     except Exception: pass
                                 
