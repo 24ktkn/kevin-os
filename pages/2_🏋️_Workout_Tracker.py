@@ -96,7 +96,12 @@ if st.sidebar.button("Log Set to Dashboard"):
     st.sidebar.warning("Pushing to Google Cloud...")
     updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
     # The actual magic that saves it permanently!
-    conn.update(data=updated_df)
+    
+    # The fixed line (make sure to match your exact secret name)
+    conn.update(
+        data=updated_df, 
+        spreadsheet=st.secrets.connections.gsheets.st.secrets.connections.gsheets.workout_tracker_sheet
+    )
     
     st.sidebar.success("✅ Cloud sync complete!")
     st.rerun()
