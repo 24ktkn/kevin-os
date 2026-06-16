@@ -94,18 +94,16 @@ else:
     num_sets = st.sidebar.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
     
     with st.sidebar.form("bulk_log_form", clear_on_submit=True):
-        st.write("### Fill out your sets")
+        # NEW: Single master weight input applies to everything below it
+        master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5)
+        
+        st.write("### Reps Per Set")
         captured_sets = []
         
-        # Squeeze the inputs into 2 columns for the sidebar
+        # Squeeze the reps into a tight, clean list
         for i in range(int(num_sets)):
-            c1, c2 = st.columns(2)
-            with c1:
-                w_val = st.number_input(f"W (lbs) - Set {i+1}", min_value=0.0, value=last_weight, step=2.5, key=f"w_{i}")
-            with c2:
-                r_val = st.number_input(f"Reps - Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
-            
-            captured_sets.append({"w": w_val, "r": r_val, "set": i+1})
+            r_val = st.number_input(f"Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
+            captured_sets.append({"set": i+1, "r": r_val})
             
         if st.form_submit_button("Log All Sets to Dashboard"):
             valid_sets = [s for s in captured_sets if s["r"] > 0]
@@ -113,14 +111,14 @@ else:
             if valid_sets:
                 new_rows = []
                 for s in valid_sets:
-                    # Calculate 1RM for analytics
-                    est_1rm = round(s["w"] * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else s["w"]
+                    # Calculate 1RM using the master weight
+                    est_1rm = round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight
                     new_rows.append({
                         "Date": date_input.strftime('%Y-%m-%d'),
                         "Split Day": split_input,
                         "Exercise": exercise_input,
                         "Set Number": s["set"],
-                        "Weight (lbs)": s["w"],
+                        "Weight (lbs)": master_weight, # Injects the master weight to every row
                         "Reps": s["r"],
                         "Estimated 1RM": est_1rm,
                         "Timestamp": datetime.now().strftime("%H:%M:%S")
@@ -129,7 +127,7 @@ else:
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
                 try:
                     conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
-                    st.sidebar.success(f"Logged {len(valid_sets)} sets!")
+                    st.sidebar.success(f"Logged {len(valid_sets)} sets at {master_weight} lbs!")
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Save failed: {e}")
