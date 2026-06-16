@@ -32,8 +32,9 @@ df_logs["Exercise"] = df_logs["Exercise"].astype(str).str.strip()
 df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
 df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
 df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
-df_logs["Date"] = pd.to_datetime(df_logs["Date"], errors='coerce')
 
+# Force strings before converting to datetime to prevent silent mix-type drops
+df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
 df_logs = df_logs[df_logs["Date"].notna()]
 # ---------------------------
 
@@ -81,8 +82,11 @@ if split_input == "Cardio (Treadmill)":
                 "Timestamp": datetime.now().strftime("%H:%M:%S")
             }
             updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
+            # Force Date to strict string format before cloud push
+            updated_df["Date"] = updated_df["Date"].astype(str)
             try:
                 conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.cache_data.clear() # <-- THE CACHE BUSTER
                 st.sidebar.success("Cardio logged!")
                 st.rerun()
             except Exception as e:
@@ -135,8 +139,11 @@ else:
                     })
                 
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
+                # Force Date to strict string format before cloud push
+                updated_df["Date"] = updated_df["Date"].astype(str)
                 try:
                     conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                    st.cache_data.clear() # <-- THE CACHE BUSTER
                     st.sidebar.success(f"Logged {len(valid_sets)} sets{'!' if is_bodyweight else f' at {master_weight} lbs!'}")
                     st.rerun()
                 except Exception as e:
@@ -252,10 +259,10 @@ with tab3:
     
     if not df_logs.empty:
         display_ledger = df_logs.copy()
-        display_ledger['Date'] = display_ledger['Date'].dt.date
+        display_ledger['Date'] = pd.to_datetime(display_ledger['Date']).dt.date
         display_ledger["🗑️ Delete?"] = False
         
-        # Sort for easy reading, but Pandas keeps the original indices attached behind the scenes
+        # Sort for easy reading
         display_ledger = display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False])
         
         edited_ledger = st.data_editor(
@@ -269,16 +276,17 @@ with tab3:
         )
         
         if st.button("💾 Save Ledger Changes"):
-            # 1. Handle Deletions
             indices_to_delete = edited_ledger[edited_ledger["🗑️ Delete?"] == True].index
             updated_df = df_logs.drop(index=indices_to_delete)
             
-            # 2. Handle Edits (Update the remaining rows with any text/number changes)
             rows_to_keep = edited_ledger[edited_ledger["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
             updated_df.update(rows_to_keep)
             
+            # Force Date to strict string format before cloud push
+            updated_df["Date"] = updated_df["Date"].astype(str)
             try:
                 conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.cache_data.clear() # <-- THE CACHE BUSTER
                 st.success("✅ Ledger updated successfully!")
                 st.rerun()
             except Exception as e:
