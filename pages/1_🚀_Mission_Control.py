@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Mission Control", layout="wide")
 st.title("🚀 Mission Control")
 
-# --- CALENDAR API SETUP (Service Account) ---
+# --- CALENDAR API SETUP ---
 CALENDAR_MAP = {
     "Kevin Nguyen": "24ktkn@gmail.com",
     "Family": "family05668227215423587251@group.calendar.google.com",
@@ -18,7 +18,7 @@ CALENDAR_MAP = {
     "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
 }
 
-# --- TASK LISTS MAP (OAuth 2.0) ---
+# --- TASK LISTS MAP ---
 TASKLIST_MAP = {
     "Kevin Nguyen": "@default", 
     "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
@@ -56,7 +56,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
     sheet_updated = False
     
-    # --- Ironclad Type Shield ---
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location", "Timeblock ID"]
     for col in text_columns:
         if col not in df.columns:
@@ -73,7 +72,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
-    # --- PHASE 1: SYNC CALENDARS ---
+    # PHASE 1: SYNC CALENDARS
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
             events_result = service_cal.events().list(
@@ -150,7 +149,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
         except Exception as e:
             st.error(f"Error reading calendar '{cal_name}': {e}")
 
-    # --- PHASE 2: SYNC TASKS ---
+    # PHASE 2: SYNC TASKS
     processed_tasklists = set()
     for tl_name, tl_id in TASKLIST_MAP.items():
         if tl_id in processed_tasklists:
@@ -186,7 +185,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
             
     if sheet_updated:
         connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-        st.toast("✅ Master Sheet perfectly synchronized with Calendars and Tasks!")
+        st.toast("✅ Master Sheet synchronized with Calendars and Tasks!")
         return df, True
         
     st.toast("🌟 Already up to date.")
@@ -196,20 +195,16 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
 
-# --- THE READ SHIELD ---
-# Guarantees columns exist in memory so our tab filters never crash
 required_cols = ["Status", "Scheduled?", "Type", "Date", "Timeblock ID"]
 for col in required_cols:
     if col not in df.columns:
         df[col] = False if col in ["Status", "Scheduled?"] else ""
 
-# Lock them into the correct data types safely
 df["Status"] = df["Status"].fillna(False).astype(bool)
 df["Scheduled?"] = df["Scheduled?"].fillna(False).astype(bool)
 df["Type"] = df["Type"].fillna("Event").astype(str)
-# -----------------------
 
-tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Sheet View", "📅 Calendar View"])
+tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Task Tracker", "📅 Calendar View"])
 
 with tab1:
     st.header("Log a Task or Event")
@@ -218,7 +213,7 @@ with tab1:
         with col1:
             item_name = st.text_input("Item Name", placeholder="e.g., Study Pathology")
             item_type = st.selectbox("Type", ["Task", "Event"])
-            calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
+            calendar_cat = st.selectbox("Calendar", list(CALENDAR_MAP.keys()))
             
             notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before"]
             selected_reminders = st.multiselect(
@@ -235,7 +230,7 @@ with tab1:
                 "Repeat", ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"]
             )
         
-        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building or 123 Main St")
+        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building")
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         
         if st.form_submit_button("Push to Master Tracker") and item_name:
@@ -320,7 +315,7 @@ with tab1:
                 updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                 
-                st.success(f"✅ '{item_name}' saved to Tasks AND Timeblocked on your Calendar!")
+                st.success(f"✅ Saved to Google Cloud!")
                 st.rerun()
 
             except Exception as e:
@@ -328,13 +323,14 @@ with tab1:
 
 with tab2:
     st.header("Master Task Tracker")
+    st.info("Double-click any cell (Name, Date, Notes) to edit. Check the box to delete. Click Save to push to Google Cloud.")
     
     if st.button("🔄 Sync Everything to Sheet"):
         df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
         if was_updated:
             st.rerun()
             
-    categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
     task_tabs = st.tabs(categories)
     
     today = pd.to_datetime(datetime.date.today())
@@ -344,15 +340,11 @@ with tab2:
     for i, category in enumerate(categories):
         with task_tabs[i]:
             if category == "Upcoming":
-                upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
-                display_df = df[upcoming_mask].copy()
-                
+                mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
+                display_df = df[mask].copy()
             elif category == "Upcoming Tasks":
-                tasks_mask = (df["Type"] == "Task") & (~df["Status"]) & (
-                    (~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out))
-                )
-                display_df = df[tasks_mask].copy()
-                
+                mask = (df["Type"] == "Task") & (~df["Status"]) & ((~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out)))
+                display_df = df[mask].copy()
             elif category == "All History":
                 display_df = df.copy()
             elif category == "All Events":
@@ -364,22 +356,23 @@ with tab2:
             
             display_df["🗑️ Delete?"] = False
             
-            st.write(f"### {category}")
-            
             edited_df = st.data_editor(
                 display_df, 
                 use_container_width=True, hide_index=True,
                 key=f"editor_{category.lower().replace(' ', '_')}", 
                 column_config={
-                    "🗑️ Delete?": st.column_config.CheckboxColumn("Delete Action", default=False),
-                    "Calendar": st.column_config.SelectboxColumn("Calendar", options=["Kevin Nguyen", "Family", "School", "Volunteering"], required=True),
-                    "Status": st.column_config.CheckboxColumn("Status", default=False)
+                    "🗑️ Delete?": st.column_config.CheckboxColumn("Delete", default=False),
+                    "Status": st.column_config.CheckboxColumn("Done", default=False),
+                    "Item Name": st.column_config.TextColumn("Title"),
+                    "Date": st.column_config.TextColumn("Date (YYYY-MM-DD)"),
+                    "Time": st.column_config.TextColumn("Time (HH:MM:SS)"),
+                    "Notes": st.column_config.TextColumn("Notes"),
                 }
             )
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
                 
-                # Deletions
+                # --- PROCESS DELETIONS ---
                 rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
                 for idx, row in rows_to_delete.iterrows():
                     gcal_id = str(row.get("Event ID", ""))
@@ -388,65 +381,80 @@ with tab2:
                     
                     if gcal_id and gcal_id not in ["None", "", "nan"]:
                         if item_type == "Event":
-                            cal_id = CALENDAR_MAP.get(cal_name)
-                            if cal_id:
-                                try:
-                                    cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
-                                except Exception:
-                                    pass
+                            try: cal_service.events().delete(calendarId=CALENDAR_MAP.get(cal_name), eventId=gcal_id).execute()
+                            except Exception: pass
                         elif item_type == "Task":
-                            tl_id = TASKLIST_MAP.get(cal_name, "@default")
-                            try:
-                                tasks_service.tasks().delete(tasklist=tl_id, task=gcal_id).execute()
-                            except Exception:
-                                pass
+                            try: tasks_service.tasks().delete(tasklist=TASKLIST_MAP.get(cal_name, "@default"), task=gcal_id).execute()
+                            except Exception: pass
                             
                             tb_id = str(row.get("Timeblock ID", ""))
                             if tb_id and tb_id not in ["None", "", "nan"]:
-                                cal_id = CALENDAR_MAP.get(cal_name)
-                                try:
-                                    cal_service.events().delete(calendarId=cal_id, eventId=tb_id).execute()
-                                except Exception:
-                                    pass
+                                try: cal_service.events().delete(calendarId=CALENDAR_MAP.get(cal_name), eventId=tb_id).execute()
+                                except Exception: pass
                     
                     if idx in df.index:
                         df = df.drop(index=idx)
                         
-                # Toggles
+                # --- PROCESS EDITS & RESCHEDULING (THE PATCH ENGINE) ---
                 for idx, row in edited_df.iterrows():
-                    if row["🗑️ Delete?"]:
-                        continue
+                    if row["🗑️ Delete?"]: continue
                         
-                    old_status = bool(display_df.at[idx, "Status"])
-                    new_status = bool(row["Status"])
+                    original_row = display_df.loc[idx]
+                    g_id = str(row.get("Event ID", ""))
+                    item_type = row.get("Type")
+                    cal_name = row.get("Calendar")
                     
-                    if old_status != new_status:
-                        g_id = str(row.get("Event ID", ""))
-                        item_type = row.get("Type")
-                        cal_name = row.get("Calendar")
-                        
-                        if g_id and g_id not in ["None", "", "nan"]:
-                            if item_type == "Task":
-                                target_tasklist_id = TASKLIST_MAP.get(cal_name, "@default")
-                                status_str = 'completed' if new_status else 'needsAction'
-                                try:
-                                    tasks_service.tasks().patch(
-                                        tasklist=target_tasklist_id, task=g_id, body={'status': status_str}
-                                    ).execute()
-                                except Exception:
-                                    pass
+                    if g_id and g_id not in ["None", "", "nan"]:
+                        # Detect any changes
+                        s_changed = bool(original_row["Status"]) != bool(row["Status"])
+                        name_changed = str(original_row["Item Name"]) != str(row["Item Name"])
+                        notes_changed = str(original_row["Notes"]) != str(row["Notes"])
+                        date_changed = str(original_row["Date"]) != str(row["Date"])
+                        time_changed = str(original_row["Time"]) != str(row["Time"])
 
+                        if any([s_changed, name_changed, notes_changed, date_changed, time_changed]):
+                            if item_type == "Task":
+                                t_id = TASKLIST_MAP.get(cal_name, "@default")
+                                body = {}
+                                if s_changed: body['status'] = 'completed' if row["Status"] else 'needsAction'
+                                if name_changed: body['title'] = row["Item Name"]
+                                if notes_changed: body['notes'] = row["Notes"]
+                                if date_changed: body['due'] = f"{row['Date']}T00:00:00.000Z"
+                                
+                                try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=body).execute()
+                                except Exception: pass
+
+                            elif item_type == "Event":
+                                c_id = CALENDAR_MAP.get(cal_name)
+                                body = {}
+                                if name_changed: body['summary'] = row["Item Name"]
+                                if notes_changed: body['description'] = row["Notes"]
+                                if date_changed or time_changed:
+                                    try:
+                                        d_str = str(row["Date"])
+                                        t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]) != "nan" else "00:00:00"
+                                        start_dt = datetime.datetime.strptime(f"{d_str} {t_str}", "%Y-%m-%d %H:%M:%S")
+                                        dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
+                                        end_dt = start_dt + datetime.timedelta(minutes=dur)
+
+                                        body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
+                                        body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
+                                    except Exception: pass # Skip if user typed a badly formatted date
+                                
+                                try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=body).execute()
+                                except Exception: pass
+
+                # Finally, update the master dataframe with the new text/dates and push to sheet
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
-                
                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-                st.success(f"✅ Updates and bi-directional sync saved for {category}!")
+                
+                st.success(f"✅ Edits, Reschedules, and Deletions saved to Google Cloud!")
                 st.rerun()
 
 with tab3:
     st.header("Consolidated Calendar View")
     calendar_iframe = """
-    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&src=ZW4uY2FuYWRpYW4jaG9saWRheUBncm91cC52LmNhbGVuZGFyLmdvb2dsZS5jb20&src=YjN0ZXZkdWlvaHN1ZDVxNHJwaGlycDVpNmR1dWh1aTdAaW1wb3J0LmNhbGVuZGFyLmdvb2dsZS5jb20&color=%23039be5&color=%238e24aa&color=%23f6bf26&color=%23d50000&color=%230b8043&color=%233f51b5" style="border:solid 1px #777" width="800" height="600" frameborder="0" scrolling="no"></iframe>" 
-    style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&src=ZW4uY2FuYWRpYW4jaG9saWRheUBncm91cC52LmNhbGVuZGFyLmdvb2dsZS5jb20&src=YjN0ZXZkdWlvaHN1ZDVxNHJwaGlycDVpNmR1dWh1aTdAaW1wb3J0LmNhbGVuZGFyLmdvb2dsZS5jb20&color=%23039be5&color=%238e24aa&color=%23f6bf26&color=%23d50000&color=%230b8043&color=%233f51b5" style="border:solid 1px #777" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
     components.html(calendar_iframe, height=600)
