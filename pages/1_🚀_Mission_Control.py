@@ -428,7 +428,7 @@ with tab2:
 
                         if any([s_changed, name_changed, notes_changed, date_changed, time_changed]):
                             if item_type == "Task":
-                                # 1. Update the Google Task
+                                # 1. Update the Google Task (Date & Text only, per Google API rules)
                                 t_id = TASKLIST_MAP.get(cal_name, "@default")
                                 body = {}
                                 if s_changed: body['status'] = 'completed' if row["Status"] else 'needsAction'
@@ -436,34 +436,40 @@ with tab2:
                                 if notes_changed: body['notes'] = row["Notes"]
                                 if date_changed: body['due'] = f"{row['Date']}T00:00:00.000Z"
                                 
-                                # Dropped the silent fail so errors actually appear
                                 try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=body).execute()
                                 except Exception as e: st.error(f"Task Sync Error: {e}")
 
                                 # 2. Update the connected Google Calendar Timeblock
                                 tb_id = str(row.get("Timeblock ID", ""))
-                                if tb_id and tb_id not in ["None", "", "nan"] and any([name_changed, notes_changed, date_changed, time_changed]):
-                                    c_id = CALENDAR_MAP.get(cal_name)
-                                    tb_body = {}
-                                    if name_changed: tb_body['summary'] = f"☑️ [Task] {row['Item Name']}"
-                                    if notes_changed: tb_body['description'] = row["Notes"]
-                                    if date_changed or time_changed:
-                                        try:
-                                            d_str = str(row["Date"])
-                                            t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]) not in ["nan", "None", ""] else "00:00:00"
-                                            
-                                            # THE FIX: Pandas natural language parsing handles AM/PM perfectly
-                                            start_dt = pd.to_datetime(f"{d_str} {t_str}")
-                                            dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
-                                            end_dt = start_dt + pd.Timedelta(minutes=dur)
+                                if tb_id and str(tb_id).lower() not in ["none", "", "nan"]:
+                                    if any([name_changed, notes_changed, date_changed, time_changed]):
+                                        c_id = CALENDAR_MAP.get(cal_name)
+                                        tb_body = {}
+                                        if name_changed: tb_body['summary'] = f"☑️ [Task] {row['Item Name']}"
+                                        if notes_changed: tb_body['description'] = row["Notes"]
+                                        if date_changed or time_changed:
+                                            try:
+                                                d_str = str(row["Date"])
+                                                t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
+                                                
+                                                start_dt = pd.to_datetime(f"{d_str} {t_str}")
+                                                dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
+                                                end_dt = start_dt + pd.Timedelta(minutes=dur)
 
-                                            tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
-                                            tb_body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
-                                        except Exception as e: 
-                                            st.warning(f"Could not read the time format for '{row['Item Name']}'. Try formatting like '9:30 PM' or '21:30'.")
-                                    
-                                    try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
-                                    except Exception as e: st.error(f"Calendar Timeblock Sync Error: {e}")
+                                                # Clean payload: strictly local time + native timezone
+                                                tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                
+                                                # Instantly format the user's typed string back to clean 24h format for the Sheet
+                                                edited_df.at[idx, "Time"] = start_dt.strftime('%H:%M:%S')
+                                            except Exception as e: 
+                                                st.warning(f"Time format issue for '{row['Item Name']}': {e}")
+                                        
+                                        try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
+                                        except Exception as e: st.error(f"Calendar Timeblock Sync Error: {e}")
+                                else:
+                                    if time_changed or date_changed:
+                                        st.toast(f"Note: '{row['Item Name']}' doesn't have a Calendar Timeblock attached to it to move.")
 
                             elif item_type == "Event":
                                 c_id = CALENDAR_MAP.get(cal_name)
@@ -473,17 +479,20 @@ with tab2:
                                 if date_changed or time_changed:
                                     try:
                                         d_str = str(row["Date"])
-                                        t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]) not in ["nan", "None", ""] else "00:00:00"
+                                        t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
                                         
-                                        # THE FIX: Pandas natural language parsing
                                         start_dt = pd.to_datetime(f"{d_str} {t_str}")
                                         dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                         end_dt = start_dt + pd.Timedelta(minutes=dur)
 
-                                        body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
-                                        body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
+                                        # Clean payload: strictly local time + native timezone
+                                        body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                        body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                        
+                                        # Instantly format the user's typed string back to clean 24h format for the Sheet
+                                        edited_df.at[idx, "Time"] = start_dt.strftime('%H:%M:%S')
                                     except Exception as e:
-                                        st.warning(f"Could not read the time format for '{row['Item Name']}'. Try formatting like '9:30 PM' or '21:30'.")
+                                        st.warning(f"Time format issue for '{row['Item Name']}': {e}")
                                 
                                 try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=body).execute()
                                 except Exception as e: st.error(f"Event Sync Error: {e}")
