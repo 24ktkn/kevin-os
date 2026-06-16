@@ -39,7 +39,7 @@ def sync_calendars_to_sheet(df, service, connection):
     sheet_updated = False
     
     # --- IRONCLAD TYPE SHIELD ---
-    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID"]
+    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location"]
     for col in text_columns:
         if col not in df.columns:
             df[col] = ""
@@ -87,7 +87,8 @@ def sync_calendars_to_sheet(df, service, connection):
                 
                 summary = event.get('summary', 'Untitled Event')
                 description = event.get('description', '')
-                
+                location_str = event.get('location', '')
+
                 start_info = event.get('start', {})
                 end_info = event.get('end', {})
                 
@@ -120,13 +121,15 @@ def sync_calendars_to_sheet(df, service, connection):
                     
                     if (df.at[idx, "Item Name"] != summary or 
                         str(df.at[idx, "Date"]) != date_str or 
-                        current_duration != duration_mins):
+                        current_duration != duration_mins or
+                        df.at[idx, "Location"] != location_str):
                         
                         df.at[idx, "Item Name"] = summary
                         df.at[idx, "Date"] = date_str
                         df.at[idx, "Time"] = time_str
                         df.at[idx, "Duration (Mins)"] = int(duration_mins)
                         df.at[idx, "Notes"] = description
+                        df.at[idx, "Location"] = location_str
                         sheet_updated = True
                 else:
                     new_row = {
@@ -139,6 +142,7 @@ def sync_calendars_to_sheet(df, service, connection):
                         "Duration (Mins)": int(duration_mins),
                         "Scheduled?": True,
                         "Notes": description,
+                        "Location": location_str,
                         "Event ID": gcal_id
                     }
                     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
@@ -188,6 +192,7 @@ with tab1:
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
         
+        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building")
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         
         if st.form_submit_button("Push to Master Tracker") and item_name:
@@ -216,6 +221,7 @@ with tab1:
                 event_body = {
                     'summary': item_name,
                     'description': notes,
+                    'location': location_input,
                     'start': {'date': target_date.strftime('%Y-%m-%d')},
                     'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
                     'reminders': reminders_payload # Injecting your alerts
@@ -230,6 +236,7 @@ with tab1:
                 event_body = {
                     'summary': item_name,
                     'description': notes,
+                    'location': location_input,
                     'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
                     'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
                     'reminders': reminders_payload # Injecting your alerts
@@ -246,6 +253,7 @@ with tab1:
                     "Calendar": calendar_cat, "Date": str(target_date), 
                     "Time": time_str, "Duration (Mins)": duration_val, 
                     "Scheduled?": not all_day, "Notes": notes, "Event ID": new_event_id
+                    "Location": location_input
                 }
                 
                 updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
