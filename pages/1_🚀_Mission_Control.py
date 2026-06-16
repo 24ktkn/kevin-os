@@ -10,7 +10,6 @@ st.set_page_config(page_title="Mission Control", layout="wide")
 st.title("🚀 Mission Control")
 
 # --- CALENDAR API SETUP ---
-# Map your dropdown categories to the actual Google Calendar IDs
 CALENDAR_MAP = {
     "Kevin Nguyen": "24ktkn@gmail.com",
     "Family": "family05668227215423587251@group.calendar.google.com",
@@ -18,7 +17,6 @@ CALENDAR_MAP = {
     "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
 }
 
-# Authenticate the Calendar API
 def get_calendar_service():
     creds_info = st.secrets["connections"]["gsheets"]
     creds = service_account.Credentials.from_service_account_info(
@@ -28,14 +26,12 @@ def get_calendar_service():
     return build('calendar', 'v3', credentials=creds)
 
 cal_service = get_calendar_service()
+
 def sync_calendars_to_sheet(df, service, connection):
     st.toast("🔄 Scanning Google Calendars for updates...")
-    
-    # Define a time window to scan (e.g., from 7 days ago to 30 days ahead)
     now = datetime.datetime.utcnow()
     time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
     time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
-    
     sheet_updated = False
     
     # --- IRONCLAD TYPE SHIELD ---
@@ -58,7 +54,6 @@ def sync_calendars_to_sheet(df, service, connection):
 
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
-            # 1. NEW: Added `showDeleted=True` to catch events you wiped from your phone
             events_result = service.events().list(
                 calendarId=cal_id, 
                 timeMin=time_min, 
@@ -74,26 +69,20 @@ def sync_calendars_to_sheet(df, service, connection):
                 gcal_id = event.get('id')
                 status = event.get('status')
                 
-                # 2. NEW: DELETION LOGIC
                 if status == 'cancelled':
-                    # If Google says it's deleted, check if we still have it in our sheet
                     if gcal_id in df["Event ID"].values:
-                        # Slice the dataframe to remove this exact row and reset the index
                         df = df[df["Event ID"] != gcal_id].reset_index(drop=True)
                         sheet_updated = True
-                    # Skip the rest of the loop for this deleted event
                     continue 
-                # ---------------------------
                 
                 summary = event.get('summary', 'Untitled Event')
                 description = event.get('description', '')
                 location_str = event.get('location', '')
-
+                
                 start_info = event.get('start', {})
                 end_info = event.get('end', {})
                 
                 if 'dateTime' in start_info:
-                    # It's a standard timed event
                     start_raw = start_info.get('dateTime')
                     end_raw = end_info.get('dateTime')
                     start_dt = datetime.datetime.fromisoformat(start_raw[:19])
@@ -102,7 +91,6 @@ def sync_calendars_to_sheet(df, service, connection):
                     date_str = start_dt.strftime('%Y-%m-%d')
                     time_str = start_dt.strftime('%H:%M:%S')
                 elif 'date' in start_info:
-                    # It's a floating / all-day task
                     date_str = start_info.get('date')
                     time_str = ""
                     duration_mins = 0
@@ -113,7 +101,6 @@ def sync_calendars_to_sheet(df, service, connection):
                 
                 if not matching_rows.empty:
                     idx = matching_rows.index[0]
-                    
                     try:
                         current_duration = int(df.at[idx, "Duration (Mins)"])
                     except (ValueError, TypeError):
@@ -133,17 +120,10 @@ def sync_calendars_to_sheet(df, service, connection):
                         sheet_updated = True
                 else:
                     new_row = {
-                        "Status": False,
-                        "Item Name": summary,
-                        "Type": "Event",
-                        "Calendar": cal_name,
-                        "Date": date_str,
-                        "Time": time_str,
-                        "Duration (Mins)": int(duration_mins),
-                        "Scheduled?": True,
-                        "Notes": description,
-                        "Location": location_str,
-                        "Event ID": gcal_id
+                        "Status": False, "Item Name": summary, "Type": "Event",
+                        "Calendar": cal_name, "Date": date_str, "Time": time_str,
+                        "Duration (Mins)": int(duration_mins), "Scheduled?": True,
+                        "Notes": description, "Event ID": gcal_id, "Location": location_str
                     }
                     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     sheet_updated = True
@@ -163,9 +143,8 @@ def sync_calendars_to_sheet(df, service, connection):
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
 
-# Ensure checkboxes are boolean
 if "Status" in df.columns: df["Status"] = df["Status"].astype(bool)
-if "Scheduled?" in df.columns: df["Scheduled?"] = df["Scheduled?"].astype(bool)
+if "Scheduled?" in df.columns: df["Scheduled?"] = df["Scheduled?"] .astype(bool)
 
 tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Sheet View", "📅 Calendar View"])
 
@@ -178,12 +157,11 @@ with tab1:
             item_type = st.selectbox("Type", ["Task", "Event"])
             calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
             
-            # NEW: Multi-select for stacking custom notifications
-            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "1 day before"]
+            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before", "2 days before"]
             selected_reminders = st.multiselect(
                 "Notifications (Pop-up)", 
                 options=notification_options, 
-                default=["30 minutes before"] # Keeps your preferred default!
+                default=["30 minutes before"]
             )
 
         with col2:
@@ -192,31 +170,23 @@ with tab1:
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
         
-        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building")
+        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building or 123 Main St")
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         
         if st.form_submit_button("Push to Master Tracker") and item_name:
             target_cal_id = CALENDAR_MAP.get(calendar_cat)
             
-            # --- NOTIFICATION PAYLOAD LOGIC ---
             reminder_map = {
-                "At time of event": 0,
-                "10 minutes before": 10,
-                "30 minutes before": 30,
-                "1 hour before": 60,
-                "2 hours before": 120,
-                "1 day before": 1440
+                "At time of event": 0, "10 minutes before": 10,
+                "30 minutes before": 30, "1 hour before": 60, "2 hours before": 120, "1 day before": 1440, "2 days before": 2880
             }
 
             if selected_reminders:
-                # If you selected custom times, tell Google to ignore defaults and use these
                 overrides = [{'method': 'popup', 'minutes': reminder_map[r]} for r in selected_reminders]
                 reminders_payload = {'useDefault': False, 'overrides': overrides}
             else:
-                # If you clear the box entirely, just use whatever Google Calendar normally does
                 reminders_payload = {'useDefault': True}
             
-            # --- API PAYLOAD LOGIC ---
             if all_day:
                 event_body = {
                     'summary': item_name,
@@ -224,7 +194,7 @@ with tab1:
                     'location': location_input,
                     'start': {'date': target_date.strftime('%Y-%m-%d')},
                     'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
-                    'reminders': reminders_payload # Injecting your alerts
+                    'reminders': reminders_payload
                 }
                 time_str = ""
                 duration_val = 0
@@ -239,7 +209,7 @@ with tab1:
                     'location': location_input,
                     'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
                     'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
-                    'reminders': reminders_payload # Injecting your alerts
+                    'reminders': reminders_payload
                 }
                 time_str = str(start_time)
                 duration_val = int(duration)
@@ -252,7 +222,7 @@ with tab1:
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
                     "Time": time_str, "Duration (Mins)": duration_val, 
-                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_event_id
+                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_event_id,
                     "Location": location_input
                 }
                 
@@ -273,7 +243,6 @@ with tab2:
         if was_updated:
             st.rerun()
             
-    # 1. Renamed to "Upcoming"
     categories = ["Upcoming", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
@@ -283,7 +252,6 @@ with tab2:
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
-            # 1. Advanced filtering logic based on selection
             if category == "Upcoming":
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
@@ -296,7 +264,6 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-            # FIXED: Assigning directly appends the column to the far right side
             display_df["🗑️ Delete?"] = False
             
             st.write(f"### {category}")
@@ -326,7 +293,6 @@ with tab2:
             )
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
-                
                 rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
                 
                 for idx, row in rows_to_delete.iterrows():
@@ -344,7 +310,6 @@ with tab2:
                     if idx in df.index:
                         df = df.drop(index=idx)
                 
-                # FIXED: Strip out the right-aligned column before merging remaining edits
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
                 
@@ -358,9 +323,8 @@ with tab2:
 
 with tab3:
     st.header("Consolidated Calendar View")
-    # Paste your combined embed code here
     calendar_iframe = """
-    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&src=ZW4uY2FuYWRpYW4jaG9saWRheUBncm91cC52LmNhbGVuZGFyLmdvb2dsZS5jb20&src=YjN0ZXZkdWlvaHN1ZDVxNHJwaGlycDVpNmR1dWh1aTdAaW1wb3J0LmNhbGVuZGFyLmdvb2dsZS5jb20&color=%23039be5&color=%237986cb&color=%23a79b8e&color=%23d50000&color=%230b8043&color=%233f51b5" style="border:solid 1px #777" width="800" height="600" frameborder="0" scrolling="no"></iframe>" 
+    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&src=ZW4uY2FuYWRpYW4jaG9saWRheUBncm91cC52LmNhbGVuZGFyLmdvb2dsZS5jb20&src=YjN0ZXZkdWlvaHN1ZDVxNHJwaGlycDVpNmR1dWh1aTdAaW1wb3J0LmNhbGVuZGFyLmdvb2dsZS5jb20&color=%23039be5&color=%238e24aa&color=%23f6bf26&color=%23d50000&color=%230b8043&color=%233f51b5" style="border:solid 1px #777" width="800" height="600" frameborder="0" scrolling="no"></iframe>" 
     style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
     """
     components.html(calendar_iframe, height=600)
