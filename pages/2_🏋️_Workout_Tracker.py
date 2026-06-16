@@ -160,38 +160,125 @@ with tab1:
             st.markdown("<br>", unsafe_allow_html=True)
 
 with tab2:
-    if df_logs.empty or "Exercise" not in df_logs.columns:
-        st.info("No cloud data logged yet. Log your first set to see trajectory analytics!")
-    else:
-        st.markdown("### Trajectory Analytics")
-        all_exercises = df_logs["Exercise"].dropna().unique()
-        
-        if len(all_exercises) > 0:
-            selected_chart_exe = st.selectbox("Select Exercise to Visualize", all_exercises)
-            filtered_df = df_logs[df_logs["Exercise"] == selected_chart_exe].sort_values(by="Date")
+    st.header("Master Task Tracker")
+    
+    if st.button("🔄 Sync Everything to Sheet"):
+        df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
+        if was_updated:
+            st.rerun()
             
-            if not filtered_df.empty:
-                if "Treadmill" in selected_chart_exe:
-                    fig = px.line(
-                        filtered_df, 
-                        x="Date", 
-                        y="Reps", 
-                        markers=True,
-                        title= f"Cardio Endurance Over Time: {selected_chart_exe}",
-                        labels={"Reps": "Session Duration (Minutes)", "Date": "Training Date"}
-                    )
-                else:
-                    fig = px.line(
-                        filtered_df, 
-                        x="Date", 
-                        y="Estimated 1RM", 
-                        markers=True,
-                        title= f"Strength Progression Curve: {selected_chart_exe}",
-                        labels={"Estimated 1RM": "Calculated 1RM (lbs)", "Date": "Training Date"}
-                    )
-                fig.update_traces(line_color='#00CC66', marker=dict(size=8))
-                fig.update_layout(template="plotly_dark")
-                st.plotly_chart(fig, use_container_width=True)
+    # 1. NEW: Added "Upcoming Tasks" to the categories array
+    categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    task_tabs = st.tabs(categories)
+    
+    today = pd.to_datetime(datetime.date.today())
+    four_weeks_out = today + pd.Timedelta(weeks=4)
+    safe_dates = pd.to_datetime(df["Date"], errors='coerce')
+    
+    for i, category in enumerate(categories):
+        with task_tabs[i]:
+            if category == "Upcoming":
+                upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
+                display_df = df[upcoming_mask].copy()
+            
+            # 2. NEW: Custom logic for the Upcoming Tasks tab
+            elif category == "Upcoming Tasks":
+                # Filter for: Is a Task AND is not complete AND (is Unscheduled OR is within 4 weeks)
+                tasks_mask = (df["Type"] == "Task") & (~df["Status"]) & (
+                    (~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out))
+                )
+                display_df = df[tasks_mask].copy()
+                
+            elif category == "All History":
+                display_df = df.copy()
+            elif category == "All Events":
+                display_df = df[df["Type"] == "Event"].copy()
+            elif category == "All Tasks":
+                display_df = df[df["Type"] == "Task"].copy()
+            else:
+                display_df = df[df["Calendar"] == category].copy()
+            
+            display_df["🗑️ Delete?"] = False
+            
+            st.write(f"### {category}")
+            
+            edited_df = st.data_editor(
+                display_df, 
+                use_container_width=True, hide_index=True,
+                key=f"editor_{category.lower().replace(' ', '_')}", 
+                column_config={
+                    "🗑️ Delete?": st.column_config.CheckboxColumn("Delete Action", default=False),
+                    "Calendar": st.column_config.SelectboxColumn("Calendar", options=["Kevin Nguyen", "Family", "School", "Volunteering"], required=True),
+                    "Status": st.column_config.CheckboxColumn("Status", default=False)
+                }
+            )
+            
+            if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
+                
+                # Deletions
+                rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
+                for idx, row in rows_to_delete.iterrows():
+                    gcal_id = str(row.get("Event ID", ""))
+                    cal_name = row.get("Calendar")
+                    item_type = row.get("Type")
+                    
+                    if gcal_id and gcal_id not in ["None", "", "nan"]:
+                        if item_type == "Event":
+                            cal_id = CALENDAR_MAP.get(cal_name)
+                            if cal_id:
+                                try:
+                                    cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
+                                except Exception:
+                                    pass
+                        elif item_type == "Task":
+                            tl_id = TASKLIST_MAP.get(cal_name, "@default")
+                            try:
+                                tasks_service.tasks().delete(tasklist=tl_id, task=gcal_id).execute()
+                            except Exception:
+                                pass
+                            
+                            # Automatically delete the linked Calendar Timeblock too!
+                            tb_id = str(row.get("Timeblock ID", ""))
+                            if tb_id and tb_id not in ["None", "", "nan"]:
+                                cal_id = CALENDAR_MAP.get(cal_name)
+                                try:
+                                    cal_service.events().delete(calendarId=cal_id, eventId=tb_id).execute()
+                                except Exception:
+                                    pass
+                    
+                    if idx in df.index:
+                        df = df.drop(index=idx)
+                        
+                # Toggles
+                for idx, row in edited_df.iterrows():
+                    if row["🗑️ Delete?"]:
+                        continue
+                        
+                    old_status = bool(display_df.at[idx, "Status"])
+                    new_status = bool(row["Status"])
+                    
+                    if old_status != new_status:
+                        g_id = str(row.get("Event ID", ""))
+                        item_type = row.get("Type")
+                        cal_name = row.get("Calendar")
+                        
+                        if g_id and g_id not in ["None", "", "nan"]:
+                            if item_type == "Task":
+                                target_tasklist_id = TASKLIST_MAP.get(cal_name, "@default")
+                                status_str = 'completed' if new_status else 'needsAction'
+                                try:
+                                    tasks_service.tasks().patch(
+                                        tasklist=target_tasklist_id, task=g_id, body={'status': status_str}
+                                    ).execute()
+                                except Exception:
+                                    pass
+
+                rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
+                df.update(rows_to_keep)
+                
+                conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                st.success(f"✅ Updates and bi-directional sync saved for {category}!")
+                st.rerun()
 
 with tab3:
     st.markdown("### Cloud Sync Master Ledger")
