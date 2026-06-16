@@ -428,6 +428,7 @@ with tab2:
 
                         if any([s_changed, name_changed, notes_changed, date_changed, time_changed]):
                             if item_type == "Task":
+                                # 1. Update the Google Task
                                 t_id = TASKLIST_MAP.get(cal_name, "@default")
                                 body = {}
                                 if s_changed: body['status'] = 'completed' if row["Status"] else 'needsAction'
@@ -437,6 +438,28 @@ with tab2:
                                 
                                 try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=body).execute()
                                 except Exception: pass
+
+                                # 2. Update the connected Google Calendar Timeblock (THIS IS THE FIX)
+                                tb_id = str(row.get("Timeblock ID", ""))
+                                if tb_id and tb_id not in ["None", "", "nan"] and any([name_changed, notes_changed, date_changed, time_changed]):
+                                    c_id = CALENDAR_MAP.get(cal_name)
+                                    tb_body = {}
+                                    if name_changed: tb_body['summary'] = f"☑️ [Task] {row['Item Name']}"
+                                    if notes_changed: tb_body['description'] = row["Notes"]
+                                    if date_changed or time_changed:
+                                        try:
+                                            d_str = str(row["Date"])
+                                            t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]) != "nan" else "00:00:00"
+                                            start_dt = datetime.datetime.strptime(f"{d_str} {t_str}", "%Y-%m-%d %H:%M:%S")
+                                            dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
+                                            end_dt = start_dt + datetime.timedelta(minutes=dur)
+
+                                            tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
+                                            tb_body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
+                                        except Exception: pass
+                                    
+                                    try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
+                                    except Exception: pass
 
                             elif item_type == "Event":
                                 c_id = CALENDAR_MAP.get(cal_name)
