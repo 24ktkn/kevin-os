@@ -200,8 +200,8 @@ for col in required_cols:
     if col not in df.columns:
         df[col] = False if col in ["Status", "Scheduled?"] else ""
 
-df["Status"] = df["Status"].fillna(False).astype(bool)
-df["Scheduled?"] = df["Scheduled?"].fillna(False).astype(bool)
+df["Status"] = df["Status"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
+df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Type"] = df["Type"].fillna("Event").astype(str)
 
 tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Task Tracker", "📅 Calendar View"])
@@ -355,6 +355,7 @@ with tab2:
                 display_df = df[df["Calendar"] == category].copy()
             
             display_df["🗑️ Delete?"] = False
+            display_df["🗑️ Delete?"] = display_df["🗑️ Delete?"].astype(bool)
             
             edited_df = st.data_editor(
                 display_df, 
