@@ -31,9 +31,6 @@ cal_service = get_calendar_service()
 def sync_calendars_to_sheet(df, service, connection):
     st.toast("🔄 Scanning Google Calendars for updates...")
     
-    # Invert the map so we can determine the category from the Calendar ID
-    REVERSE_MAP = {v: k for k, v in CALENDAR_MAP.items()}
-    
     # Define a time window to scan (e.g., from 7 days ago to 30 days ahead)
     now = datetime.datetime.utcnow()
     time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
@@ -41,17 +38,28 @@ def sync_calendars_to_sheet(df, service, connection):
     
     sheet_updated = False
     
-    # --- DATA CLEANING AND TYPE PROTECTION ---
-    if "Event ID" not in df.columns:
-        df["Event ID"] = None
-        
-    if "Duration (Mins)" in df.columns:
-        # Replace empty strings or whitespace with 0, fill NaNs with 0, and force to int
-        df["Duration (Mins)"] = df["Duration (Mins)"].replace(r'^\s*$', 0, regex=True)
-        df["Duration (Mins)"] = pd.to_numeric(df["Duration (Mins)"], errors='coerce').fillna(0).astype(int)
-    else:
+    # --- IRONCLAD TYPE SHIELD ---
+    # 1. Force Text Columns to strictly be Strings (This completely prevents the float64 error)
+    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID"]
+    for col in text_columns:
+        if col not in df.columns:
+            df[col] = ""
+        # Fill missing math NaNs with actual empty strings, then lock as text object
+        df[col] = df[col].fillna("").astype(str)
+        # Scrub any residual literal "nan" strings Pandas might have generated
+        df[col] = df[col].replace({"nan": "", "None": "", "NaN": ""})
+
+    # 2. Force Duration to strictly be Integers
+    if "Duration (Mins)" not in df.columns:
         df["Duration (Mins)"] = 0
-    # ----------------------------------------
+    df["Duration (Mins)"] = pd.to_numeric(df["Duration (Mins)"], errors='coerce').fillna(0).astype(int)
+
+    # 3. Force Checkboxes to strictly be Booleans (True/False)
+    for col in ["Status", "Scheduled?"]:
+        if col not in df.columns:
+            df[col] = False
+        df[col] = df[col].fillna(False).astype(bool)
+    # ----------------------------
 
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
