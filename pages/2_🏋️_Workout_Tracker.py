@@ -1,97 +1,246 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import plotly.express as px
+from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="Workout Tracker", layout="wide")
-st.title("🏋️ Workout Tracker")
+# --- APP CONFIGURATION ---
+st.set_page_config(page_title="Custom PPL Fitness Tracker", layout="wide", initial_sidebar_state="expanded")
 
-# --- GOOGLE SHEETS SETUP ---
+# Custom Dark Theme Styling via Markdown
+st.markdown("""
+    <style>
+    .main { background-color: #121212; color: #FFFFFF; }
+    div.stButton > button:first-child { background-color: #00CC66; color: white; border-radius: 8px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- GOOGLE SHEETS DATABASE CONFIGURATION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
+df_logs = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
 
 # --- READ SHIELD ---
-# Ensures our required columns exist in memory to prevent crashes if the sheet is empty
-required_cols = ["Date", "Exercise", "Weight (lbs)", "Reps", "Set Number", "Timestamp"]
+required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp"]
 for col in required_cols:
-    if col not in df.columns:
-        df[col] = ""
+    if col not in df_logs.columns:
+        df_logs[col] = ""
 
-# Lock data into the correct formats
-df["Weight (lbs)"] = pd.to_numeric(df["Weight (lbs)"], errors='coerce').fillna(0.0)
-df["Reps"] = pd.to_numeric(df["Reps"], errors='coerce').fillna(0).astype(int)
-df["Set Number"] = pd.to_numeric(df["Set Number"], errors='coerce').fillna(1).astype(int)
-df["Date"] = df["Date"].astype(str)
+# Secure data types for charting and math
+df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
+df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
+df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
+df_logs["Date"] = pd.to_datetime(df_logs["Date"], errors='coerce')
 # -------------------
 
-tab1, tab2 = st.tabs(["📝 Log Workout", "📊 History"])
+# --- EXERCISE DATABASE (Home Gym Routine) ---
+exercises_dict = {
+    "Push (Chest/Shoulders/Triceps)": [
+        "Incline Dumbbell Bench Press", "Flat Bench Press", 
+        "Cable Lateral Raises", "Seated Overhead Dumbbell Press", "Cable Tricep Overhead Extensions"
+    ],
+    "Pull (Back/Biceps)": [
+        "Lat Pulldown / Pull-Ups", "Seated Cable Row / Barbell Row", 
+        "Cable Face Pulls", "Dumbbell Incline Bicep Curls", "Cable Hammer Curls"
+    ],
+    "Legs & Abs (Thigh/Calf Focus)": [
+        "Barbell Squats", "Dumbbell Bulgarian Split Squats", 
+        "Calf Raises", "Hanging Knee Raises", "Cable Woodchoppers"
+    ],
+    "Cardio (Treadmill)": [
+        "Treadmill Steady State", "Treadmill Intervals"
+    ]
+}
 
-with tab1:
-    st.header("Log an Exercise")
+# --- HEADER ---
+st.title("⚡ Dynamic Performance Dashboard")
+st.subheader("6-Day Home Gym PPL - Permanent Cloud Storage Edition")
 
-    # 1. Ask for the exercise and number of sets OUTSIDE the form
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        exercise_name = st.text_input("Exercise Name", placeholder="e.g., Incline Dumbbell Bench Press")
-    with col2:
-        num_sets = st.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
+# --- SIDEBAR: BULK LOGGING DATA ---
+st.sidebar.header("🏋️ Log a Workout")
+date_input = st.sidebar.date_input("Workout Date", datetime.today())
+split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
+exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
 
-    # 2. Build the dynamic form based on the number chosen above
-    with st.form("bulk_log_form", clear_on_submit=True):
+# CONDITIONAL INTERFACE: Cardio vs Weights
+if split_input == "Cardio (Treadmill)":
+    with st.sidebar.form("cardio_form", clear_on_submit=True):
+        duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
+        if st.form_submit_button("Log Cardio Session"):
+            new_row = {
+                "Date": date_input.strftime('%Y-%m-%d'),
+                "Split Day": split_input,
+                "Exercise": exercise_input,
+                "Set Number": 1,
+                "Weight (lbs)": 0.0,
+                "Reps": duration_input, # Storing minutes in Reps for charting
+                "Estimated 1RM": 0.0,
+                "Timestamp": datetime.now().strftime("%H:%M:%S")
+            }
+            updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
+            try:
+                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.sidebar.success("Cardio logged!")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Save failed: {e}")
+else:
+    # Quick helper to autofill with the last logged weight
+    last_weight = 135.0
+    if not df_logs.empty:
+        past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
+        if not past_exe_data.empty:
+            last_weight = float(past_exe_data.sort_values(by="Date").iloc[-1]["Weight (lbs)"])
+
+    num_sets = st.sidebar.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
+    
+    with st.sidebar.form("bulk_log_form", clear_on_submit=True):
         st.write("### Fill out your sets")
-        
-        # Create header columns so it looks like a clean spreadsheet
-        h1, h2, h3 = st.columns([1, 2, 2])
-        h1.write("**Set**")
-        h2.write("**Weight (lbs)**")
-        h3.write("**Reps**")
-        
         captured_sets = []
         
-        # Generate the exact number of rows you requested
+        # Squeeze the inputs into 2 columns for the sidebar
         for i in range(int(num_sets)):
-            c1, c2, c3 = st.columns([1, 2, 2])
+            c1, c2 = st.columns(2)
             with c1:
-                st.write(f"**{i + 1}**")
+                w_val = st.number_input(f"W (lbs) - Set {i+1}", min_value=0.0, value=last_weight, step=2.5, key=f"w_{i}")
             with c2:
-                weight_val = st.number_input("Weight", min_value=0.0, value=0.0, step=2.5, key=f"weight_{i}", label_visibility="collapsed")
-            with c3:
-                reps_val = st.number_input("Reps", min_value=0, value=0, step=1, key=f"reps_{i}", label_visibility="collapsed")
+                r_val = st.number_input(f"Reps - Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
             
-            captured_sets.append({
-                "Date": str(datetime.date.today()),
-                "Exercise": exercise_name,
-                "Weight (lbs)": float(weight_val),
-                "Reps": int(reps_val),
-                "Set Number": i + 1,
-                "Timestamp": datetime.datetime.now().strftime("%H:%M:%S")
-            })
+            captured_sets.append({"w": w_val, "r": r_val, "set": i+1})
             
-        # 3. The Submit Button
-        if st.form_submit_button("Log All Sets"):
-            if exercise_name:
-                # Filter out any sets where you left the reps at 0
-                valid_sets = [s for s in captured_sets if s["Reps"] > 0]
+        if st.form_submit_button("Log All Sets to Dashboard"):
+            valid_sets = [s for s in captured_sets if s["r"] > 0]
+            
+            if valid_sets:
+                new_rows = []
+                for s in valid_sets:
+                    # Calculate 1RM for analytics
+                    est_1rm = round(s["w"] * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else s["w"]
+                    new_rows.append({
+                        "Date": date_input.strftime('%Y-%m-%d'),
+                        "Split Day": split_input,
+                        "Exercise": exercise_input,
+                        "Set Number": s["set"],
+                        "Weight (lbs)": s["w"],
+                        "Reps": s["r"],
+                        "Estimated 1RM": est_1rm,
+                        "Timestamp": datetime.now().strftime("%H:%M:%S")
+                    })
                 
-                if valid_sets:
-                    new_rows_df = pd.DataFrame(valid_sets)
-                    updated_df = pd.concat([df, new_rows_df], ignore_index=True)
-                    
-                    try:
-                        conn.update(
-                            data=updated_df, 
-                            spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet
-                        )
-                        st.success(f"💪 Successfully logged {len(valid_sets)} sets for {exercise_name}!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to save to Google Sheets: {e}")
-                else:
-                    st.warning("Please enter reps for at least one set before saving.")
+                updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
+                try:
+                    conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                    st.sidebar.success(f"Logged {len(valid_sets)} sets!")
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Save failed: {e}")
             else:
-                st.warning("Please enter an exercise name at the top.")
+                st.sidebar.warning("Enter reps for at least one set.")
+
+
+# --- MAIN DASHBOARD INTERFACE ---
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📋 Exercise Guide & Target Weights", 
+    "📈 Progress Analytics", 
+    "📜 Session History Ledger", 
+    "⏱️ Rest Interval Pacer"
+])
+
+with tab1:
+    st.markdown("### Your Active 6-Day Home Gym Routine")
+    st.write("Below is your weekly plan paired with a live reminder of your **last recorded working weight** to guide your next session.")
+    
+    for split, exercises in exercises_dict.items():
+        with st.expander(f"➔ {split}", expanded=True):
+            guide_data = []
+            for exe in exercises:
+                if not df_logs.empty:
+                    exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
+                    if not exe_history.empty:
+                        last_session = exe_history.iloc[0]
+                        if split == "Cardio (Treadmill)":
+                            last_weight_str = "Cardio Session"
+                            last_reps_str = f"{int(last_session['Reps'])} mins"
+                        else:
+                            last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
+                            last_reps_str = f"{int(last_session['Reps'])} reps"
+                        last_date_str = last_session['Date'].strftime('%b %d, %Y')
+                    else:
+                        last_weight_str = "No history"
+                        last_reps_str = "Clear to start"
+                        last_date_str = "-"
+                else:
+                    last_weight_str = "No history"
+                    last_reps_str = "Clear to start"
+                    last_date_str = "-"
+                
+                if "Raises" in exe or "Curls" in exe or "Extensions" in exe:
+                    target_range = "3 Sets x 10-12 Reps (60s rest)"
+                elif "Squats" in exe or "Press" in exe:
+                    target_range = "3 Sets x 8-12 Reps (90s rest)"
+                elif "Cardio" in split:
+                    target_range = "45-60 Mins (Treadmill)"
+                else:
+                    target_range = "3-4 Sets x 8-12 Reps"
+
+                guide_data.append({
+                    "Exercise Name": exe,
+                    "Target Progression Protocol": target_range,
+                    "Last Weight Used": last_weight_str,
+                    "Last Reps/Duration": last_reps_str,
+                    "Last Workout Date": last_date_str
+                })
+            
+            guide_df = pd.DataFrame(guide_data)
+            st.write(guide_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
 with tab2:
-    st.header("Workout History")
-    # Display the master sheet data cleanly in the dashboard
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    if df_logs.empty:
+        st.info("No cloud data logged yet. Use the sidebar to log your first sets!")
+    else:
+        st.markdown("### Trajectory Analytics")
+        all_exercises = df_logs["Exercise"].dropna().unique()
+        selected_chart_exe = st.selectbox("Select Exercise to Visualize", all_exercises)
+        
+        filtered_df = df_logs[df_logs["Exercise"] == selected_chart_exe].sort_values(by="Date")
+        
+        if not filtered_df.empty:
+            if "Treadmill" in selected_chart_exe:
+                fig = px.line(
+                    filtered_df, 
+                    x="Date", y="Reps", 
+                    markers=True,
+                    title= f"Cardio Endurance Over Time: {selected_chart_exe}",
+                    labels={"Reps": "Session Duration (Minutes)", "Date": "Training Date"}
+                )
+            else:
+                fig = px.line(
+                    filtered_df, 
+                    x="Date", y="Estimated 1RM", 
+                    markers=True,
+                    title= f"Strength Progression Curve: {selected_chart_exe}",
+                    labels={"Estimated 1RM": "Calculated 1RM (lbs)", "Date": "Training Date"}
+                )
+            fig.update_traces(line_color='#00CC66', marker=dict(size=8))
+            fig.update_layout(template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
+
+with tab3:
+    st.markdown("### Cloud Sync Master Ledger")
+    st.info("Data is syncing directly to your secure Google Sheet.")
+    
+    if not df_logs.empty:
+        # Display cleanly without the internal index numbers
+        display_ledger = df_logs.copy()
+        display_ledger['Date'] = display_ledger['Date'].dt.strftime('%Y-%m-%d')
+        st.dataframe(display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False]), use_container_width=True, hide_index=True)
+    else:
+        st.info("Your spreadsheet is currently empty. Use the sidebar to log a set!")
+
+with tab4:
+    st.markdown("### In-Workout Precision Rest Timer")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Compound Movements (Squats, Bench, Rows)", "90 - 120 sec")
+    with col2:
+        st.metric("Isolation Movements (Raises, Curls, Extensions)", "60 sec")
