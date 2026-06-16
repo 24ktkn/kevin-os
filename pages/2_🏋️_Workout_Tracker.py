@@ -1,330 +1,163 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import plotly.express as px
+from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Mission Control", layout="wide")
-st.title("🚀 Mission Control")
+# --- APP CONFIGURATION ---
+st.set_page_config(page_title="Custom PPL Fitness Tracker", layout="wide", initial_sidebar_state="expanded")
 
-# --- CALENDAR API SETUP (Service Account) ---
-CALENDAR_MAP = {
-    "Kevin Nguyen": "24ktkn@gmail.com",
-    "Family": "family05668227215423587251@group.calendar.google.com",
-    "School": "0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com",
-    "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
-}
+# Custom Dark Theme Styling via Markdown
+st.markdown("""
+    <style>
+    .main { background-color: #121212; color: #FFFFFF; }
+    div.stButton > button:first-child { background-color: #00CC66; color: white; border-radius: 8px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- TASK LISTS MAP (OAuth 2.0) ---
-TASKLIST_MAP = {
-    "Kevin Nguyen": "@default", 
-    "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
-    "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        
-    "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"   
-}
-
-def get_calendar_service():
-    creds_info = st.secrets["connections"]["gsheets"]
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info, scopes=['https://www.googleapis.com/auth/calendar']
-    )
-    return build('calendar', 'v3', credentials=creds)
-
-cal_service = get_calendar_service()
-
-def get_tasks_service():
-    creds_info = st.secrets["tasks_api"]
-    creds = Credentials(
-        token=None,
-        refresh_token=creds_info["refresh_token"],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=creds_info["client_id"],
-        client_secret=creds_info["client_secret"]
-    )
-    return build('tasks', 'v1', credentials=creds)
-
-tasks_service = get_tasks_service()
-
-# --- SYNCHRONIZATION ENGINE ---
-def sync_all_to_sheet(df, service_cal, service_tasks, connection):
-    st.toast("🔄 Scanning Google Calendars and Tasks for updates...")
-    now = datetime.datetime.utcnow()
-    time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
-    time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
-    sheet_updated = False
-    
-    # --- Ironclad Type Shield ---
-    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location", "Timeblock ID"]
-    for col in text_columns:
-        if col not in df.columns:
-            df[col] = ""
-        df[col] = df[col].fillna("").astype(str)
-        df[col] = df[col].replace({"nan": "", "None": "", "NaN": ""})
-
-    if "Duration (Mins)" not in df.columns:
-        df["Duration (Mins)"] = 0
-    df["Duration (Mins)"] = pd.to_numeric(df["Duration (Mins)"], errors='coerce').fillna(0).astype(int)
-
-    for col in ["Status", "Scheduled?"]:
-        if col not in df.columns:
-            df[col] = False
-        df[col] = df[col].fillna(False).astype(bool)
-
-    # --- PHASE 1: SYNC CALENDARS ---
-    for cal_name, cal_id in CALENDAR_MAP.items():
-        try:
-            events_result = service_cal.events().list(
-                calendarId=cal_id, timeMin=time_min, timeMax=time_max,
-                singleEvents=True, showDeleted=True, orderBy='startTime'
-            ).execute()
-            
-            events = events_result.get('items', [])
-            
-            for event in events:
-                gcal_id = event.get('id')
-                status = event.get('status')
-                
-                if status == 'cancelled':
-                    if gcal_id in df["Event ID"].values:
-                        df = df[df["Event ID"] != gcal_id].reset_index(drop=True)
-                        sheet_updated = True
-                    elif gcal_id in df["Timeblock ID"].values:
-                        idx_to_clear = df[df["Timeblock ID"] == gcal_id].index
-                        df.loc[idx_to_clear, "Timeblock ID"] = ""
-                        sheet_updated = True
-                    continue 
-                
-                summary = event.get('summary', 'Untitled Event')
-                description = event.get('description', '')
-                location_str = event.get('location', '')
-                
-                start_info = event.get('start', {})
-                end_info = event.get('end', {})
-                
-                if 'dateTime' in start_info:
-                    start_raw = start_info.get('dateTime')
-                    end_raw = end_info.get('dateTime')
-                    start_dt = datetime.datetime.fromisoformat(start_raw[:19])
-                    end_dt = datetime.datetime.fromisoformat(end_raw[:19])
-                    duration_mins = int((end_dt - start_dt).total_seconds() / 60)
-                    date_str = start_dt.strftime('%Y-%m-%d')
-                    time_str = start_dt.strftime('%H:%M:%S')
-                elif 'date' in start_info:
-                    date_str = start_info.get('date')
-                    time_str = ""
-                    duration_mins = 0
-                else:
-                    continue
-
-                matching_rows = df[(df["Event ID"] == gcal_id) | (df["Timeblock ID"] == gcal_id)]
-                
-                if not matching_rows.empty:
-                    idx = matching_rows.index[0]
-                    try:
-                        current_duration = int(df.at[idx, "Duration (Mins)"])
-                    except (ValueError, TypeError):
-                        current_duration = 0
-                    
-                    if (df.at[idx, "Date"] != date_str or 
-                        current_duration != duration_mins or
-                        df.at[idx, "Location"] != location_str):
-                        
-                        df.at[idx, "Date"] = date_str
-                        df.at[idx, "Time"] = time_str
-                        df.at[idx, "Duration (Mins)"] = int(duration_mins)
-                        df.at[idx, "Location"] = location_str
-                        sheet_updated = True
-                else:
-                    new_row = {
-                        "Status": False, "Item Name": summary, "Type": "Event",
-                        "Calendar": cal_name, "Date": date_str, "Time": time_str,
-                        "Duration (Mins)": int(duration_mins), "Scheduled?": True,
-                        "Notes": description, "Event ID": gcal_id, "Location": location_str,
-                        "Timeblock ID": ""
-                    }
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    sheet_updated = True
-        except Exception as e:
-            st.error(f"Error reading calendar '{cal_name}': {e}")
-
-    # --- PHASE 2: SYNC TASKS ---
-    processed_tasklists = set()
-    for tl_name, tl_id in TASKLIST_MAP.items():
-        if tl_id in processed_tasklists:
-            continue
-        processed_tasklists.add(tl_id)
-        try:
-            tasks_result = service_tasks.tasks().list(
-                tasklist=tl_id, showCompleted=True, showHidden=True, showDeleted=True
-            ).execute()
-            
-            for task in tasks_result.get('items', []):
-                g_id = task.get('id')
-                g_status = task.get('status') 
-                g_deleted = task.get('deleted', False)
-                
-                if g_deleted:
-                    if g_id in df["Event ID"].values:
-                        df = df[df["Event ID"] != g_id].reset_index(drop=True)
-                        sheet_updated = True
-                    continue
-                    
-                matching_rows = df[df["Event ID"] == g_id]
-                if not matching_rows.empty:
-                    idx = matching_rows.index[0]
-                    is_completed = (g_status == 'completed')
-                    current_status = bool(df.at[idx, "Status"])
-                    
-                    if is_completed != current_status:
-                        df.at[idx, "Status"] = is_completed
-                        sheet_updated = True
-        except Exception as e:
-            pass
-            
-    if sheet_updated:
-        connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-        st.toast("✅ Master Sheet perfectly synchronized with Calendars and Tasks!")
-        return df, True
-        
-    st.toast("🌟 Already up to date.")
-    return df, False
-
-# --- GOOGLE SHEETS SETUP ---
+# --- SECURE DATABASE CONNECTION ---
+# Using the exact same bot we set up for Mission Control
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
 
-# --- THE READ SHIELD ---
-# Guarantees columns exist in memory so our tab filters never crash
-required_cols = ["Status", "Scheduled?", "Type", "Date", "Timeblock ID"]
-for col in required_cols:
-    if col not in df.columns:
-        df[col] = False if col in ["Status", "Scheduled?"] else ""
+try:
+    df_logs = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
+    # Clean up the date column for charting
+    if not df_logs.empty and 'Date' in df_logs.columns:
+        df_logs['Date'] = pd.to_datetime(df_logs['Date'])
+except Exception as e:
+    st.error("Could not read Workout Sheet. Is it completely empty? Try adding headers manually first.")
+    df_logs = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Weight (lbs)", "Reps", "Estimated 1RM"])
 
-# Lock them into the correct data types safely
-df["Status"] = df["Status"].fillna(False).astype(bool)
-df["Scheduled?"] = df["Scheduled?"].fillna(False).astype(bool)
-df["Type"] = df["Type"].fillna("Event").astype(str)
-# -----------------------
+# Fallback if the sheet has no columns yet
+if df_logs.empty or 'Exercise' not in df_logs.columns:
+    df_logs = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Weight (lbs)", "Reps", "Estimated 1RM"])
 
-tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Sheet View", "📅 Calendar View"])
+# --- EXERCISE DATABASE (Home Gym Routine) ---
+exercises_dict = {
+    "Push (Chest/Shoulders/Triceps)": [
+        "Incline Dumbbell Bench Press", "Flat Bench Press", 
+        "Cable Lateral Raises", "Seated Overhead Dumbbell Press", "Cable Tricep Overhead Extensions"
+    ],
+    "Pull (Back/Biceps)": [
+        "Lat Pulldown / Pull-Ups", "Seated Cable Row / Barbell Row", 
+        "Cable Face Pulls", "Dumbbell Incline Bicep Curls", "Cable Hammer Curls"
+    ],
+    "Legs & Abs (Thigh/Calf Focus)": [
+        "Barbell Squats", "Dumbbell Bulgarian Split Squats", 
+        "Calf Raises", "Hanging Knee Raises", "Cable Woodchoppers"
+    ],
+    "Cardio (Treadmill)": [
+        "Treadmill Steady State", "Treadmill Intervals"
+    ]
+}
+
+# --- HEADER ---
+st.title("⚡ Dynamic Performance Dashboard")
+st.subheader("6-Day Home Gym PPL - Permanent Cloud Storage Edition")
+
+# --- SIDEBAR: LOG WORKOUT DATA ---
+st.sidebar.header("🏋️ Log a Set")
+date_input = st.sidebar.date_input("Workout Date", datetime.today())
+split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
+exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
+
+# CONDITIONAL INTERFACE: If Cardio is selected, show time instead of weight/reps
+if split_input == "Cardio (Treadmill)":
+    duration_input = st.sidebar.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
+    weight_input = 0.0
+    reps_input = duration_input  # Storing minutes in the 'Reps' column for tracking
+    estimated_1rm = 0.0
+else:
+    last_weight = 135.0
+    if not df_logs.empty and "Exercise" in df_logs.columns:
+        past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
+        if not past_exe_data.empty:
+            last_weight = float(past_exe_data.sort_values(by="Date").iloc[-1]["Weight (lbs)"])
+
+    weight_input = st.sidebar.number_input("Weight (lbs)", min_value=0.0, step=2.5, value=last_weight)
+    reps_input = st.sidebar.number_input("Reps Performed", min_value=1, max_value=50, value=10)
+
+    # Calculate Estimated 1-Rep Max using the Epley formula
+    if reps_input > 1:
+        estimated_1rm = round(weight_input * (1 + (reps_input / 30.0)), 1)
+    else:
+        estimated_1rm = weight_input
+
+if st.sidebar.button("Log Set to Dashboard"):
+    new_row = {
+        "Date": str(date_input),
+        "Split Day": split_input,
+        "Exercise": exercise_input,
+        "Weight (lbs)": float(weight_input),
+        "Reps": int(reps_input),
+        "Estimated 1RM": float(estimated_1rm)
+    }
+    
+    st.sidebar.warning("Pushing to Google Cloud...")
+    updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
+    # The actual magic that saves it permanently!
+    conn.update(data=updated_df)
+    
+    st.sidebar.success("✅ Cloud sync complete!")
+    st.rerun()
+
+# --- MAIN DASHBOARD INTERFACE ---
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📋 Exercise Guide & Target Weights", 
+    "📈 Progress Analytics", 
+    "📜 Session History Ledger", 
+    "⏱️ Rest Interval Pacer"
+])
 
 with tab1:
-    st.header("Log a Task or Event")
-    with st.form("ingestion_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            item_name = st.text_input("Item Name", placeholder="e.g., Study Pathology")
-            item_type = st.selectbox("Type", ["Task", "Event"])
-            calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
-            
-            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before"]
-            selected_reminders = st.multiselect(
-                "Notifications (Pop-up)", options=notification_options, default=["30 minutes before"]
-            )
-
-        with col2:
-            target_date = st.date_input("Date", datetime.date.today())
-            all_day = st.checkbox("All-day / No specific time")
-            start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
-            duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
-            
-            repeat_option = st.selectbox(
-                "Repeat", ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"]
-            )
-        
-        location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building or 123 Main St")
-        notes = st.text_area("Notes", placeholder="Add links or modules here...")
-        
-        if st.form_submit_button("Push to Master Tracker") and item_name:
-            target_cal_id = CALENDAR_MAP.get(calendar_cat)
-            
-            reminder_map = {
-                "At time of event": 0, "10 minutes before": 10,
-                "30 minutes before": 30, "1 hour before": 60, 
-                "2 hours before": 120, "1 day before": 1440
-            }
-
-            if selected_reminders:
-                overrides = [{'method': 'popup', 'minutes': reminder_map[r]} for r in selected_reminders]
-                reminders_payload = {'useDefault': False, 'overrides': overrides}
-            else:
-                reminders_payload = {'useDefault': True}
-            
-            if all_day:
-                event_body = {
-                    'summary': item_name, 'description': notes, 'location': location_input,
-                    'start': {'date': target_date.strftime('%Y-%m-%d')},
-                    'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
-                    'reminders': reminders_payload
-                }
-                time_str = ""
-                duration_val = 0
-            else:
-                start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
-                end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
-                end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
-
-                event_body = {
-                    'summary': item_name, 'description': notes, 'location': location_input,
-                    'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
-                    'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
-                    'reminders': reminders_payload
-                }
-                time_str = str(start_time)
-                duration_val = int(duration)
-
-            rrule_map = {
-                "Daily": "RRULE:FREQ=DAILY", "Weekly": "RRULE:FREQ=WEEKLY",
-                "Monthly": "RRULE:FREQ=MONTHLY", "Every Weekday (Mon-Fri)": "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-            }
-            if repeat_option != "None":
-                event_body['recurrence'] = [rrule_map[repeat_option]]
-
-            try:
-                timeblock_id = ""
-                if item_type == "Event":
-                    created_item = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
-                    new_item_id = created_item.get('id')
-                else:
-                    target_tasklist_id = TASKLIST_MAP.get(calendar_cat, "@default")
-                    due_date = f"{target_date}T00:00:00.000Z"
-                    task_notes = notes
-                    
-                    if not all_day:
-                        time_display = start_time.strftime('%I:%M %p')
-                        task_notes = f"⏰ Scheduled: {time_display}\n\n{notes}" if notes else f"⏰ Scheduled: {time_display}"
+    st.markdown("### Your Active 6-Day Home Gym Routine")
+    st.write("Below is your weekly plan paired with a live reminder of your **last recorded working weight** to guide your next session.")
+    
+    for split, exercises in exercises_dict.items():
+        with st.expander(f"➔ {split}", expanded=True):
+            guide_data = []
+            for exe in exercises:
+                if not df_logs.empty and "Exercise" in df_logs.columns:
+                    exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
+                    if not exe_history.empty:
+                        last_session = exe_history.iloc[0]
+                        if split == "Cardio (Treadmill)":
+                            last_weight_str = "Cardio Session"
+                            last_reps_str = f"{int(last_session['Reps'])} mins"
+                        else:
+                            last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
+                            last_reps_str = f"{int(last_session['Reps'])} reps"
                         
-                        timeblock_body = event_body.copy()
-                        timeblock_body['summary'] = f"☑️ [Task] {item_name}"
-                        try:
-                            created_tb = cal_service.events().insert(calendarId=target_cal_id, body=timeblock_body).execute()
-                            timeblock_id = created_tb.get('id')
-                        except Exception:
-                            pass
+                        last_date_str = pd.to_datetime(last_session['Date']).strftime('%b %d, %Y')
+                    else:
+                        last_weight_str = "No history"
+                        last_reps_str = "Clear to start"
+                        last_date_str = "-"
+                else:
+                    last_weight_str = "No history"
+                    last_reps_str = "Clear to start"
+                    last_date_str = "-"
+                
+                if "Raises" in exe or "Curls" in exe or "Extensions" in exe:
+                    target_range = "3 Sets x 10-12 Reps (60s rest)"
+                elif "Squats" in exe or "Press" in exe:
+                    target_range = "3 Sets x 8-12 Reps (90s rest)"
+                elif "Cardio" in split:
+                    target_range = "45-60 Mins (Treadmill)"
+                else:
+                    target_range = "3-4 Sets x 8-12 Reps"
 
-                    task_body = {'title': item_name, 'notes': task_notes, 'due': due_date}
-                    created_item = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute()
-                    new_item_id = created_item.get('id')
-                
-                new_row = {
-                    "Status": False, "Item Name": item_name, "Type": item_type, 
-                    "Calendar": calendar_cat, "Date": str(target_date), 
-                    "Time": time_str, "Duration (Mins)": duration_val, 
-                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_item_id,
-                    "Location": location_input, "Timeblock ID": timeblock_id
-                }
-                
-                updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-                
-                st.success(f"✅ '{item_name}' saved to Tasks AND Timeblocked on your Calendar!")
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"Failed to sync with Google: {e}")
+                guide_data.append({
+                    "Exercise Name": exe,
+                    "Target Progression Protocol": target_range,
+                    "Last Weight Used": last_weight_str,
+                    "Last Reps/Duration": last_reps_str,
+                    "Last Workout Date": last_date_str
+                })
+            
+            guide_df = pd.DataFrame(guide_data)
+            st.write(guide_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
 with tab2:
     st.header("Master Task Tracker")
@@ -334,6 +167,7 @@ with tab2:
         if was_updated:
             st.rerun()
             
+    # 1. NEW: Added "Upcoming Tasks" to the categories array
     categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
@@ -346,8 +180,10 @@ with tab2:
             if category == "Upcoming":
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
-                
+            
+            # 2. NEW: Custom logic for the Upcoming Tasks tab
             elif category == "Upcoming Tasks":
+                # Filter for: Is a Task AND is not complete AND (is Unscheduled OR is within 4 weeks)
                 tasks_mask = (df["Type"] == "Task") & (~df["Status"]) & (
                     (~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out))
                 )
@@ -401,6 +237,7 @@ with tab2:
                             except Exception:
                                 pass
                             
+                            # Automatically delete the linked Calendar Timeblock too!
                             tb_id = str(row.get("Timeblock ID", ""))
                             if tb_id and tb_id not in ["None", "", "nan"]:
                                 cal_id = CALENDAR_MAP.get(cal_name)
@@ -444,9 +281,17 @@ with tab2:
                 st.rerun()
 
 with tab3:
-    st.header("Consolidated Calendar View")
-    calendar_iframe = """
-    <iframe src="https://calendar.google.com/calendar/embed?height=600&wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&src=ZW4uY2FuYWRpYW4jaG9saWRheUBncm91cC52LmNhbGVuZGFyLmdvb2dsZS5jb20&src=YjN0ZXZkdWlvaHN1ZDVxNHJwaGlycDVpNmR1dWh1aTdAaW1wb3J0LmNhbGVuZGFyLmdvb2dsZS5jb20&color=%23039be5&color=%238e24aa&color=%23f6bf26&color=%23d50000&color=%230b8043&color=%233f51b5" style="border:solid 1px #777" width="800" height="600" frameborder="0" scrolling="no"></iframe>" 
-    style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>
-    """
-    components.html(calendar_iframe, height=600)
+    st.markdown("### Cloud Sync Master Ledger")
+    st.write("*(Data is now pulled directly from your connected Workout Google Sheet)*")
+    if not df_logs.empty and "Exercise" in df_logs.columns:
+        st.dataframe(df_logs.sort_values(by="Date", ascending=False), use_container_width=True)
+    else:
+        st.info("Your spreadsheet is currently empty. Log a set on the left to start your database!")
+
+with tab4:
+    st.markdown("### In-Workout Precision Rest Timer")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Compound Movements (Squats, Bench, Rows)", "90 - 120 sec")
+    with col2:
+        st.metric("Isolation Movements (Raises, Curls, Extensions)", "60 sec")

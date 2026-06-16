@@ -57,7 +57,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     sheet_updated = False
     
     # --- Ironclad Type Shield ---
-    # NEW: Added Timeblock ID to the text tracking columns
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location", "Timeblock ID"]
     for col in text_columns:
         if col not in df.columns:
@@ -89,13 +88,10 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                 status = event.get('status')
                 
                 if status == 'cancelled':
-                    # Check if it matches an Event OR a Timeblock
                     if gcal_id in df["Event ID"].values:
                         df = df[df["Event ID"] != gcal_id].reset_index(drop=True)
                         sheet_updated = True
                     elif gcal_id in df["Timeblock ID"].values:
-                        # If you manually delete the timeblock on Google Cal, we just clear the ID link
-                        # but keep the actual Task intact.
                         idx_to_clear = df[df["Timeblock ID"] == gcal_id].index
                         df.loc[idx_to_clear, "Timeblock ID"] = ""
                         sheet_updated = True
@@ -123,7 +119,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                 else:
                     continue
 
-                # NEW: Look for either the standard Event ID or the Task's Timeblock ID
                 matching_rows = df[(df["Event ID"] == gcal_id) | (df["Timeblock ID"] == gcal_id)]
                 
                 if not matching_rows.empty:
@@ -201,8 +196,18 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
 
-if "Status" in df.columns: df["Status"] = df["Status"].astype(bool)
-if "Scheduled?" in df.columns: df["Scheduled?"] = df["Scheduled?"].astype(bool)
+# --- THE READ SHIELD ---
+# Guarantees columns exist in memory so our tab filters never crash
+required_cols = ["Status", "Scheduled?", "Type", "Date", "Timeblock ID"]
+for col in required_cols:
+    if col not in df.columns:
+        df[col] = False if col in ["Status", "Scheduled?"] else ""
+
+# Lock them into the correct data types safely
+df["Status"] = df["Status"].fillna(False).astype(bool)
+df["Scheduled?"] = df["Scheduled?"].fillna(False).astype(bool)
+df["Type"] = df["Type"].fillna("Event").astype(str)
+# -----------------------
 
 tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Sheet View", "📅 Calendar View"])
 
@@ -292,9 +297,7 @@ with tab1:
                         time_display = start_time.strftime('%I:%M %p')
                         task_notes = f"⏰ Scheduled: {time_display}\n\n{notes}" if notes else f"⏰ Scheduled: {time_display}"
                         
-                        # --- NEW: GENERATE THE TIMEBLOCK ON CALENDAR ---
                         timeblock_body = event_body.copy()
-                        # Adds a checkmark to the Calendar title so you know it's a Task Block!
                         timeblock_body['summary'] = f"☑️ [Task] {item_name}"
                         try:
                             created_tb = cal_service.events().insert(calendarId=target_cal_id, body=timeblock_body).execute()
@@ -331,7 +334,7 @@ with tab2:
         if was_updated:
             st.rerun()
             
-    categories = ["Upcoming", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
     today = pd.to_datetime(datetime.date.today())
@@ -343,6 +346,13 @@ with tab2:
             if category == "Upcoming":
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
+                
+            elif category == "Upcoming Tasks":
+                tasks_mask = (df["Type"] == "Task") & (~df["Status"]) & (
+                    (~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out))
+                )
+                display_df = df[tasks_mask].copy()
+                
             elif category == "All History":
                 display_df = df.copy()
             elif category == "All Events":
@@ -391,7 +401,6 @@ with tab2:
                             except Exception:
                                 pass
                             
-                            # NEW: Automatically delete the linked Calendar Timeblock too!
                             tb_id = str(row.get("Timeblock ID", ""))
                             if tb_id and tb_id not in ["None", "", "nan"]:
                                 cal_id = CALENDAR_MAP.get(cal_name)
