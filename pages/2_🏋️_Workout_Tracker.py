@@ -39,7 +39,7 @@ exercises_dict = {
         "Cable Lateral Raises", "Seated Overhead Dumbbell Press", "Cable Tricep Overhead Extensions"
     ],
     "Pull (Back/Biceps)": [
-        "Lat Pulldown / Pull-Ups", "Seated Cable Row / Barbell Row", 
+        "Pull-Ups", "Barbell Row", 
         "Cable Face Pulls", "Dumbbell Incline Bicep Curls", "Cable Hammer Curls"
     ],
     "Legs & Abs (Thigh/Calf Focus)": [
@@ -61,7 +61,7 @@ date_input = st.sidebar.date_input("Workout Date", datetime.today())
 split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
 exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
 
-# CONDITIONAL INTERFACE: Cardio vs Weights
+# CONDITIONAL INTERFACE: Cardio vs Weights vs Bodyweight
 if split_input == "Cardio (Treadmill)":
     with st.sidebar.form("cardio_form", clear_on_submit=True):
         duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
@@ -84,9 +84,12 @@ if split_input == "Cardio (Treadmill)":
             except Exception as e:
                 st.sidebar.error(f"Save failed: {e}")
 else:
+    # Identify if the selected exercise is purely bodyweight
+    is_bodyweight = exercise_input in ["Pull-Ups", "Hanging Knee Raises"]
+
     # Quick helper to autofill with the last logged weight
     last_weight = 135.0
-    if not df_logs.empty:
+    if not df_logs.empty and not is_bodyweight:
         past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
         if not past_exe_data.empty:
             last_weight = float(past_exe_data.sort_values(by="Date").iloc[-1]["Weight (lbs)"])
@@ -94,13 +97,17 @@ else:
     num_sets = st.sidebar.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
     
     with st.sidebar.form("bulk_log_form", clear_on_submit=True):
-        # NEW: Single master weight input applies to everything below it
-        master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5)
         
+        # Hide the weight dial if it is a bodyweight movement
+        if not is_bodyweight:
+            master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5)
+        else:
+            st.write("*(Bodyweight Exercise)*")
+            master_weight = 0.0
+            
         st.write("### Reps Per Set")
         captured_sets = []
         
-        # Squeeze the reps into a tight, clean list
         for i in range(int(num_sets)):
             r_val = st.number_input(f"Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
             captured_sets.append({"set": i+1, "r": r_val})
@@ -111,14 +118,18 @@ else:
             if valid_sets:
                 new_rows = []
                 for s in valid_sets:
-                    # Calculate 1RM using the master weight
-                    est_1rm = round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight
+                    # Calculate 1RM for analytics (Bodyweight just defaults to 0)
+                    if is_bodyweight:
+                        est_1rm = 0.0
+                    else:
+                        est_1rm = round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight
+                        
                     new_rows.append({
                         "Date": date_input.strftime('%Y-%m-%d'),
                         "Split Day": split_input,
                         "Exercise": exercise_input,
                         "Set Number": s["set"],
-                        "Weight (lbs)": master_weight, # Injects the master weight to every row
+                        "Weight (lbs)": master_weight, 
                         "Reps": s["r"],
                         "Estimated 1RM": est_1rm,
                         "Timestamp": datetime.now().strftime("%H:%M:%S")
@@ -127,7 +138,7 @@ else:
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
                 try:
                     conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
-                    st.sidebar.success(f"Logged {len(valid_sets)} sets at {master_weight} lbs!")
+                    st.sidebar.success(f"Logged {len(valid_sets)} sets{'!' if is_bodyweight else f' at {master_weight} lbs!'}")
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Save failed: {e}")
@@ -158,6 +169,9 @@ with tab1:
                         if split == "Cardio (Treadmill)":
                             last_weight_str = "Cardio Session"
                             last_reps_str = f"{int(last_session['Reps'])} mins"
+                        elif exe in ["Pull-Ups", "Hanging Knee Raises"]:
+                            last_weight_str = "Bodyweight"
+                            last_reps_str = f"{int(last_session['Reps'])} reps"
                         else:
                             last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
                             last_reps_str = f"{int(last_session['Reps'])} reps"
@@ -173,10 +187,12 @@ with tab1:
                 
                 if "Raises" in exe or "Curls" in exe or "Extensions" in exe:
                     target_range = "3 Sets x 10-12 Reps (60s rest)"
-                elif "Squats" in exe or "Press" in exe:
+                elif "Squats" in exe or "Press" in exe or "Row" in exe:
                     target_range = "3 Sets x 8-12 Reps (90s rest)"
                 elif "Cardio" in split:
                     target_range = "45-60 Mins (Treadmill)"
+                elif "Pull-Ups" in exe:
+                    target_range = "3 Sets x AMRAP (90s rest)"
                 else:
                     target_range = "3-4 Sets x 8-12 Reps"
 
@@ -211,6 +227,14 @@ with tab2:
                     title= f"Cardio Endurance Over Time: {selected_chart_exe}",
                     labels={"Reps": "Session Duration (Minutes)", "Date": "Training Date"}
                 )
+            elif selected_chart_exe in ["Pull-Ups", "Hanging Knee Raises"]:
+                fig = px.line(
+                    filtered_df, 
+                    x="Date", y="Reps", 
+                    markers=True,
+                    title= f"Bodyweight Endurance Over Time: {selected_chart_exe}",
+                    labels={"Reps": "Reps Completed", "Date": "Training Date"}
+                )
             else:
                 fig = px.line(
                     filtered_df, 
@@ -228,7 +252,6 @@ with tab3:
     st.info("Data is syncing directly to your secure Google Sheet.")
     
     if not df_logs.empty:
-        # Display cleanly without the internal index numbers
         display_ledger = df_logs.copy()
         display_ledger['Date'] = display_ledger['Date'].dt.strftime('%Y-%m-%d')
         st.dataframe(display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False]), use_container_width=True, hide_index=True)
@@ -239,6 +262,6 @@ with tab4:
     st.markdown("### In-Workout Precision Rest Timer")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Compound Movements (Squats, Bench, Rows)", "90 - 120 sec")
+        st.metric("Compound Movements (Squats, Bench, Rows, Pull-Ups)", "90 - 120 sec")
     with col2:
         st.metric("Isolation Movements (Raises, Curls, Extensions)", "60 sec")
