@@ -199,6 +199,7 @@ with tab1:
                 "10 minutes before": 10,
                 "30 minutes before": 30,
                 "1 hour before": 60,
+                "2 hours before": 120,
                 "1 day before": 1440
             }
 
