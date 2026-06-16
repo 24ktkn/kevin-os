@@ -217,27 +217,24 @@ with tab1:
 with tab2:
     st.header("Master Task Tracker")
     
-    # Add a manual trigger button at the top of the ledger view
     if st.button("🔄 Sync Calendar Changes to Sheet"):
         df, was_updated = sync_calendars_to_sheet(df, cal_service, conn)
         if was_updated:
             st.rerun()
             
-    # 1. Added "Upcoming Focus" as the primary tab, shifted "All" to the second slot
-    categories = ["Upcoming Focus", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    # 1. Renamed to "Upcoming"
+    categories = ["Upcoming", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
     
-    # 2. Calculate the exact time windows for your 4-week filter
     today = pd.to_datetime(datetime.date.today())
     four_weeks_out = today + pd.Timedelta(weeks=4)
-    
-    # Safely parse the Date column into a format Pandas can do math on
     safe_dates = pd.to_datetime(df["Date"], errors='coerce')
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
-            # 1. Advanced filtering logic based on selection
-            if category == "Upcoming Focus":
+            # 2. Updated the matching string to "Upcoming"
+            if category == "Upcoming":
+                # This mask naturally spans across ALL 4 calendars
                 upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
                 display_df = df[upcoming_mask].copy()
             elif category == "All History":
@@ -249,7 +246,6 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-            # 2. Add the temporary explicit deletion column to the far left
             display_df.insert(0, "🗑️ Delete?", False)
             
             st.write(f"### {category}")
@@ -280,33 +276,26 @@ with tab2:
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
                 
-                # --- PHASE 1: Handle Deletions ---
                 rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
                 
                 for idx, row in rows_to_delete.iterrows():
                     gcal_id = str(row.get("Event ID", ""))
                     cal_name = row.get("Calendar")
                     
-                    # 1a. If it has a Calendar ID, command Google Calendar to delete it
                     if gcal_id and gcal_id not in ["None", "", "nan"]:
                         cal_id = CALENDAR_MAP.get(cal_name)
                         if cal_id:
                             try:
                                 cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
                             except Exception:
-                                # Ignore errors if the event was already deleted manually
                                 pass
                     
-                    # 1b. Drop the row entirely from our Master Dataframe
                     if idx in df.index:
                         df = df.drop(index=idx)
                 
-                # --- PHASE 2: Handle Standard Edits ---
-                # Strip out the temporary delete column and update the master sheet with remaining data
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
                 
-                # --- PHASE 3: Push to Cloud ---
                 conn.update(
                     data=df, 
                     spreadsheet=st.secrets.connections.gsheets.mission_control_sheet
