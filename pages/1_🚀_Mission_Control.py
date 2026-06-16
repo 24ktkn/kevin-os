@@ -56,7 +56,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
     sheet_updated = False
     
-    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location", "Timeblock ID"]
+    text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Location", "Notes", "Event ID", "Timeblock ID"]
     for col in text_columns:
         if col not in df.columns:
             df[col] = ""
@@ -72,7 +72,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
-    # PHASE 1: SYNC CALENDARS
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
             events_result = service_cal.events().list(
@@ -141,7 +140,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                         "Status": False, "Item Name": summary, "Type": "Event",
                         "Calendar": cal_name, "Date": date_str, "Time": time_str,
                         "Duration (Mins)": int(duration_mins), "Scheduled?": True,
-                        "Notes": description, "Event ID": gcal_id, "Location": location_str,
+                        "Location": location_str, "Notes": description, "Event ID": gcal_id,
                         "Timeblock ID": ""
                     }
                     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
@@ -149,11 +148,9 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
         except Exception as e:
             st.error(f"Error reading calendar '{cal_name}': {e}")
 
-    # PHASE 2: SYNC TASKS
     processed_tasklists = set()
     for tl_name, tl_id in TASKLIST_MAP.items():
-        if tl_id in processed_tasklists:
-            continue
+        if tl_id in processed_tasklists: continue
         processed_tasklists.add(tl_id)
         try:
             tasks_result = service_tasks.tasks().list(
@@ -180,8 +177,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                     if is_completed != current_status:
                         df.at[idx, "Status"] = is_completed
                         sheet_updated = True
-        except Exception as e:
-            pass
+        except Exception: pass
             
     if sheet_updated:
         connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
@@ -195,15 +191,15 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
 
-required_cols = ["Status", "Scheduled?", "Type", "Date", "Timeblock ID"]
+required_cols = ["Status", "Scheduled?", "Type", "Date", "Location", "Timeblock ID"]
 for col in required_cols:
     if col not in df.columns:
         df[col] = False if col in ["Status", "Scheduled?"] else ""
 
-# Master Read Shield with Boolean fixes applied
 df["Status"] = df["Status"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Type"] = df["Type"].fillna("Event").astype(str)
+df["Location"] = df["Location"].fillna("").astype(str)
 
 tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Task Tracker", "📅 Calendar View"])
 
@@ -215,10 +211,10 @@ with tab1:
             item_name = st.text_input("Item Name", placeholder="e.g., Study Pathology")
             item_type = st.selectbox("Type", ["Task", "Event"])
             calendar_cat = st.selectbox("Calendar", list(CALENDAR_MAP.keys()))
-            
-            notification_options = ["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before"]
             selected_reminders = st.multiselect(
-                "Notifications (Pop-up)", options=notification_options, default=["30 minutes before"]
+                "Notifications (Pop-up)", 
+                options=["At time of event", "10 minutes before", "30 minutes before", "1 hour before", "2 hours before", "1 day before"], 
+                default=["30 minutes before"]
             )
 
         with col2:
@@ -226,22 +222,14 @@ with tab1:
             all_day = st.checkbox("All-day / No specific time")
             start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
-            
-            repeat_option = st.selectbox(
-                "Repeat", ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"]
-            )
+            repeat_option = st.selectbox("Repeat", ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"])
         
         location_input = st.text_input("Location (Optional)", placeholder="e.g., Schulich Med building")
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         
         if st.form_submit_button("Push to Master Tracker") and item_name:
             target_cal_id = CALENDAR_MAP.get(calendar_cat)
-            
-            reminder_map = {
-                "At time of event": 0, "10 minutes before": 10,
-                "30 minutes before": 30, "1 hour before": 60, 
-                "2 hours before": 120, "1 day before": 1440
-            }
+            reminder_map = {"At time of event": 0, "10 minutes before": 10, "30 minutes before": 30, "1 hour before": 60, "2 hours before": 120, "1 day before": 1440}
 
             if selected_reminders:
                 overrides = [{'method': 'popup', 'minutes': reminder_map[r]} for r in selected_reminders]
@@ -272,11 +260,8 @@ with tab1:
                 time_str = str(start_time)
                 duration_val = int(duration)
 
-            rrule_map = {
-                "Daily": "RRULE:FREQ=DAILY", "Weekly": "RRULE:FREQ=WEEKLY",
-                "Monthly": "RRULE:FREQ=MONTHLY", "Every Weekday (Mon-Fri)": "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-            }
             if repeat_option != "None":
+                rrule_map = {"Daily": "RRULE:FREQ=DAILY", "Weekly": "RRULE:FREQ=WEEKLY", "Monthly": "RRULE:FREQ=MONTHLY", "Every Weekday (Mon-Fri)": "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"}
                 event_body['recurrence'] = [rrule_map[repeat_option]]
 
             try:
@@ -298,8 +283,7 @@ with tab1:
                         try:
                             created_tb = cal_service.events().insert(calendarId=target_cal_id, body=timeblock_body).execute()
                             timeblock_id = created_tb.get('id')
-                        except Exception:
-                            pass
+                        except Exception: pass
 
                     task_body = {'title': item_name, 'notes': task_notes, 'due': due_date}
                     created_item = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute()
@@ -309,13 +293,12 @@ with tab1:
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
                     "Time": time_str, "Duration (Mins)": duration_val, 
-                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_item_id,
-                    "Location": location_input, "Timeblock ID": timeblock_id
+                    "Scheduled?": not all_day, "Location": location_input, 
+                    "Notes": notes, "Event ID": new_item_id, "Timeblock ID": timeblock_id
                 }
                 
                 updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-                
                 st.success(f"✅ Saved to Google Cloud!")
                 st.rerun()
 
@@ -324,12 +307,11 @@ with tab1:
 
 with tab2:
     st.header("Master Task Tracker")
-    st.info("Double-click any cell (Name, Date, Notes) to edit. Check the box to delete. Click Save to push to Google Cloud.")
+    st.info("Double-click any cell (Name, Date, Location, Notes) to edit. Check the box to delete. Click Save to push to Google Cloud.")
     
     if st.button("🔄 Sync Everything to Sheet"):
         df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
-        if was_updated:
-            st.rerun()
+        if was_updated: st.rerun()
             
     categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
     task_tabs = st.tabs(categories)
@@ -346,29 +328,24 @@ with tab2:
             elif category == "Upcoming Tasks":
                 mask = (df["Type"] == "Task") & (~df["Status"]) & ((~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out)))
                 display_df = df[mask].copy()
-            elif category == "All History":
-                display_df = df.copy()
-            elif category == "All Events":
-                display_df = df[df["Type"] == "Event"].copy()
-            elif category == "All Tasks":
-                display_df = df[df["Type"] == "Task"].copy()
-            else:
-                display_df = df[df["Calendar"] == category].copy()
+            elif category == "All History": display_df = df.copy()
+            elif category == "All Events": display_df = df[df["Type"] == "Event"].copy()
+            elif category == "All Tasks": display_df = df[df["Type"] == "Task"].copy()
+            else: display_df = df[df["Calendar"] == category].copy()
             
-            # --- THE IRONCLAD TYPE FIX ---
             # 1. Safely generate the column first so Pandas doesn't throw a KeyError
             display_df = display_df.assign(**{"🗑️ Delete?": False})
             
-            # 2. Force every configured column into its strict native Python type
+            # 2. Force native Python types (Location is now strictly tracked!)
             display_df = display_df.astype({
                 "🗑️ Delete?": bool,
                 "Status": bool,
                 "Item Name": str,
                 "Date": str,
                 "Time": str,
+                "Location": str,
                 "Notes": str
             })
-            # ------------------------------
             
             edited_df = st.data_editor(
                 display_df, 
@@ -380,13 +357,13 @@ with tab2:
                     "Item Name": st.column_config.TextColumn("Title"),
                     "Date": st.column_config.TextColumn("Date (YYYY-MM-DD)"),
                     "Time": st.column_config.TextColumn("Time (HH:MM:SS)"),
+                    "Location": st.column_config.TextColumn("Location"),
                     "Notes": st.column_config.TextColumn("Notes"),
                 }
             )
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
                 
-                # --- PROCESS DELETIONS ---
                 rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
                 for idx, row in rows_to_delete.iterrows():
                     gcal_id = str(row.get("Event ID", ""))
@@ -400,16 +377,12 @@ with tab2:
                         elif item_type == "Task":
                             try: tasks_service.tasks().delete(tasklist=TASKLIST_MAP.get(cal_name, "@default"), task=gcal_id).execute()
                             except Exception: pass
-                            
                             tb_id = str(row.get("Timeblock ID", ""))
                             if tb_id and tb_id not in ["None", "", "nan"]:
                                 try: cal_service.events().delete(calendarId=CALENDAR_MAP.get(cal_name), eventId=tb_id).execute()
                                 except Exception: pass
-                    
-                    if idx in df.index:
-                        df = df.drop(index=idx)
+                    if idx in df.index: df = df.drop(index=idx)
                         
-                # --- PROCESS EDITS & RESCHEDULING (THE PATCH ENGINE) ---
                 for idx, row in edited_df.iterrows():
                     if row["🗑️ Delete?"]: continue
                         
@@ -419,112 +392,97 @@ with tab2:
                     cal_name = row.get("Calendar")
                     
                     if g_id and g_id not in ["None", "", "nan"]:
-                        # Detect any changes
+                        # Track all possible variable changes
                         s_changed = bool(original_row["Status"]) != bool(row["Status"])
                         name_changed = str(original_row["Item Name"]) != str(row["Item Name"])
                         notes_changed = str(original_row["Notes"]) != str(row["Notes"])
                         date_changed = str(original_row["Date"]) != str(row["Date"])
                         time_changed = str(original_row["Time"]) != str(row["Time"])
+                        location_changed = str(original_row.get("Location", "")) != str(row.get("Location", ""))
 
-                        # --- NEW: AUTO-UPDATE THE SCHEDULED NOTE TEXT ---
                         if time_changed and item_type == "Task":
                             try:
                                 t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
-                                new_time_dt = pd.to_datetime(t_str)
-                                new_time_display = new_time_dt.strftime('%I:%M %p') # Format back to AM/PM
-                                
+                                new_time_display = pd.to_datetime(t_str).strftime('%I:%M %p')
                                 current_notes = str(row["Notes"]) if str(row["Notes"]) not in ["None", "nan", ""] else ""
                                 lines = current_notes.split('\n')
-                                
                                 found = False
-                                for i, line in enumerate(lines):
+                                for j, line in enumerate(lines):
                                     if "⏰ Scheduled:" in line:
-                                        lines[i] = f"⏰ Scheduled: {new_time_display}"
+                                        lines[j] = f"⏰ Scheduled: {new_time_display}"
                                         found = True
                                         break
-                                
                                 if not found:
                                     updated_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes}" if current_notes else f"⏰ Scheduled: {new_time_display}"
                                 else:
                                     updated_notes = "\n".join(lines).strip()
-                                    
                                 row["Notes"] = updated_notes
                                 edited_df.at[idx, "Notes"] = updated_notes
-                                notes_changed = True # Force the API to push the new text
-                            except Exception:
-                                pass
-                        # ------------------------------------------------
+                                notes_changed = True
+                            except Exception: pass
 
-                        if any([s_changed, name_changed, notes_changed, date_changed, time_changed]):
+                        if any([s_changed, name_changed, notes_changed, date_changed, time_changed, location_changed]):
                             if item_type == "Task":
-                                # 1. Update the Google Task
                                 t_id = TASKLIST_MAP.get(cal_name, "@default")
                                 body = {}
                                 if s_changed: body['status'] = 'completed' if row["Status"] else 'needsAction'
                                 if name_changed: body['title'] = row["Item Name"]
                                 if notes_changed: body['notes'] = row["Notes"]
-                                if date_changed: body['due'] = f"{row['Date']}T00:00:00.000Z"
+                                if date_changed: 
+                                    try:
+                                        # Forces YYYY-MM-DD padding (e.g., 2026-06-01 instead of 2026-6-1)
+                                        body['due'] = pd.to_datetime(row['Date']).strftime('%Y-%m-%dT00:00:00.000Z')
+                                    except Exception: pass
                                 
                                 try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=body).execute()
                                 except Exception as e: st.error(f"Task Sync Error: {e}")
 
-                                # 2. Update the connected Google Calendar Timeblock
                                 tb_id = str(row.get("Timeblock ID", ""))
                                 if tb_id and str(tb_id).lower() not in ["none", "", "nan"]:
-                                    if any([name_changed, notes_changed, date_changed, time_changed]):
+                                    if any([name_changed, notes_changed, date_changed, time_changed, location_changed]):
                                         c_id = CALENDAR_MAP.get(cal_name)
                                         tb_body = {}
                                         if name_changed: tb_body['summary'] = f"☑️ [Task] {row['Item Name']}"
                                         if notes_changed: tb_body['description'] = row["Notes"]
+                                        if location_changed: tb_body['location'] = row["Location"]
                                         if date_changed or time_changed:
                                             try:
                                                 d_str = str(row["Date"])
                                                 t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
-                                                
                                                 start_dt = pd.to_datetime(f"{d_str} {t_str}")
                                                 dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                                 end_dt = start_dt + pd.Timedelta(minutes=dur)
-
-                                                # Clean payload: strictly local time + native timezone
                                                 tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                                 tb_body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                                
-                                                # Instantly format the user's typed string back to clean 24h format for the Sheet
                                                 edited_df.at[idx, "Time"] = start_dt.strftime('%H:%M:%S')
-                                            except Exception as e: 
-                                                st.warning(f"Time format issue for '{row['Item Name']}': {e}")
+                                                edited_df.at[idx, "Date"] = start_dt.strftime('%Y-%m-%d')
+                                            except Exception as e: st.warning(f"Format issue for '{row['Item Name']}': {e}")
                                         
                                         try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
-                                        except Exception as e: st.error(f"Calendar Timeblock Sync Error: {e}")
-                                else:
-                                    if time_changed or date_changed:
-                                        st.toast(f"Note: '{row['Item Name']}' doesn't have a Calendar Timeblock attached to it to move.")
+                                        except Exception as e: st.error(f"Timeblock Sync Error: {e}")
 
                             elif item_type == "Event":
                                 c_id = CALENDAR_MAP.get(cal_name)
                                 body = {}
                                 if name_changed: body['summary'] = row["Item Name"]
                                 if notes_changed: body['description'] = row["Notes"]
+                                if location_changed: body['location'] = row["Location"]
                                 if date_changed or time_changed:
                                     try:
                                         d_str = str(row["Date"])
                                         t_str = str(row["Time"]) if str(row["Time"]) and str(row["Time"]).lower() not in ["nan", "none", ""] else "00:00:00"
-                                        
                                         start_dt = pd.to_datetime(f"{d_str} {t_str}")
                                         dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                         end_dt = start_dt + pd.Timedelta(minutes=dur)
-
                                         body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                        
                                         edited_df.at[idx, "Time"] = start_dt.strftime('%H:%M:%S')
-                                    except Exception as e:
-                                        st.warning(f"Time format issue for '{row['Item Name']}': {e}")
+                                        edited_df.at[idx, "Date"] = start_dt.strftime('%Y-%m-%d')
+                                    except Exception as e: st.warning(f"Format issue for '{row['Item Name']}': {e}")
                                 
                                 try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=body).execute()
                                 except Exception as e: st.error(f"Event Sync Error: {e}")
 
-                # Finally, update the master dataframe with the new text/dates and push to sheet
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
