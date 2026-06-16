@@ -200,6 +200,7 @@ for col in required_cols:
     if col not in df.columns:
         df[col] = False if col in ["Status", "Scheduled?"] else ""
 
+# Master Read Shield with Boolean fixes applied
 df["Status"] = df["Status"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Type"] = df["Type"].fillna("Event").astype(str)
@@ -354,16 +355,24 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-           # Force the dataframe types before editing
+            # --- THE IRONCLAD TYPE FIX ---
+            # 1. Safely generate the column first so Pandas doesn't throw a KeyError
+            display_df = display_df.assign(**{"🗑️ Delete?": False})
+            
+            # 2. Force every configured column into its strict native Python type
             display_df = display_df.astype({
-                "Status": "bool",
-                "🗑️ Delete?": "bool"
+                "🗑️ Delete?": bool,
+                "Status": bool,
+                "Item Name": str,
+                "Date": str,
+                "Time": str,
+                "Notes": str
             })
+            # ------------------------------
             
             edited_df = st.data_editor(
                 display_df, 
-                use_container_width=True, 
-                hide_index=True,
+                use_container_width=True, hide_index=True,
                 key=f"editor_{category.lower().replace(' ', '_')}", 
                 column_config={
                     "🗑️ Delete?": st.column_config.CheckboxColumn("Delete", default=False),
@@ -444,7 +453,7 @@ with tab2:
 
                                         body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
                                         body['end'] = {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S-04:00'), 'timeZone': 'America/Toronto'}
-                                    except Exception: pass # Skip if user typed a badly formatted date
+                                    except Exception: pass
                                 
                                 try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=body).execute()
                                 except Exception: pass
