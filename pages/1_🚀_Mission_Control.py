@@ -354,12 +354,16 @@ with tab2:
             else:
                 display_df = df[df["Calendar"] == category].copy()
             
-            display_df["🗑️ Delete?"] = False
-            display_df["🗑️ Delete?"] = display_df["🗑️ Delete?"].astype(bool)
+           # Force the dataframe types before editing
+            display_df = display_df.astype({
+                "Status": "bool",
+                "🗑️ Delete?": "bool"
+            })
             
             edited_df = st.data_editor(
                 display_df, 
-                use_container_width=True, hide_index=True,
+                use_container_width=True, 
+                hide_index=True,
                 key=f"editor_{category.lower().replace(' ', '_')}", 
                 column_config={
                     "🗑️ Delete?": st.column_config.CheckboxColumn("Delete", default=False),
