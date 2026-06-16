@@ -91,19 +91,22 @@ def sync_calendars_to_sheet(df, service, connection):
                 start_info = event.get('start', {})
                 end_info = event.get('end', {})
                 
-                if 'dateTime' not in start_info:
+                if 'dateTime' in start_info:
+                    # It's a standard timed event
+                    start_raw = start_info.get('dateTime')
+                    end_raw = end_info.get('dateTime')
+                    start_dt = datetime.datetime.fromisoformat(start_raw[:19])
+                    end_dt = datetime.datetime.fromisoformat(end_raw[:19])
+                    duration_mins = int((end_dt - start_dt).total_seconds() / 60)
+                    date_str = start_dt.strftime('%Y-%m-%d')
+                    time_str = start_dt.strftime('%H:%M:%S')
+                elif 'date' in start_info:
+                    # It's a floating / all-day task
+                    date_str = start_info.get('date')
+                    time_str = ""
+                    duration_mins = 0
+                else:
                     continue
-                    
-                start_raw = start_info.get('dateTime')
-                end_raw = end_info.get('dateTime')
-                
-                start_dt = datetime.datetime.fromisoformat(start_raw[:19])
-                end_dt = datetime.datetime.fromisoformat(end_raw[:19])
-                
-                duration_mins = int((end_dt - start_dt).total_seconds() / 60)
-                
-                date_str = start_dt.strftime('%Y-%m-%d')
-                time_str = start_dt.strftime('%H:%M:%S')
 
                 matching_rows = df[df["Event ID"] == gcal_id]
                 
@@ -172,37 +175,55 @@ with tab1:
             calendar_cat = st.selectbox("Calendar", ["Kevin Nguyen", "Family", "School", "Volunteering"])
         with col2:
             target_date = st.date_input("Date", datetime.date.today())
-            start_time = st.time_input("Start Time", datetime.time(0, 0))
-            duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15)
+            
+            # NEW: All-Day Checkbox
+            all_day = st.checkbox("All-day / No specific time")
+            
+            # Time and duration grey out if the box is checked
+            start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
+            duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
         
         notes = st.text_area("Notes", placeholder="Add links or modules here...")
         
         if st.form_submit_button("Push to Master Tracker") and item_name:
             target_cal_id = CALENDAR_MAP.get(calendar_cat)
             
-            # Combine Date and Time for the API
-            start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
-            end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
-            end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
+            # --- API Payload Logic ---
+            if all_day:
+                # Google Calendar's exact format for floating/all-day tasks
+                event_body = {
+                    'summary': item_name,
+                    'description': notes,
+                    'start': {'date': target_date.strftime('%Y-%m-%d')},
+                    'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
+                }
+                time_str = ""
+                duration_val = 0
+            else:
+                # Standard format for timed blocks
+                start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
+                end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
+                end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
 
-            event_body = {
-                'summary': item_name,
-                'description': notes,
-                'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
-                'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
-            }
+                event_body = {
+                    'summary': item_name,
+                    'description': notes,
+                    'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'},
+                    'end': {'dateTime': end_dt, 'timeZone': 'America/Toronto'},
+                }
+                time_str = str(start_time)
+                duration_val = int(duration)
 
             try:
-                # Push to Google Calendar
                 created_event = cal_service.events().insert(calendarId=target_cal_id, body=event_body).execute()
                 new_event_id = created_event.get('id')
                 
-                # Push to Google Sheet
+                # Push to Google Sheet with empty time variables if all-day
                 new_row = {
                     "Status": False, "Item Name": item_name, "Type": item_type, 
                     "Calendar": calendar_cat, "Date": str(target_date), 
-                    "Time": str(start_time), "Duration (Mins)": int(duration), 
-                    "Scheduled?": True, "Notes": notes, "Event ID": new_event_id
+                    "Time": time_str, "Duration (Mins)": duration_val, 
+                    "Scheduled?": not all_day, "Notes": notes, "Event ID": new_event_id
                 }
                 
                 updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
