@@ -223,14 +223,25 @@ with tab2:
         if was_updated:
             st.rerun()
             
-    # 1. Added "All Events" and "All Tasks" to your view options
-    categories = ["All", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
+    # 1. Added "Upcoming Focus" as the primary tab, shifted "All" to the second slot
+    categories = ["Upcoming Focus", "All History", "All Events", "All Tasks", "Kevin Nguyen", "Family", "School", "Volunteering"]
     task_tabs = st.tabs(categories)
+    
+    # 2. Calculate the exact time windows for your 4-week filter
+    today = pd.to_datetime(datetime.date.today())
+    four_weeks_out = today + pd.Timedelta(weeks=4)
+    
+    # Safely parse the Date column into a format Pandas can do math on
+    safe_dates = pd.to_datetime(df["Date"], errors='coerce')
     
     for i, category in enumerate(categories):
         with task_tabs[i]:
-            # 2. Advanced filtering logic based on selection
-            if category == "All":
+            # 3. Advanced filtering logic based on selection
+            if category == "Upcoming Focus":
+                # Filter: Status is False AND Date is between today and 4 weeks from now
+                upcoming_mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
+                display_df = df[upcoming_mask].copy()
+            elif category == "All History":
                 display_df = df.copy()
             elif category == "All Events":
                 display_df = df[df["Type"] == "Event"].copy()
@@ -245,7 +256,7 @@ with tab2:
                 display_df, 
                 use_container_width=True, 
                 hide_index=True,
-                key=f"editor_{category.lower().replace(' ', '_')}", # Safe key naming convention
+                key=f"editor_{category.lower().replace(' ', '_')}", 
                 column_config={
                     "Calendar": st.column_config.SelectboxColumn(
                         "Calendar",
