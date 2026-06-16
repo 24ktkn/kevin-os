@@ -17,20 +17,29 @@ st.markdown("""
 
 # --- GOOGLE SHEETS DATABASE CONFIGURATION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-df_logs = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
+raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
 
-# --- READ SHIELD ---
+# --- THE MASTER CLEANER ---
+# 1. Guarantee columns exist to prevent startup crashes
 required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp"]
 for col in required_cols:
-    if col not in df_logs.columns:
-        df_logs[col] = ""
+    if col not in raw_df.columns:
+        raw_df[col] = ""
 
-# Secure data types for charting and math
+# 2. Obliterate Google Sheets' default blank rows (Ghost hunting)
+df_logs = raw_df[raw_df["Exercise"].astype(str).str.strip() != ""].copy()
+df_logs = df_logs[df_logs["Exercise"].notna()]
+
+# 3. Secure data types and strip invisible whitespaces
+df_logs["Exercise"] = df_logs["Exercise"].astype(str).str.strip()
 df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
 df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
 df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
 df_logs["Date"] = pd.to_datetime(df_logs["Date"], errors='coerce')
-# -------------------
+
+# 4. Drop any remaining rows where the Date was corrupted
+df_logs = df_logs[df_logs["Date"].notna()]
+# ---------------------------
 
 # --- EXERCISE DATABASE (Home Gym Routine) ---
 exercises_dict = {
@@ -72,7 +81,7 @@ if split_input == "Cardio (Treadmill)":
                 "Exercise": exercise_input,
                 "Set Number": 1,
                 "Weight (lbs)": 0.0,
-                "Reps": duration_input, # Storing minutes in Reps for charting
+                "Reps": duration_input, 
                 "Estimated 1RM": 0.0,
                 "Timestamp": datetime.now().strftime("%H:%M:%S")
             }
@@ -84,10 +93,8 @@ if split_input == "Cardio (Treadmill)":
             except Exception as e:
                 st.sidebar.error(f"Save failed: {e}")
 else:
-    # Identify if the selected exercise is purely bodyweight
     is_bodyweight = exercise_input in ["Pull-Ups", "Hanging Knee Raises"]
 
-    # Quick helper to autofill with the last logged weight
     last_weight = 135.0
     if not df_logs.empty and not is_bodyweight:
         past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
@@ -98,7 +105,6 @@ else:
     
     with st.sidebar.form("bulk_log_form", clear_on_submit=True):
         
-        # Hide the weight dial if it is a bodyweight movement
         if not is_bodyweight:
             master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5)
         else:
@@ -118,7 +124,6 @@ else:
             if valid_sets:
                 new_rows = []
                 for s in valid_sets:
-                    # Calculate 1RM for analytics (Bodyweight just defaults to 0)
                     if is_bodyweight:
                         est_1rm = 0.0
                     else:
@@ -135,6 +140,8 @@ else:
                         "Timestamp": datetime.now().strftime("%H:%M:%S")
                     })
                 
+                # Because df_logs was stripped of the 1,000 blank rows at the top of the file, 
+                # this concat will append your new sets tightly to your actual data.
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
                 try:
                     conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
@@ -163,12 +170,8 @@ with tab1:
             guide_data = []
             for exe in exercises:
                 if not df_logs.empty:
-                    # --- NEW: THE GHOST HUNTER ---
-                    # Actively ignores any rows in your sheet where the date is broken/blank
-                    clean_logs = df_logs[df_logs["Date"].notna()]
-                    exe_history = clean_logs[clean_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
-                    # -----------------------------
-                    
+                    # Clean exact matching
+                    exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
                         if split == "Cardio (Treadmill)":
@@ -181,7 +184,7 @@ with tab1:
                             last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
                             last_reps_str = f"{int(last_session['Reps'])} reps"
                         
-                        # We can safely format the date now because we filtered out the broken ones!
+                        # Date formatting is now guaranteed to work since NaTs were dropped above
                         last_date_str = last_session['Date'].strftime('%b %d, %Y')
                     else:
                         last_weight_str = "No history"
