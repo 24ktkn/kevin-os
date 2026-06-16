@@ -8,3 +8,11 @@ st.markdown("""
 * **🚀 Mission Control:** Manage your Google Calendar sync, Tasks, and master schedule.
 * **🏋️ Workout Tracker:** Log your 6-day split, track cable machine sets, and monitor progress.
 """)
+
+import streamlit as st
+
+# Execute the API call
+response = tasks_service.tasklists().list().execute()
+
+# Display the raw JSON in your Streamlit app
+st.json(response) 

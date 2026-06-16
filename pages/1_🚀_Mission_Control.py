@@ -18,6 +18,14 @@ CALENDAR_MAP = {
     "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
 }
 
+# --- NEW: TASK LISTS MAP (OAuth 2.0) ---
+TASKLIST_MAP = {
+    "Kevin Nguyen": "@default", 
+    "Family": "@default",        # Put your custom Task List ID here when ready
+    "School": "@default",        # Put your custom Task List ID here when ready
+    "Volunteering": "@default"   # Put your custom Task List ID here when ready
+}
+
 def get_calendar_service():
     creds_info = st.secrets["connections"]["gsheets"]
     creds = service_account.Credentials.from_service_account_info(
