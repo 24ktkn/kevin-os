@@ -51,14 +51,14 @@ def get_tasks_service():
 tasks_service = get_tasks_service()
 
 # --- SYNCHRONIZATION ENGINE ---
-def sync_calendars_to_sheet(df, service, connection):
-    st.toast("🔄 Scanning Google Calendars for updates...")
+def sync_all_to_sheet(df, service_cal, service_tasks, connection):
+    st.toast("🔄 Scanning Google Calendars and Tasks for updates...")
     now = datetime.datetime.utcnow()
     time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
     time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
     sheet_updated = False
     
-    # Ironclad Type Shield
+    # --- Ironclad Type Shield ---
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID", "Location"]
     for col in text_columns:
         if col not in df.columns:
@@ -75,15 +75,12 @@ def sync_calendars_to_sheet(df, service, connection):
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
+    # --- PHASE 1: SYNC CALENDARS ---
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
-            events_result = service.events().list(
-                calendarId=cal_id, 
-                timeMin=time_min, 
-                timeMax=time_max,
-                singleEvents=True, 
-                showDeleted=True, 
-                orderBy='startTime'
+            events_result = service_cal.events().list(
+                calendarId=cal_id, timeMin=time_min, timeMax=time_max,
+                singleEvents=True, showDeleted=True, orderBy='startTime'
             ).execute()
             
             events = events_result.get('items', [])
@@ -150,13 +147,53 @@ def sync_calendars_to_sheet(df, service, connection):
                     }
                     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                     sheet_updated = True
-                    
         except Exception as e:
             st.error(f"Error reading calendar '{cal_name}': {e}")
+
+    # --- PHASE 2: SYNC TASKS ---
+    processed_tasklists = set()
+    for tl_name, tl_id in TASKLIST_MAP.items():
+        # Prevent scanning the same list multiple times if you are still using @default for several
+        if tl_id in processed_tasklists:
+            continue
+        processed_tasklists.add(tl_id)
+        
+        try:
+            # showHidden pulls completed tasks, showDeleted pulls trashed tasks
+            tasks_result = service_tasks.tasks().list(
+                tasklist=tl_id, showCompleted=True, showHidden=True, showDeleted=True
+            ).execute()
+            
+            tasks = tasks_result.get('items', [])
+            
+            for task in tasks:
+                g_id = task.get('id')
+                g_status = task.get('status') # Returns 'needsAction' or 'completed'
+                g_deleted = task.get('deleted', False)
+                
+                if g_deleted:
+                    if g_id in df["Event ID"].values:
+                        df = df[df["Event ID"] != g_id].reset_index(drop=True)
+                        sheet_updated = True
+                    continue
+                    
+                matching_rows = df[df["Event ID"] == g_id]
+                if not matching_rows.empty:
+                    idx = matching_rows.index[0]
+                    
+                    is_completed = (g_status == 'completed')
+                    current_status = bool(df.at[idx, "Status"])
+                    
+                    # If Google says it's done, but your sheet says False (or vice versa), update it!
+                    if is_completed != current_status:
+                        df.at[idx, "Status"] = is_completed
+                        sheet_updated = True
+        except Exception as e:
+            st.error(f"Error reading task list '{tl_name}': {e}")
             
     if sheet_updated:
         connection.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-        st.toast("✅ Master Sheet perfectly synchronized with Google Calendars!")
+        st.toast("✅ Master Sheet perfectly synchronized with Calendars and Tasks!")
         return df, True
         
     st.toast("🌟 Already up to date.")
@@ -301,8 +338,9 @@ with tab1:
 with tab2:
     st.header("Master Task Tracker")
     
-    if st.button("🔄 Sync Calendar Changes to Sheet"):
-        df, was_updated = sync_calendars_to_sheet(df, cal_service, conn)
+    # UPDATED: Now calls sync_all_to_sheet and passes both API services
+    if st.button("🔄 Sync Everything to Sheet"):
+        df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
         if was_updated:
             st.rerun()
             
