@@ -20,28 +20,24 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, ttl=0)
 
 # --- THE MASTER CLEANER ---
-# 1. Guarantee columns exist to prevent startup crashes
 required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp"]
 for col in required_cols:
     if col not in raw_df.columns:
         raw_df[col] = ""
 
-# 2. Obliterate Google Sheets' default blank rows (Ghost hunting)
 df_logs = raw_df[raw_df["Exercise"].astype(str).str.strip() != ""].copy()
 df_logs = df_logs[df_logs["Exercise"].notna()]
 
-# 3. Secure data types and strip invisible whitespaces
 df_logs["Exercise"] = df_logs["Exercise"].astype(str).str.strip()
 df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
 df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
 df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
 df_logs["Date"] = pd.to_datetime(df_logs["Date"], errors='coerce')
 
-# 4. Drop any remaining rows where the Date was corrupted
 df_logs = df_logs[df_logs["Date"].notna()]
 # ---------------------------
 
-# --- EXERCISE DATABASE (Home Gym Routine) ---
+# --- EXERCISE DATABASE ---
 exercises_dict = {
     "Push (Chest/Shoulders/Triceps)": [
         "Incline Dumbbell Bench Press", "Flat Bench Press", 
@@ -70,7 +66,6 @@ date_input = st.sidebar.date_input("Workout Date", datetime.today())
 split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
 exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
 
-# CONDITIONAL INTERFACE: Cardio vs Weights vs Bodyweight
 if split_input == "Cardio (Treadmill)":
     with st.sidebar.form("cardio_form", clear_on_submit=True):
         duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
@@ -104,7 +99,6 @@ else:
     num_sets = st.sidebar.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
     
     with st.sidebar.form("bulk_log_form", clear_on_submit=True):
-        
         if not is_bodyweight:
             master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5)
         else:
@@ -140,8 +134,6 @@ else:
                         "Timestamp": datetime.now().strftime("%H:%M:%S")
                     })
                 
-                # Because df_logs was stripped of the 1,000 blank rows at the top of the file, 
-                # this concat will append your new sets tightly to your actual data.
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
                 try:
                     conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
@@ -151,7 +143,6 @@ else:
                     st.sidebar.error(f"Save failed: {e}")
             else:
                 st.sidebar.warning("Enter reps for at least one set.")
-
 
 # --- MAIN DASHBOARD INTERFACE ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -170,7 +161,6 @@ with tab1:
             guide_data = []
             for exe in exercises:
                 if not df_logs.empty:
-                    # Clean exact matching
                     exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
@@ -184,7 +174,6 @@ with tab1:
                             last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
                             last_reps_str = f"{int(last_session['Reps'])} reps"
                         
-                        # Date formatting is now guaranteed to work since NaTs were dropped above
                         last_date_str = last_session['Date'].strftime('%b %d, %Y')
                     else:
                         last_weight_str = "No history"
@@ -259,12 +248,41 @@ with tab2:
 
 with tab3:
     st.markdown("### Cloud Sync Master Ledger")
-    st.info("Data is syncing directly to your secure Google Sheet.")
+    st.info("Edit your cells directly or check the box to delete. Click Save when done.")
     
     if not df_logs.empty:
         display_ledger = df_logs.copy()
-        display_ledger['Date'] = display_ledger['Date'].dt.strftime('%Y-%m-%d')
-        st.dataframe(display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False]), use_container_width=True, hide_index=True)
+        display_ledger['Date'] = display_ledger['Date'].dt.date
+        display_ledger["🗑️ Delete?"] = False
+        
+        # Sort for easy reading, but Pandas keeps the original indices attached behind the scenes
+        display_ledger = display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False])
+        
+        edited_ledger = st.data_editor(
+            display_ledger, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "🗑️ Delete?": st.column_config.CheckboxColumn("Delete Action", default=False),
+                "Date": st.column_config.DateColumn("Date")
+            }
+        )
+        
+        if st.button("💾 Save Ledger Changes"):
+            # 1. Handle Deletions
+            indices_to_delete = edited_ledger[edited_ledger["🗑️ Delete?"] == True].index
+            updated_df = df_logs.drop(index=indices_to_delete)
+            
+            # 2. Handle Edits (Update the remaining rows with any text/number changes)
+            rows_to_keep = edited_ledger[edited_ledger["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
+            updated_df.update(rows_to_keep)
+            
+            try:
+                conn.update(data=updated_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet)
+                st.success("✅ Ledger updated successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to update sheet: {e}")
     else:
         st.info("Your spreadsheet is currently empty. Use the sidebar to log a set!")
 
