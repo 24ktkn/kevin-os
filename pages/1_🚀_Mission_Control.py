@@ -394,23 +394,66 @@ with tab2:
             )
             
             if st.button(f"💾 Save {category} Changes", key=f"btn_{category.lower().replace(' ', '_')}"):
+                
+                # --- PHASE 1: Handle Deletions (Now handles both Tasks & Events) ---
                 rows_to_delete = edited_df[edited_df["🗑️ Delete?"] == True]
                 
                 for idx, row in rows_to_delete.iterrows():
                     gcal_id = str(row.get("Event ID", ""))
                     cal_name = row.get("Calendar")
+                    item_type = row.get("Type")
                     
                     if gcal_id and gcal_id not in ["None", "", "nan"]:
-                        cal_id = CALENDAR_MAP.get(cal_name)
-                        if cal_id:
+                        if item_type == "Event":
+                            cal_id = CALENDAR_MAP.get(cal_name)
+                            if cal_id:
+                                try:
+                                    cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
+                                except Exception:
+                                    pass
+                        elif item_type == "Task":
+                            tl_id = TASKLIST_MAP.get(cal_name, "@default")
                             try:
-                                cal_service.events().delete(calendarId=cal_id, eventId=gcal_id).execute()
+                                tasks_service.tasks().delete(tasklist=tl_id, task=gcal_id).execute()
                             except Exception:
                                 pass
                     
                     if idx in df.index:
                         df = df.drop(index=idx)
-                
+                        
+                # --- PHASE 2: Handle Status Toggles (Two-Way Sync) ---
+                for idx, row in edited_df.iterrows():
+                    # Skip if we are deleting it anyway
+                    if row["🗑️ Delete?"]:
+                        continue
+                        
+                    old_status = bool(display_df.at[idx, "Status"])
+                    new_status = bool(row["Status"])
+                    
+                    # If you clicked or unclicked a checkbox...
+                    if old_status != new_status:
+                        g_id = str(row.get("Event ID", ""))
+                        item_type = row.get("Type")
+                        cal_name = row.get("Calendar")
+                        
+                        if g_id and g_id not in ["None", "", "nan"]:
+                            if item_type == "Task":
+                                target_tasklist_id = TASKLIST_MAP.get(cal_name, "@default")
+                                # Translate Python True/False to Google Tasks terminology
+                                status_str = 'completed' if new_status else 'needsAction'
+                                try:
+                                    # PATCH updates only the specific field we tell it to
+                                    tasks_service.tasks().patch(
+                                        tasklist=target_tasklist_id, 
+                                        task=g_id, 
+                                        body={'status': status_str}
+                                    ).execute()
+                                except Exception as e:
+                                    pass
+                            
+                            # (Events just update locally in the Master Sheet)
+
+                # --- PHASE 3: Update Master Dataframe ---
                 rows_to_keep = edited_df[edited_df["🗑️ Delete?"] == False].drop(columns=["🗑️ Delete?"])
                 df.update(rows_to_keep)
                 
@@ -419,7 +462,7 @@ with tab2:
                     spreadsheet=st.secrets.connections.gsheets.mission_control_sheet
                 )
                 
-                st.success(f"✅ Updates and deletions saved for {category}!")
+                st.success(f"✅ Updates and bi-directional sync saved for {category}!")
                 st.rerun()
 
 with tab3:
