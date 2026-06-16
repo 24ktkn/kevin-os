@@ -39,22 +39,17 @@ def sync_calendars_to_sheet(df, service, connection):
     sheet_updated = False
     
     # --- IRONCLAD TYPE SHIELD ---
-    # 1. Force Text Columns to strictly be Strings (This completely prevents the float64 error)
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Notes", "Event ID"]
     for col in text_columns:
         if col not in df.columns:
             df[col] = ""
-        # Fill missing math NaNs with actual empty strings, then lock as text object
         df[col] = df[col].fillna("").astype(str)
-        # Scrub any residual literal "nan" strings Pandas might have generated
         df[col] = df[col].replace({"nan": "", "None": "", "NaN": ""})
 
-    # 2. Force Duration to strictly be Integers
     if "Duration (Mins)" not in df.columns:
         df["Duration (Mins)"] = 0
     df["Duration (Mins)"] = pd.to_numeric(df["Duration (Mins)"], errors='coerce').fillna(0).astype(int)
 
-    # 3. Force Checkboxes to strictly be Booleans (True/False)
     for col in ["Status", "Scheduled?"]:
         if col not in df.columns:
             df[col] = False
@@ -63,11 +58,13 @@ def sync_calendars_to_sheet(df, service, connection):
 
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
+            # 1. NEW: Added `showDeleted=True` to catch events you wiped from your phone
             events_result = service.events().list(
                 calendarId=cal_id, 
                 timeMin=time_min, 
                 timeMax=time_max,
                 singleEvents=True, 
+                showDeleted=True, 
                 orderBy='startTime'
             ).execute()
             
@@ -75,6 +72,19 @@ def sync_calendars_to_sheet(df, service, connection):
             
             for event in events:
                 gcal_id = event.get('id')
+                status = event.get('status')
+                
+                # 2. NEW: DELETION LOGIC
+                if status == 'cancelled':
+                    # If Google says it's deleted, check if we still have it in our sheet
+                    if gcal_id in df["Event ID"].values:
+                        # Slice the dataframe to remove this exact row and reset the index
+                        df = df[df["Event ID"] != gcal_id].reset_index(drop=True)
+                        sheet_updated = True
+                    # Skip the rest of the loop for this deleted event
+                    continue 
+                # ---------------------------
+                
                 summary = event.get('summary', 'Untitled Event')
                 description = event.get('description', '')
                 
@@ -95,13 +105,11 @@ def sync_calendars_to_sheet(df, service, connection):
                 date_str = start_dt.strftime('%Y-%m-%d')
                 time_str = start_dt.strftime('%H:%M:%S')
 
-                # Filter down to the matching row
                 matching_rows = df[df["Event ID"] == gcal_id]
                 
                 if not matching_rows.empty:
                     idx = matching_rows.index[0]
                     
-                    # Safe comparison now that types are guaranteed matching numbers
                     try:
                         current_duration = int(df.at[idx, "Duration (Mins)"])
                     except (ValueError, TypeError):
