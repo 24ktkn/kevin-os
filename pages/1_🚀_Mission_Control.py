@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
 
-# --- HYPER-COMPRESSED MOBILE-FIRST CSS INTERFACE ---
+# --- INJECTING COMPRESSED DATA-DENSE CSS ---
 st.markdown("""
     <style>
     .main { background-color: #0F0F12; }
@@ -41,7 +41,7 @@ st.markdown("""
     /* Low-Profile Category Side Borders */
     .border-kevin-nguyen { border-left: 3.5px solid #00CC66; }
     .border-family { border-left: 3.5px solid #3399FF; }
-    .border-school { border-left: 3.5px solid #9933FF; }
+    .border-school { border-left: 4px solid #9933FF; }
     .border-volunteering { border-left: 3.5px solid #FF9933; }
     
     .card-title {
@@ -89,7 +89,6 @@ st.markdown("""
         margin-top: -6px !important;
     }
     
-    /* Remove padding buffers around button action spaces */
     [data-testid="element-container"] {
         margin-bottom: 0px !important;
         padding-bottom: 0px !important;
@@ -248,8 +247,8 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     st.toast("🌟 Already up to date.")
     return df, False
 
-# --- AUTO-SWEEP ENGINE ---
-def sweep_past_events(dataframe, connection):
+# --- CONFIGURATION AUTO-SWEEP & SELECTIVE ROLLOVER ENGINE ---
+def sweep_past_events(dataframe, connection, service_tasks):
     df_temp = dataframe.copy()
     try:
         df_temp["Internal_DateTime"] = pd.to_datetime(df_temp["Date"].astype(str) + " " + df_temp["Time"].astype(str), errors='coerce')
@@ -257,17 +256,46 @@ def sweep_past_events(dataframe, connection):
         df_temp["Internal_DateTime"] = pd.to_datetime(df_temp["Date"], errors='coerce')
 
     current_time = pd.Timestamp.now()
-    past_events_mask = (df_temp["Internal_DateTime"] < current_time) & (dataframe["Status"] == False)
+    today_str = current_time.strftime('%Y-%m-%d')
+    sheet_updated = False
+    completed_count = 0
+    rolled_count = 0
 
-    if past_events_mask.any():
-        num_updated = past_events_mask.sum()
-        dataframe.loc[past_events_mask, "Status"] = True
+    for idx, row in dataframe.iterrows():
+        if row["Status"] == True:
+            continue
+            
+        # Only pure timed EVENTS automark as complete. Timed tasks are safely bypassed.
+        if row["Scheduled?"] == True and row["Type"] == "Event" and pd.notna(df_temp.at[idx, "Internal_DateTime"]) and df_temp.at[idx, "Internal_DateTime"] < current_time:
+            dataframe.at[idx, "Status"] = True
+            completed_count += 1
+            sheet_updated = True
+            
+        # All-day tasks that belong to a historical calendar date roll forward
+        elif row["Scheduled?"] == False and row["Type"] == "Task" and pd.to_datetime(row["Date"]).date() < current_time.date():
+            dataframe.at[idx, "Date"] = today_str
+            rolled_count += 1
+            sheet_updated = True
+            
+            g_id = str(row.get("Event ID", ""))
+            cal_name = row.get("Calendar")
+            if g_id and g_id not in ["None", "", "nan"]:
+                try:
+                    t_id = TASKLIST_MAP.get(cal_name, "@default")
+                    service_tasks.tasks().patch(tasklist=t_id, task=g_id, body={"due": f"{today_str}T00:00:00.000Z"}).execute()
+                except Exception: pass
+
+    if sheet_updated:
         connection.update(data=dataframe, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
         st.cache_data.clear()
-        st.success(f"🧹 Auto-Sweep Complete: Marked {num_updated} past events as Completed!")
+        
+        toast_msg = "🧹 Sweeper run complete! "
+        if completed_count > 0: toast_msg += f"Marked {completed_count} timed events Done. "
+        if rolled_count > 0: toast_msg += f"Rolled {rolled_count} all-day tasks to today."
+        st.success(toast_msg)
         st.rerun()
     else:
-        st.toast("🧹 Schedule is clean! No past pending events found to sweep.")
+        st.toast("🧹 Schedule is optimized. No items required sweep updates.")
 
 # --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -282,6 +310,8 @@ df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True
 df["Type"] = df["Type"].fillna("Event").astype(str)
 df["Location"] = df["Location"].fillna("").astype(str)
 
+# --- NAVIGATION HUB LAYOUT ---
+categories = ["Upcoming", "Upcoming Tasks", "All Completed", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
 tab1, tab2, tab3 = st.tabs(["➕ Add New Item", "📊 Master Task Tracker", "📅 Calendar View"])
 
 with tab1:
@@ -353,9 +383,8 @@ with tab2:
             if was_updated: st.rerun()
     with btn_col2:
         if st.button("🧹 Auto-Sweep Past Events"):
-            sweep_past_events(df, conn)
+            sweep_past_events(df, conn, tasks_service)
             
-    categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
     task_tabs = st.tabs(categories)
     
     today = pd.to_datetime(pd.Timestamp.today().date())
@@ -367,13 +396,19 @@ with tab2:
             if category == "Upcoming":
                 mask = (~df["Status"]) & (safe_dates >= today) & (safe_dates <= four_weeks_out)
             elif category == "Upcoming Tasks":
-                mask = (df["Type"] == "Task") & (~df["Status"]) & ((~df["Scheduled?"]) | ((safe_dates >= today) & (safe_dates <= four_weeks_out)))
+                mask = (df["Type"] == "Task") & (~df["Status"]) & (safe_dates <= four_weeks_out)
+            elif category == "All Completed":
+                mask = (df["Status"] == True)
             elif category == "All History": mask = pd.Series(True, index=df.index)
             elif category == "All Events": mask = (df["Type"] == "Event")
             elif category == "All Tasks": mask = (df["Type"] == "Task")
             else: mask = (df["Calendar"] == category)
             
-            display_df = df[mask].copy().sort_values(by=["Date", "Time"], ascending=[True, True])
+            # Sort management hub mapping layers
+            if category == "All Completed":
+                display_df = df[mask].copy().sort_values(by=["Date", "Time"], ascending=[False, False])
+            else:
+                display_df = df[mask].copy().sort_values(by=["Date", "Time"], ascending=[True, True])
             
             if display_df.empty:
                 st.info("No items found in this section.")
@@ -386,7 +421,6 @@ with tab2:
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                # Filter out null leaks ("nan") from the UI strings
                 cleaned_loc = str(row["Location"]).strip() if str(row["Location"]).strip().lower() not in ["nan", "none", ""] else ""
                 cleaned_notes = str(row["Notes"]).strip() if str(row["Notes"]).strip().lower() not in ["nan", "none", ""] else ""
                 
@@ -417,7 +451,7 @@ with tab2:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- SOLID TWO-BUTTON CONTROL ROW ---
+                # --- TWO-BUTTON WORKSPACE ROW ---
                 with st.container():
                     col_done, col_options = st.columns([1, 1])
                     
@@ -433,7 +467,16 @@ with tab2:
                                 st.cache_data.clear()
                                 st.rerun()
                         else:
-                            st.button("✔️ Done", key=f"disabled_{idx}_{category.lower()}", disabled=True, use_container_width=True)
+                            # RESTORED UNDO COMPILING PATHWAY: Toggles completed tasks back into active queues
+                            if st.button("↩️ Undo", key=f"undo_{idx}_{category.lower()}", use_container_width=True):
+                                df.at[idx, "Status"] = False
+                                g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
+                                if g_id and g_id not in ["", "None", "nan"] and item_type == "Task":
+                                    try: tasks_service.tasks().patch(tasklist=TASKLIST_MAP.get(cal_name, "@default"), task=g_id, body={'status': 'needsAction'}).execute()
+                                    except Exception: pass
+                                conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                                st.cache_data.clear()
+                                st.rerun()
                                 
                     with col_options:
                         with st.popover("⚙️ Options", use_container_width=True):
@@ -448,7 +491,6 @@ with tab2:
                             edit_loc = st.text_input("Location", value=str(row["Location"]), key=f"ed_loc_{idx}_{category.lower()}")
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
-                            # Multi-Form Save Button Execution
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
                                 try:
                                     if edit_all_day:
@@ -516,7 +558,6 @@ with tab2:
                                 st.rerun()
                             
                             st.write("---")
-                            # Destructive Item Deletion Path hosted safely inside options hub
                             if st.button("🗑️ Delete Item permanently", key=f"del_{idx}_{category.lower()}", use_container_width=True):
                                 g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
                                 if g_id and g_id not in ["", "None", "nan"]:
