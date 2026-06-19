@@ -357,10 +357,16 @@ with tab2:
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                if str(row['Time']).strip() not in ["", "None", "nan"]:
+                # Check if item is dynamically marked all-day row
+                is_row_all_day = str(row['Time']).strip() in ["", "None", "nan", "00:00:00"] and int(row.get('Duration (Mins)', 0)) == 0
+                
+                if not is_row_all_day and str(row['Time']).strip() not in ["", "None", "nan"]:
                     try: time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
                     except Exception: time_display = str(row['Time'])
-                else: time_display = "All Day"
+                    dur_suffix = f" ({row['Duration (Mins)']}m)"
+                else: 
+                    time_display = "All Day"
+                    dur_suffix = ""
                 
                 date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
                 
@@ -372,7 +378,7 @@ with tab2:
                             <span style="font-size: 0.8rem;">{type_emoji}</span>
                         </div>
                         <div class="card-title">{row['Item Name']}</div>
-                        <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display} ({row['Duration (Mins)']}m)</div>
+                        <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}{dur_suffix}</div>
                         {f'<div class="meta-row">📍 {row["Location"]}</div>' if row["Location"] else ''}
                         {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{row["Notes"]}</div>' if row["Notes"] else ''}
                     </div>
@@ -380,7 +386,7 @@ with tab2:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- COMPACT CONTROLS WITH RESTORED DURATION FORM ---
+                # --- COMPACT CONTROLS WITH RESTORED DURATION & ALL-DAY TOGGLE ---
                 with st.container():
                     col_done, col_edit, col_del = st.columns([1, 1, 1])
                     
@@ -401,27 +407,36 @@ with tab2:
                             st.write("### Edit Entry Details")
                             edit_name = st.text_input("Item Title", value=row["Item Name"], key=f"ed_name_{idx}_{category.lower()}")
                             edit_date = st.text_input("Date (YYYY-MM-DD)", value=str(row["Date"]), key=f"ed_date_{idx}_{category.lower()}")
-                            edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]), key=f"ed_time_{idx}_{category.lower()}")
                             
-                            # RESTORED: Dynamic integer duration tracking configuration
-                            edit_dur = st.number_input("Duration (Mins)", min_value=0, max_value=480, value=int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60, step=15, key=f"ed_dur_{idx}_{category.lower()}")
+                            # RESTORED: All-Day Checkbox structural filter selector
+                            edit_all_day = st.checkbox("All-day / No specific time", value=is_row_all_day, key=f"ed_allday_{idx}_{category.lower()}")
+                            
+                            edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]) if str(row["Time"]).strip() not in ["", "None", "nan"] else "00:00:00", disabled=edit_all_day, key=f"ed_time_{idx}_{category.lower()}")
+                            edit_dur = st.number_input("Duration (Mins)", min_value=0, max_value=480, value=int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60, step=15, disabled=edit_all_day, key=f"ed_dur_{idx}_{category.lower()}")
                             
                             edit_loc = st.text_input("Location", value=str(row["Location"]), key=f"ed_loc_{idx}_{category.lower()}")
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
-                                # 1. DATA NORMALIZATION SHIELD
+                                # 1. DATA NORMALIZATION SHIELD LAYER
                                 try:
-                                    parsed_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time.strip() else '00:00:00'}")
-                                    final_date_str = parsed_dt.strftime('%Y-%m-%d')
-                                    final_time_str = parsed_dt.strftime('%H:%M:%S') if edit_time.strip() else ""
+                                    if edit_all_day:
+                                        parsed_date = pd.to_datetime(edit_date)
+                                        final_date_str = parsed_date.strftime('%Y-%m-%d')
+                                        final_time_str = ""
+                                        final_dur = 0
+                                    else:
+                                        parsed_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time.strip() else '00:00:00'}")
+                                        final_date_str = parsed_dt.strftime('%Y-%m-%d')
+                                        final_time_str = parsed_dt.strftime('%H:%M:%S')
+                                        final_dur = int(edit_dur)
                                 except Exception:
                                     st.error("⚠️ Formatting Error: Please ensure your input matches standard Date/Time rules.")
                                     st.stop()
 
                                 # 2. SURGICAL TASK NOTE PARSING ENGINE
                                 processed_notes = edit_notes
-                                if row["Type"] == "Task" and final_time_str != str(row["Time"]):
+                                if row["Type"] == "Task" and not edit_all_day and final_time_str != str(row["Time"]):
                                     try:
                                         new_time_display = parsed_dt.strftime('%I:%M %p')
                                         current_notes_str = edit_notes if edit_notes.strip() not in ["None", "nan", ""] else ""
@@ -442,9 +457,10 @@ with tab2:
                                 df.at[idx, "Item Name"] = edit_name
                                 df.at[idx, "Date"] = final_date_str
                                 df.at[idx, "Time"] = final_time_str
-                                df.at[idx, "Duration (Mins)"] = int(edit_dur) # Persisted to local ledger
+                                df.at[idx, "Duration (Mins)"] = final_dur
                                 df.at[idx, "Location"] = edit_loc
                                 df.at[idx, "Notes"] = processed_notes
+                                df.at[idx, "Scheduled?"] = not edit_all_day
                                 
                                 # 4. Dispatch Google Network Structural API Updates
                                 g_id = str(row.get("Event ID", ""))
@@ -464,20 +480,24 @@ with tab2:
                                         if tb_id and tb_id.lower() not in ["none", "", "nan"]:
                                             c_id = CALENDAR_MAP.get(cal_name)
                                             tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': processed_notes, 'location': edit_loc}
-                                            try:
+                                            if edit_all_day:
+                                                tb_body['start'] = {'date': final_date_str}
+                                                tb_body['end'] = {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
+                                            else:
                                                 tb_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=int(edit_dur))).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                            except Exception: pass
+                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                             try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
                                             except Exception: pass
                                             
                                     elif item_type == "Event":
                                         c_id = CALENDAR_MAP.get(cal_name)
                                         event_patch_body = {'summary': edit_name, 'description': processed_notes, 'location': edit_loc}
-                                        try:
+                                        if edit_all_day:
+                                            event_patch_body['start'] = {'date': final_date_str}
+                                            event_patch_body['end'] = {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
+                                        else:
                                             event_patch_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=int(edit_dur))).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                        except Exception: pass
+                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
                                         except Exception: pass
                                 
