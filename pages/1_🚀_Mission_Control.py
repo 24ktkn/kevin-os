@@ -358,15 +358,15 @@ with tab2:
                 
                 # Format visual times beautifully
                 # Check if the time cell actually contains a valid string
-if str(row['Time']).strip() not in ["", "None", "nan"]:
-    try:
-        # Let Pandas handle the flexible format parsing automatically
-        time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
-    except Exception:
-        # Safe fallback if the data in the sheet is completely corrupted
-        time_display = str(row['Time'])
-else:
-    time_display = "All Day"
+                if str(row['Time']).strip() not in ["", "None", "nan"]:
+                    try:
+                        # Let Pandas handle the flexible format parsing automatically
+                        time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
+                    except Exception:
+                        # Safe fallback if the data in the sheet is completely corrupted
+                        time_display = str(row['Time'])
+                else:
+                    time_display = "All Day"
                 date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
                 
                 card_html = f"""
