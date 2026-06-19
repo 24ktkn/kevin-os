@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
 
-# --- INJECTING COMPRESSED DATA-DENSE CSS ---
+# --- HIGH-CONTRAST DATA-DENSE CSS DESIGN ---
 st.markdown("""
     <style>
     .main { background-color: #0F0F12; }
@@ -38,11 +38,19 @@ st.markdown("""
         border-color: #3A3A4A;
     }
     
-    /* Low-Profile Category Side Borders */
-    .border-kevin-nguyen { border-left: 3.5px solid #00CC66; }
-    .border-family { border-left: 3.5px solid #3399FF; }
-    .border-school { border-left: 4px solid #9933FF; }
-    .border-volunteering { border-left: 3.5px solid #FF9933; }
+    /* Bidirectional Status Borders */
+    .status-incomplete { border-left: 4px solid #00F0FF !important; } /* Teal */
+    .status-complete { border-left: 4px solid #00CC66 !important; }   /* Green */
+    
+    .meta-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        color: #A0A0AB;
+        font-size: 0.72rem;
+        margin-top: 1px;
+        line-height: 1.1;
+    }
     
     .card-title {
         color: #FFFFFF;
@@ -56,26 +64,20 @@ st.markdown("""
         text-overflow: ellipsis;
     }
     
-    .meta-row {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        color: #A0A0AB;
-        font-size: 0.72rem;
-        margin-top: 1px;
-        line-height: 1.1;
-    }
-    
+    /* Dedicated Calendar Brand Labels */
     .badge {
-        padding: 1px 4px;
-        border-radius: 3px;
-        font-size: 0.62rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.65rem;
         font-weight: 700;
         text-transform: uppercase;
-        background: #272732;
-        color: #E4E4E7;
-        width: fit-content;
+        display: inline-block;
     }
+    .badge-kevin-nguyen { background-color: #2563EB !important; color: #FFFFFF !important; }
+    .badge-family { background-color: #DC2626 !important; color: #FFFFFF !important; }
+    .badge-school { background-color: #7C3AED !important; color: #FFFFFF !important; }
+    .badge-volunteering { background-color: #EAB308 !important; color: #000000 !important; }
+    .badge-default { background-color: #272732 !important; color: #E4E4E7 !important; }
     
     /* Hard-Compacting Streamlit Native Form Elements & Buttons */
     div.stButton > button, div.stPopover > button, div.stPopover [data-testid="stPopoverTarget"] > button {
@@ -265,13 +267,11 @@ def sweep_past_events(dataframe, connection, service_tasks):
         if row["Status"] == True:
             continue
             
-        # Only pure timed EVENTS automark as complete. Timed tasks are safely bypassed.
         if row["Scheduled?"] == True and row["Type"] == "Event" and pd.notna(df_temp.at[idx, "Internal_DateTime"]) and df_temp.at[idx, "Internal_DateTime"] < current_time:
             dataframe.at[idx, "Status"] = True
             completed_count += 1
             sheet_updated = True
             
-        # All-day tasks that belong to a historical calendar date roll forward
         elif row["Scheduled?"] == False and row["Type"] == "Task" and pd.to_datetime(row["Date"]).date() < current_time.date():
             dataframe.at[idx, "Date"] = today_str
             rolled_count += 1
@@ -404,7 +404,6 @@ with tab2:
             elif category == "All Tasks": mask = (df["Type"] == "Task")
             else: mask = (df["Calendar"] == category)
             
-            # Sort management hub mapping layers
             if category == "All Completed":
                 display_df = df[mask].copy().sort_values(by=["Date", "Time"], ascending=[False, False])
             else:
@@ -417,10 +416,16 @@ with tab2:
             # --- DENSE CARD MATRIX ENGINE ---
             st.markdown('<div class="card-container">', unsafe_allow_html=True)
             for idx, row in display_df.iterrows():
-                cat_class = f"border-{row['Calendar'].lower().replace(' ', '-')}"
-                status_emoji = "✅" if row["Status"] else "⏳"
+                # Step 1: Assign border classes based completely on status loops
+                status_class = "status-complete" if row["Status"] else "status-incomplete"
+                
+                # Step 2: Extract dynamic case-insensitive text hooks for custom badges
+                cal_clean_id = str(row['Calendar']).strip().lower().replace(' ', '-')
+                badge_class = f"badge-{cal_clean_id}" if cal_clean_id in ["kevin-nguyen", "family", "school", "volunteering"] else "badge-default"
+                
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
+                # Step 3: Hard-filter out empty spreadsheet cells or residual pandas null allocations
                 cleaned_loc = str(row["Location"]).strip() if str(row["Location"]).strip().lower() not in ["nan", "none", ""] else ""
                 cleaned_notes = str(row["Notes"]).strip() if str(row["Notes"]).strip().lower() not in ["nan", "none", ""] else ""
                 
@@ -435,23 +440,11 @@ with tab2:
                 
                 date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
                 
-                card_html = f"""
-                <div class="task-card {cat_class}">
-                    <div>
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px;">
-                            <span class="badge">{row['Calendar']}</span>
-                            <span style="font-size: 0.75rem;">{type_emoji}</span>
-                        </div>
-                        <div class="card-title">{row['Item Name']}</div>
-                        <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}{dur_suffix}</div>
-                        {f'<div class="meta-row">📍 {cleaned_loc}</div>' if cleaned_loc else ''}
-                        {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{cleaned_notes}</div>' if cleaned_notes else ''}
-                    </div>
-                </div>
-                """
+                # Unified single-line formatting sequence stops code block division leakages
+                card_html = f"""<div class="task-card {status_class}"><div><div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px;"><span class="badge {badge_class}">{row['Calendar']}</span><span style="font-size: 0.75rem;">{type_emoji}</span></div><div class="card-title">{row['Item Name']}</div><div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}{dur_suffix}</div>{f'<div class="meta-row">📍 {cleaned_loc}</div>' if cleaned_loc else ''}{f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{cleaned_notes}</div>' if cleaned_notes else ''}</div></div>""".replace("\n", " ")
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- TWO-BUTTON WORKSPACE ROW ---
+                # --- SOLID TWO-BUTTON CONTROL ROW ---
                 with st.container():
                     col_done, col_options = st.columns([1, 1])
                     
@@ -467,7 +460,6 @@ with tab2:
                                 st.cache_data.clear()
                                 st.rerun()
                         else:
-                            # RESTORED UNDO COMPILING PATHWAY: Toggles completed tasks back into active queues
                             if st.button("↩️ Undo", key=f"undo_{idx}_{category.lower()}", use_container_width=True):
                                 df.at[idx, "Status"] = False
                                 g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
