@@ -26,9 +26,11 @@ jobs:
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib toml
 
       - name: Reconstruct Secrets File
+        env:
+          SECRETS_CONTENT: ${{ secrets.STREAMLIT_SECRETS }}
         run: |
           mkdir -p .streamlit
-          echo "${{ secrets.STREAMLIT_SECRETS }}" > .streamlit/secrets.toml
+          echo "$SECRETS_CONTENT" > .streamlit/secrets.toml
 
       - name: Run Repeater Bot
         run: python repeater_cron.py
