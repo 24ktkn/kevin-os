@@ -357,7 +357,16 @@ with tab2:
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
                 # Format visual times beautifully
-                time_display = datetime.strptime(row['Time'], "%H:%M:%S").strftime("%I:%M %p") if row['Time'] else "All Day"
+                # Check if the time cell actually contains a valid string
+if str(row['Time']).strip() not in ["", "None", "nan"]:
+    try:
+        # Let Pandas handle the flexible format parsing automatically
+        time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
+    except Exception:
+        # Safe fallback if the data in the sheet is completely corrupted
+        time_display = str(row['Time'])
+else:
+    time_display = "All Day"
                 date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
                 
                 card_html = f"""
