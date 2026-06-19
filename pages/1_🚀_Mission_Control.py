@@ -9,68 +9,70 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
 
-# --- INJECTING PREMIUM AGENTIC CSS LAYOUTS ---
+# --- INJECTING COMPRESSED DATA-DENSE CSS ---
 st.markdown("""
     <style>
     .main { background-color: #0F0F12; }
     
-    /* Global Card Architecture */
+    /* Highly Compressed Grid Configuration */
     .card-container {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-        gap: 16px;
-        padding: 10px 0px;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+        padding: 5px 0px;
     }
     
     .task-card {
         background: #16161D;
-        border-radius: 12px;
-        padding: 16px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        border-radius: 8px;
+        padding: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+        transition: all 0.2s ease-in-out;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
         border: 1px solid #23232F;
-        position: relative;
+        min-height: 130px;
     }
     
-    /* Smooth Hover Transitions */
     .task-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 20px rgba(0, 0, 0, 0.3);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
         border-color: #3A3A4A;
     }
     
-    /* Custom Border Coding Categories */
-    .border-kevin-nguyen { border-left: 5px solid #00CC66; }
-    .border-family { border-left: 5px solid #3399FF; }
-    .border-school { border-left: 5px solid #9933FF; }
-    .border-volunteering { border-left: 5px solid #FF9933; }
+    /* Sleeker Border Category Markers */
+    .border-kevin-nguyen { border-left: 4px solid #00CC66; }
+    .border-family { border-left: 4px solid #3399FF; }
+    .border-school { border-left: 4px solid #9933FF; }
+    .border-volunteering { border-left: 4px solid #FF9933; }
     
-    /* Typography Style Sheet */
     .card-title {
         color: #FFFFFF;
-        font-size: 1.1rem;
+        font-size: 0.95rem;
         font-weight: 700;
-        margin-bottom: 8px;
-        line-height: 1.3;
+        margin-top: 4px;
+        margin-bottom: 4px;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     
     .meta-row {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         color: #A0A0AB;
-        font-size: 0.85rem;
-        margin-top: 4px;
+        font-size: 0.78rem;
+        margin-top: 2px;
     }
     
     .badge {
-        padding: 2px 8px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 0.68rem;
+        font-weight: 700;
         text-transform: uppercase;
         background: #272732;
         color: #E4E4E7;
@@ -348,25 +350,19 @@ with tab2:
                 st.info("No items found in this section.")
                 continue
 
-            # --- RENDER THE RICH AGENT LAYOUT CARD MATRIX ---
+            # --- DENSE CARD MATRIX ---
             st.markdown('<div class="card-container">', unsafe_allow_html=True)
             for idx, row in display_df.iterrows():
-                # Map classes dynamically based on category
                 cat_class = f"border-{row['Calendar'].lower().replace(' ', '-')}"
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                # Format visual times beautifully
-                # Check if the time cell actually contains a valid string
+                # Dynamic Parsing fix to handle any trailing structural offsets cleanly
                 if str(row['Time']).strip() not in ["", "None", "nan"]:
-                    try:
-                        # Let Pandas handle the flexible format parsing automatically
-                        time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
-                    except Exception:
-                        # Safe fallback if the data in the sheet is completely corrupted
-                        time_display = str(row['Time'])
-                else:
-                    time_display = "All Day"
+                    try: time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
+                    except Exception: time_display = str(row['Time'])
+                else: time_display = "All Day"
+                
                 date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
                 
                 card_html = f"""
@@ -374,26 +370,24 @@ with tab2:
                     <div>
                         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                             <span class="badge">{row['Calendar']}</span>
-                            <span style="font-size: 0.9rem;">{type_emoji}</span>
+                            <span style="font-size: 0.8rem;">{type_emoji}</span>
                         </div>
-                        <div class="card-title" style="margin-top: 8px;">{row['Item Name']}</div>
+                        <div class="card-title">{row['Item Name']}</div>
                         <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}</div>
                         {f'<div class="meta-row">📍 {row["Location"]}</div>' if row["Location"] else ''}
-                        {f'<div class="meta-row" style="font-style: italic; margin-top:8px; border-top: 1px solid #23232F; padding-top:4px;">{row["Notes"]}</div>' if row["Notes"] else ''}
-                    </div>
-                    <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
-                        <span style="font-size:0.8rem; color:#A0A0AB;">Status: {status_emoji}</span>
+                        {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{row["Notes"]}</div>' if row["Notes"] else ''}
                     </div>
                 </div>
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # Render interactive structural elements directly underneath the cards natively
+                # --- COMPACT HORIZONTAL CONTROLS W/ INLINE POPOVER EDITOR ---
                 with st.container():
-                    col_done, col_del, col_pad = st.columns([1, 1, 4])
+                    col_done, col_edit, col_del = st.columns([1, 1, 1])
+                    
                     with col_done:
                         if not row["Status"]:
-                            if st.button("Complete", key=f"done_{idx}_{category.lower()}"):
+                            if st.button("Complete", key=f"done_{idx}_{category.lower()}", use_container_width=True):
                                 df.at[idx, "Status"] = True
                                 g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
                                 if g_id and g_id not in ["", "None", "nan"] and item_type == "Task":
@@ -402,8 +396,71 @@ with tab2:
                                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                                 st.cache_data.clear()
                                 st.rerun()
+                                
+                    with col_edit:
+                        with st.popover("✏️ Edit", use_container_width=True):
+                            st.write("### Edit Entry Details")
+                            edit_name = st.text_input("Item Title", value=row["Item Name"], key=f"ed_name_{idx}_{category.lower()}")
+                            edit_date = st.text_input("Date (YYYY-MM-DD)", value=str(row["Date"]), key=f"ed_date_{idx}_{category.lower()}")
+                            edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]), key=f"ed_time_{idx}_{category.lower()}")
+                            edit_loc = st.text_input("Location", value=str(row["Location"]), key=f"ed_loc_{idx}_{category.lower()}")
+                            edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
+                            
+                            if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
+                                # 1. Write modifications directly into Master Local DataFrame
+                                df.at[idx, "Item Name"] = edit_name
+                                df.at[idx, "Date"] = edit_date
+                                df.at[idx, "Time"] = edit_time
+                                df.at[idx, "Location"] = edit_loc
+                                df.at[idx, "Notes"] = edit_notes
+                                
+                                # 2. Intercept and dispatch API patches to Google Server networks
+                                g_id = str(row.get("Event ID", ""))
+                                item_type = row.get("Type")
+                                cal_name = row.get("Calendar")
+                                
+                                if g_id and g_id not in ["None", "", "nan"]:
+                                    if item_type == "Task":
+                                        t_id = TASKLIST_MAP.get(cal_name, "@default")
+                                        task_body = {'title': edit_name, 'notes': edit_notes}
+                                        try: task_body['due'] = pd.to_datetime(edit_date).strftime('%Y-%m-%dT00:00:00.000Z')
+                                        except Exception: pass
+                                        try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=task_body).execute()
+                                        except Exception: pass
+                                        
+                                        # Handle linked calendar timeblock patch
+                                        tb_id = str(row.get("Timeblock ID", ""))
+                                        if tb_id and tb_id.lower() not in ["none", "", "nan"]:
+                                            c_id = CALENDAR_MAP.get(cal_name)
+                                            tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': edit_notes, 'location': edit_loc}
+                                            try:
+                                                start_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time else '00:00:00'}")
+                                                dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
+                                                tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['end'] = {'dateTime': (start_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            except Exception: pass
+                                            try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
+                                            except Exception: pass
+                                            
+                                    elif item_type == "Event":
+                                        c_id = CALENDAR_MAP.get(cal_name)
+                                        event_patch_body = {'summary': edit_name, 'description': edit_notes, 'location': edit_loc}
+                                        try:
+                                            start_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time else '00:00:00'}")
+                                            dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
+                                            event_patch_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['end'] = {'dateTime': (start_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                        except Exception: pass
+                                        try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
+                                        except Exception: pass
+                                
+                                # 3. Synchronize storage engine layer and rebuild environment layout
+                                conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                                st.cache_data.clear()
+                                st.rerun()
+                                
                     with col_del:
-                        if st.button("Delete", key=f"del_{idx}_{category.lower()}"):
+                        if st.button("Delete", key=f"del_{idx}_{category.lower()}", use_container_width=True):
                             g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
                             if g_id and g_id not in ["", "None", "nan"]:
                                 try:
