@@ -9,50 +9,47 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Mission Control", layout="wide")
 
-# --- INJECTING COMPRESSED DATA-DENSE CSS ---
+# --- HYPER-COMPRESSED MOBILE-FIRST CSS INTERFACE ---
 st.markdown("""
     <style>
     .main { background-color: #0F0F12; }
     
-    /* Highly Compressed Grid Configuration */
+    /* Ultra-Dense Fluid Grid System */
     .card-container {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 12px;
-        padding: 5px 0px;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 8px;
+        padding: 2px 0px;
     }
     
     .task-card {
         background: #16161D;
-        border-radius: 8px;
-        padding: 10px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-        transition: all 0.2s ease-in-out;
+        border-radius: 6px;
+        padding: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         display: flex;
         flex-direction: column;
         justify-content: space-between;
         border: 1px solid #23232F;
-        min-height: 130px;
+        margin-bottom: 0px !important;
     }
     
     .task-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
         border-color: #3A3A4A;
     }
     
-    /* Sleeker Border Category Markers */
-    .border-kevin-nguyen { border-left: 4px solid #00CC66; }
-    .border-family { border-left: 4px solid #3399FF; }
-    .border-school { border-left: 4px solid #9933FF; }
-    .border-volunteering { border-left: 4px solid #FF9933; }
+    /* Low-Profile Category Side Borders */
+    .border-kevin-nguyen { border-left: 3.5px solid #00CC66; }
+    .border-family { border-left: 3.5px solid #3399FF; }
+    .border-school { border-left: 3.5px solid #9933FF; }
+    .border-volunteering { border-left: 3.5px solid #FF9933; }
     
     .card-title {
         color: #FFFFFF;
-        font-size: 0.95rem;
+        font-size: 0.88rem;
         font-weight: 700;
-        margin-top: 4px;
-        margin-bottom: 4px;
+        margin-top: 2px;
+        margin-bottom: 2px;
         line-height: 1.2;
         white-space: nowrap;
         overflow: hidden;
@@ -62,21 +59,40 @@ st.markdown("""
     .meta-row {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 4px;
         color: #A0A0AB;
-        font-size: 0.78rem;
-        margin-top: 2px;
+        font-size: 0.72rem;
+        margin-top: 1px;
+        line-height: 1.1;
     }
     
     .badge {
-        padding: 1px 6px;
-        border-radius: 4px;
-        font-size: 0.68rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 0.62rem;
         font-weight: 700;
         text-transform: uppercase;
         background: #272732;
         color: #E4E4E7;
         width: fit-content;
+    }
+    
+    /* Hard-Compacting Streamlit Native Form Elements & Buttons */
+    div.stButton > button, div.stPopover > button, div.stPopover [data-testid="stPopoverTarget"] > button {
+        padding: 2px 6px !important;
+        font-size: 0.72rem !important;
+        min-height: 24px !important;
+        height: 24px !important;
+        background-color: #1E1E24 !important;
+        border: 1px solid #2D2D3D !important;
+        border-radius: 4px !important;
+        margin-top: -6px !important;
+    }
+    
+    /* Remove padding buffers around button action spaces */
+    [data-testid="element-container"] {
+        margin-bottom: 0px !important;
+        padding-bottom: 0px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -140,7 +156,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
         if col not in df.columns: df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
-    # 1. GCAL SYNC PHASE
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
             events_result = service_cal.events().list(
@@ -189,7 +204,6 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                     sheet_updated = True
         except Exception as e: st.error(f"Error reading calendar '{cal_name}': {e}")
 
-    # 2. GTASKS BIDIRECTIONAL AUTO-INGEST PHASE (Path 2 Integration)
     processed_tasklists = set()
     for tl_name, tl_id in TASKLIST_MAP.items():
         if tl_id in processed_tasklists: continue
@@ -199,9 +213,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
             for task in tasks_result.get('items', []):
                 g_id = task.get('id')
                 g_status = task.get('status') 
-                is_deleted = task.get('deleted', False)
-                
-                if is_deleted:
+                if task.get('deleted', False):
                     if g_id in df["Event ID"].values:
                         df = df[df["Event ID"] != g_id].reset_index(drop=True)
                         sheet_updated = True
@@ -215,27 +227,15 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                         df.at[idx, "Status"] = is_completed
                         sheet_updated = True
                 else:
-                    # RESTORED ACTION LAYER: Captures cloud task entries and normalizes them as true layout Tasks
                     is_completed = (g_status == 'completed')
                     task_title = task.get('title', 'Untitled Task')
                     due_raw = task.get('due', '')
-                    
-                    # Parse dates or fallback to local context execution limits
                     task_date_str = due_raw.split('T')[0] if due_raw else pd.Timestamp.today().strftime('%Y-%m-%d')
                     
                     new_task_row = {
-                        "Status": is_completed,
-                        "Item Name": task_title,
-                        "Type": "Task", # Forces absolute dashboard normalization
-                        "Calendar": tl_name,
-                        "Date": task_date_str,
-                        "Time": "",
-                        "Duration (Mins)": 0,
-                        "Scheduled?": False,
-                        "Location": "",
-                        "Notes": task.get('notes', ''),
-                        "Event ID": g_id,
-                        "Timeblock ID": ""
+                        "Status": is_completed, "Item Name": task_title, "Type": "Task", "Calendar": tl_name,
+                        "Date": task_date_str, "Time": "", "Duration (Mins)": 0, "Scheduled?": False,
+                        "Location": "", "Notes": task.get('notes', ''), "Event ID": g_id, "Timeblock ID": ""
                     }
                     df = pd.concat([df, pd.DataFrame([new_task_row])], ignore_index=True)
                     sheet_updated = True
@@ -379,15 +379,18 @@ with tab2:
                 st.info("No items found in this section.")
                 continue
 
-            # --- DENSE CARD MATRIX ---
+            # --- DENSE CARD MATRIX ENGINE ---
             st.markdown('<div class="card-container">', unsafe_allow_html=True)
             for idx, row in display_df.iterrows():
                 cat_class = f"border-{row['Calendar'].lower().replace(' ', '-')}"
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                is_row_all_day = str(row['Time']).strip() in ["", "None", "nan", "00:00:00"] and int(row.get('Duration (Mins)', 0)) == 0
+                # Filter out null leaks ("nan") from the UI strings
+                cleaned_loc = str(row["Location"]).strip() if str(row["Location"]).strip().lower() not in ["nan", "none", ""] else ""
+                cleaned_notes = str(row["Notes"]).strip() if str(row["Notes"]).strip().lower() not in ["nan", "none", ""] else ""
                 
+                is_row_all_day = str(row['Time']).strip() in ["", "None", "nan", "00:00:00"] and int(row.get('Duration (Mins)', 0)) == 0
                 if not is_row_all_day and str(row['Time']).strip() not in ["", "None", "nan"]:
                     try: time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
                     except Exception: time_display = str(row['Time'])
@@ -401,22 +404,22 @@ with tab2:
                 card_html = f"""
                 <div class="task-card {cat_class}">
                     <div>
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px;">
                             <span class="badge">{row['Calendar']}</span>
-                            <span style="font-size: 0.8rem;">{type_emoji}</span>
+                            <span style="font-size: 0.75rem;">{type_emoji}</span>
                         </div>
                         <div class="card-title">{row['Item Name']}</div>
                         <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}{dur_suffix}</div>
-                        {f'<div class="meta-row">📍 {row["Location"]}</div>' if row["Location"] else ''}
-                        {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{row["Notes"]}</div>' if row["Notes"] else ''}
+                        {f'<div class="meta-row">📍 {cleaned_loc}</div>' if cleaned_loc else ''}
+                        {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{cleaned_notes}</div>' if cleaned_notes else ''}
                     </div>
                 </div>
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- COMPACT CONTROLS WITH DURATION & ALL-DAY TOGGLE ---
+                # --- SOLID TWO-BUTTON CONTROL ROW ---
                 with st.container():
-                    col_done, col_edit, col_del = st.columns([1, 1, 1])
+                    col_done, col_options = st.columns([1, 1])
                     
                     with col_done:
                         if not row["Status"]:
@@ -429,39 +432,36 @@ with tab2:
                                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                                 st.cache_data.clear()
                                 st.rerun()
+                        else:
+                            st.button("✔️ Done", key=f"disabled_{idx}_{category.lower()}", disabled=True, use_container_width=True)
                                 
-                    with col_edit:
-                        with st.popover("✏️ Edit", use_container_width=True):
-                            st.write("### Edit Entry Details")
+                    with col_options:
+                        with st.popover("⚙️ Options", use_container_width=True):
+                            st.write("### Manage Entry")
                             edit_name = st.text_input("Item Title", value=row["Item Name"], key=f"ed_name_{idx}_{category.lower()}")
                             edit_date = st.text_input("Date (YYYY-MM-DD)", value=str(row["Date"]), key=f"ed_date_{idx}_{category.lower()}")
                             
                             edit_all_day = st.checkbox("All-day / No specific time", value=is_row_all_day, key=f"ed_allday_{idx}_{category.lower()}")
-                            
                             edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]) if str(row["Time"]).strip() not in ["", "None", "nan"] else "00:00:00", disabled=edit_all_day, key=f"ed_time_{idx}_{category.lower()}")
                             edit_dur = st.number_input("Duration (Mins)", min_value=0, max_value=480, value=int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60, step=15, disabled=edit_all_day, key=f"ed_dur_{idx}_{category.lower()}")
                             
                             edit_loc = st.text_input("Location", value=str(row["Location"]), key=f"ed_loc_{idx}_{category.lower()}")
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
+                            # Multi-Form Save Button Execution
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
-                                # 1. DATA NORMALIZATION SHIELD
                                 try:
                                     if edit_all_day:
                                         parsed_date = pd.to_datetime(edit_date)
                                         final_date_str = parsed_date.strftime('%Y-%m-%d')
-                                        final_time_str = ""
-                                        final_dur = 0
+                                        final_time_str, final_dur = "", 0
                                     else:
                                         parsed_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time.strip() else '00:00:00'}")
-                                        final_date_str = parsed_dt.strftime('%Y-%m-%d')
-                                        final_time_str = parsed_dt.strftime('%H:%M:%S')
-                                        final_dur = int(edit_dur)
+                                        final_date_str, final_time_str, final_dur = parsed_dt.strftime('%Y-%m-%d'), parsed_dt.strftime('%H:%M:%S'), int(edit_dur)
                                 except Exception:
-                                    st.error("⚠️ Formatting Error: Please ensure your input matches standard Date/Time rules.")
+                                    st.error("⚠️ Formatting Error: Check input rules.")
                                     st.stop()
 
-                                # 2. SURGICAL TASK NOTE PARSING ENGINE
                                 processed_notes = edit_notes
                                 if row["Type"] == "Task" and not edit_all_day and final_time_str != str(row["Time"]):
                                     try:
@@ -474,26 +474,13 @@ with tab2:
                                                 lines[j] = f"⏰ Scheduled: {new_time_display}"
                                                 line_found = True
                                                 break
-                                        if not line_found:
-                                            processed_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes_str}" if current_notes_str else f"⏰ Scheduled: {new_time_display}"
-                                        else:
-                                            processed_notes = "\n".join(lines).strip()
+                                        if not line_found: processed_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes_str}" if current_notes_str else f"⏰ Scheduled: {new_time_display}"
+                                        else: processed_notes = "\n".join(lines).strip()
                                     except Exception: pass
                                 
-                                # 3. Commit back into local Master DataFrames
-                                df.at[idx, "Item Name"] = edit_name
-                                df.at[idx, "Date"] = final_date_str
-                                df.at[idx, "Time"] = final_time_str
-                                df.at[idx, "Duration (Mins)"] = final_dur
-                                df.at[idx, "Location"] = edit_loc
-                                df.at[idx, "Notes"] = processed_notes
-                                df.at[idx, "Scheduled?"] = not edit_all_day
+                                df.at[idx, "Item Name"], df.at[idx, "Date"], df.at[idx, "Time"], df.at[idx, "Duration (Mins)"], df.at[idx, "Location"], df.at[idx, "Notes"], df.at[idx, "Scheduled?"] = edit_name, final_date_str, final_time_str, final_dur, edit_loc, processed_notes, not edit_all_day
                                 
-                                # 4. Dispatch Google Network Structural API Updates
-                                g_id = str(row.get("Event ID", ""))
-                                item_type = row.get("Type")
-                                cal_name = row.get("Calendar")
-                                
+                                g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
                                 if g_id and g_id not in ["None", "", "nan"]:
                                     if item_type == "Task":
                                         t_id = TASKLIST_MAP.get(cal_name, "@default")
@@ -508,11 +495,9 @@ with tab2:
                                             c_id = CALENDAR_MAP.get(cal_name)
                                             tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': processed_notes, 'location': edit_loc}
                                             if edit_all_day:
-                                                tb_body['start'] = {'date': final_date_str}
-                                                tb_body['end'] = {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
+                                                tb_body['start'], tb_body['end'] = {'date': final_date_str}, {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
                                             else:
-                                                tb_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['start'], tb_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                             try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
                                             except Exception: pass
                                             
@@ -520,31 +505,29 @@ with tab2:
                                         c_id = CALENDAR_MAP.get(cal_name)
                                         event_patch_body = {'summary': edit_name, 'description': processed_notes, 'location': edit_loc}
                                         if edit_all_day:
-                                            event_patch_body['start'] = {'date': final_date_str}
-                                            event_patch_body['end'] = {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
+                                            event_patch_body['start'], event_patch_body['end'] = {'date': final_date_str}, {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
                                         else:
-                                            event_patch_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['start'], event_patch_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
                                         except Exception: pass
                                 
-                                # 5. Persist to storage engine layer and trigger display updates
                                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                                 st.cache_data.clear()
                                 st.rerun()
-                                
-                    with col_del:
-                        if st.button("Delete", key=f"del_{idx}_{category.lower()}", use_container_width=True):
-                            g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
-                            if g_id and g_id not in ["", "None", "nan"]:
-                                try:
-                                    if item_type == "Event": cal_service.events().delete(calendarId=CALENDAR_MAP.get(cal_name), eventId=g_id).execute()
-                                    else: tasks_service.tasks().delete(tasklist=TASKLIST_MAP.get(cal_name, "@default"), task=g_id).execute()
-                                except Exception: pass
-                            df = df.drop(index=idx)
-                            conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
-                            st.cache_data.clear()
-                            st.rerun()
+                            
+                            st.write("---")
+                            # Destructive Item Deletion Path hosted safely inside options hub
+                            if st.button("🗑️ Delete Item permanently", key=f"del_{idx}_{category.lower()}", use_container_width=True):
+                                g_id, item_type, cal_name = str(row.get("Event ID", "")), row.get("Type"), row.get("Calendar")
+                                if g_id and g_id not in ["", "None", "nan"]:
+                                    try:
+                                        if item_type == "Event": cal_service.events().delete(calendarId=CALENDAR_MAP.get(cal_name), eventId=g_id).execute()
+                                        else: tasks_service.tasks().delete(tasklist=TASKLIST_MAP.get(cal_name, "@default"), task=g_id).execute()
+                                    except Exception: pass
+                                df = df.drop(index=idx)
+                                conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                                st.cache_data.clear()
+                                st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
 with tab3:
