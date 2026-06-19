@@ -41,7 +41,6 @@ st.markdown("""
 st.title("🏋️ Habit Core Engine")
 
 # --- TRACKED HABITS CONFIGURATION ---
-# To add or remove habits, just update this list! 
 HABITS_LIST = ["Gym Workout", "Journaling", "Meditation", "Reading", "Leetcoding"]
 
 # --- DATABASE LAYER CONNECTIONS ---
@@ -51,9 +50,9 @@ today_str = datetime.now().strftime('%Y-%m-%d')
 try:
     # Read specifically from a 'Habits' worksheet inside your master file
     df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits", ttl=0)
+    if df is None or df.empty or "Date" not in df.columns:
+        df = pd.DataFrame(columns=["Date"] + HABITS_LIST)
 except Exception:
-    st.warning("⚠️ Worksheet 'Habits' not detected. Creating an in-memory ledger placeholder...")
-    # Fallback to create the layout columns dynamically if it doesn't exist yet
     df = pd.DataFrame(columns=["Date"] + HABITS_LIST)
 
 # Ensure data formatting is strictly normalized
@@ -63,7 +62,7 @@ for h in HABITS_LIST:
         df[h] = False
     df[h] = df[h].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 
-# --- INITIALIZE OR EXTRACT TODAY'S ROW ---
+# Initialize today's row if missing
 if today_str not in df["Date"].values:
     new_day = {col: (today_str if col == "Date" else False) for col in df.columns}
     df = pd.concat([df, pd.DataFrame([new_day])], ignore_index=True)
@@ -71,13 +70,35 @@ if today_str not in df["Date"].values:
 
 today_idx = df[df["Date"] == today_str].index[0]
 
+# --- 🛰️ CROSS-TAB AUTOMATION BRIDGE ---
+try:
+    # Silently scan the default main worksheet ledger (Mission Control log)
+    df_mission = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+    if not df_mission.empty and "Item Name" in df_mission.columns and "Status" in df_mission.columns and "Date" in df_mission.columns:
+        df_mission["Status"] = df_mission["Status"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
+        df_mission["Date"] = df_mission["Date"].astype(str)
+        
+        # Query for matching completed gym or workout sessions assigned to today
+        todays_gym_completions = df_mission[
+            (df_mission["Date"] == today_str) & 
+            (df_mission["Status"] == True) & 
+            (df_mission["Item Name"].str.lower().str.contains("gym", na=False) | df_mission["Item Name"].str.lower().str.contains("workout", na=False))
+        ]
+        
+        # If completed in dashboard but still marked False in habits, auto-resolve it immediately
+        if not todays_gym_completions.empty and not df.at[today_idx, "Gym Workout"]:
+            df.at[today_idx, "Gym Workout"] = True
+            conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+            st.toast("💪 Auto-Sync: Gym Workout updated based on your Mission Control Dashboard!")
+except Exception:
+    pass
+
 # --- WORKSPACE TABBED LAYOUT ---
 tab_log, tab_analytics = st.tabs(["🎯 Log Today's Habits", "📊 Performance Analytics"])
 
 with tab_log:
     st.write(f"### Target Agenda: **{datetime.now().strftime('%A, %b %d')}**")
     
-    # Render interactive fluid checkbox columns for quick mobile logging
     cols = st.columns(len(HABITS_LIST))
     updated_values = {}
     
@@ -100,14 +121,12 @@ with tab_analytics:
     if len(df) <= 1 and today_str in df["Date"].values:
         st.info("Analytics engine requires at least a couple days of tracking history to compute logs.")
     else:
-        # Sort values chronologically for accurate streak calculation arrays
         df_sorted = df.sort_values(by="Date", ascending=True).copy()
         
         # --- STREAK & CONSISTENCY ENGINE ---
         metric_cols = st.columns(len(HABITS_LIST))
         
         for idx, habit in enumerate(HABITS_LIST):
-            # Calculate active running streaks
             streak = 0
             for val in reversed(df_sorted[habit].values):
                 if val:
@@ -129,11 +148,10 @@ with tab_analytics:
                 </div>
                 """, unsafe_allow_html=True)
         
-        # --- PLOTLY ROLLING TIMELINE VISUALIZATION ---
+        # --- PLOTLY TIMELINE VISUALIZATION ---
         st.write("---")
         st.write("### 30-Day Completeness Velocity")
         
-        # Melt dataframe to make it structural for quick Plotly parsing
         melted_df = df_sorted.melt(id_vars=["Date"], value_vars=HABITS_LIST, var_name="Habit", value_name="Completed")
         melted_df = melted_df[melted_df["Completed"] == True]
         
