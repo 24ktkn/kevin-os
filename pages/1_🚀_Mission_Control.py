@@ -140,6 +140,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
         if col not in df.columns: df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
+    # 1. GCAL SYNC PHASE
     for cal_name, cal_id in CALENDAR_MAP.items():
         try:
             events_result = service_cal.events().list(
@@ -188,6 +189,7 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                     sheet_updated = True
         except Exception as e: st.error(f"Error reading calendar '{cal_name}': {e}")
 
+    # 2. GTASKS BIDIRECTIONAL AUTO-INGEST PHASE (Path 2 Integration)
     processed_tasklists = set()
     for tl_name, tl_id in TASKLIST_MAP.items():
         if tl_id in processed_tasklists: continue
@@ -197,7 +199,9 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
             for task in tasks_result.get('items', []):
                 g_id = task.get('id')
                 g_status = task.get('status') 
-                if task.get('deleted', False):
+                is_deleted = task.get('deleted', False)
+                
+                if is_deleted:
                     if g_id in df["Event ID"].values:
                         df = df[df["Event ID"] != g_id].reset_index(drop=True)
                         sheet_updated = True
@@ -210,6 +214,31 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                     if is_completed != bool(df.at[idx, "Status"]):
                         df.at[idx, "Status"] = is_completed
                         sheet_updated = True
+                else:
+                    # RESTORED ACTION LAYER: Captures cloud task entries and normalizes them as true layout Tasks
+                    is_completed = (g_status == 'completed')
+                    task_title = task.get('title', 'Untitled Task')
+                    due_raw = task.get('due', '')
+                    
+                    # Parse dates or fallback to local context execution limits
+                    task_date_str = due_raw.split('T')[0] if due_raw else pd.Timestamp.today().strftime('%Y-%m-%d')
+                    
+                    new_task_row = {
+                        "Status": is_completed,
+                        "Item Name": task_title,
+                        "Type": "Task", # Forces absolute dashboard normalization
+                        "Calendar": tl_name,
+                        "Date": task_date_str,
+                        "Time": "",
+                        "Duration (Mins)": 0,
+                        "Scheduled?": False,
+                        "Location": "",
+                        "Notes": task.get('notes', ''),
+                        "Event ID": g_id,
+                        "Timeblock ID": ""
+                    }
+                    df = pd.concat([df, pd.DataFrame([new_task_row])], ignore_index=True)
+                    sheet_updated = True
         except Exception: pass
             
     if sheet_updated:
@@ -357,7 +386,6 @@ with tab2:
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                # Check if item is dynamically marked all-day row
                 is_row_all_day = str(row['Time']).strip() in ["", "None", "nan", "00:00:00"] and int(row.get('Duration (Mins)', 0)) == 0
                 
                 if not is_row_all_day and str(row['Time']).strip() not in ["", "None", "nan"]:
@@ -386,7 +414,7 @@ with tab2:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- COMPACT CONTROLS WITH RESTORED DURATION & ALL-DAY TOGGLE ---
+                # --- COMPACT CONTROLS WITH DURATION & ALL-DAY TOGGLE ---
                 with st.container():
                     col_done, col_edit, col_del = st.columns([1, 1, 1])
                     
@@ -408,7 +436,6 @@ with tab2:
                             edit_name = st.text_input("Item Title", value=row["Item Name"], key=f"ed_name_{idx}_{category.lower()}")
                             edit_date = st.text_input("Date (YYYY-MM-DD)", value=str(row["Date"]), key=f"ed_date_{idx}_{category.lower()}")
                             
-                            # RESTORED: All-Day Checkbox structural filter selector
                             edit_all_day = st.checkbox("All-day / No specific time", value=is_row_all_day, key=f"ed_allday_{idx}_{category.lower()}")
                             
                             edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]) if str(row["Time"]).strip() not in ["", "None", "nan"] else "00:00:00", disabled=edit_all_day, key=f"ed_time_{idx}_{category.lower()}")
@@ -418,7 +445,7 @@ with tab2:
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
-                                # 1. DATA NORMALIZATION SHIELD LAYER
+                                # 1. DATA NORMALIZATION SHIELD
                                 try:
                                     if edit_all_day:
                                         parsed_date = pd.to_datetime(edit_date)
