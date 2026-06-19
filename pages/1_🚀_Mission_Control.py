@@ -372,7 +372,7 @@ with tab2:
                             <span style="font-size: 0.8rem;">{type_emoji}</span>
                         </div>
                         <div class="card-title">{row['Item Name']}</div>
-                        <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}</div>
+                        <div class="meta-row">🕒 <b>{date_display}</b> @ {time_display} ({row['Duration (Mins)']}m)</div>
                         {f'<div class="meta-row">📍 {row["Location"]}</div>' if row["Location"] else ''}
                         {f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{row["Notes"]}</div>' if row["Notes"] else ''}
                     </div>
@@ -380,7 +380,7 @@ with tab2:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- COMPACT HORIZONTAL CONTROLS W/ RESTORED WORKFLOW LAYER ---
+                # --- COMPACT CONTROLS WITH RESTORED DURATION FORM ---
                 with st.container():
                     col_done, col_edit, col_del = st.columns([1, 1, 1])
                     
@@ -402,11 +402,15 @@ with tab2:
                             edit_name = st.text_input("Item Title", value=row["Item Name"], key=f"ed_name_{idx}_{category.lower()}")
                             edit_date = st.text_input("Date (YYYY-MM-DD)", value=str(row["Date"]), key=f"ed_date_{idx}_{category.lower()}")
                             edit_time = st.text_input("Time (HH:MM:SS)", value=str(row["Time"]), key=f"ed_time_{idx}_{category.lower()}")
+                            
+                            # RESTORED: Dynamic integer duration tracking configuration
+                            edit_dur = st.number_input("Duration (Mins)", min_value=0, max_value=480, value=int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60, step=15, key=f"ed_dur_{idx}_{category.lower()}")
+                            
                             edit_loc = st.text_input("Location", value=str(row["Location"]), key=f"ed_loc_{idx}_{category.lower()}")
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
-                                # 1. DATA NORMALIZATION SHIELD (Force clean formatting structures)
+                                # 1. DATA NORMALIZATION SHIELD
                                 try:
                                     parsed_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time.strip() else '00:00:00'}")
                                     final_date_str = parsed_dt.strftime('%Y-%m-%d')
@@ -415,7 +419,7 @@ with tab2:
                                     st.error("⚠️ Formatting Error: Please ensure your input matches standard Date/Time rules.")
                                     st.stop()
 
-                                # 2. RESTORED SURGICAL TASK NOTE PARSING ENGINE
+                                # 2. SURGICAL TASK NOTE PARSING ENGINE
                                 processed_notes = edit_notes
                                 if row["Type"] == "Task" and final_time_str != str(row["Time"]):
                                     try:
@@ -432,13 +436,13 @@ with tab2:
                                             processed_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes_str}" if current_notes_str else f"⏰ Scheduled: {new_time_display}"
                                         else:
                                             processed_notes = "\n".join(lines).strip()
-                                    except Exception:
-                                        pass
+                                    except Exception: pass
                                 
                                 # 3. Commit back into local Master DataFrames
                                 df.at[idx, "Item Name"] = edit_name
                                 df.at[idx, "Date"] = final_date_str
                                 df.at[idx, "Time"] = final_time_str
+                                df.at[idx, "Duration (Mins)"] = int(edit_dur) # Persisted to local ledger
                                 df.at[idx, "Location"] = edit_loc
                                 df.at[idx, "Notes"] = processed_notes
                                 
@@ -461,9 +465,8 @@ with tab2:
                                             c_id = CALENDAR_MAP.get(cal_name)
                                             tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': processed_notes, 'location': edit_loc}
                                             try:
-                                                dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                                 tb_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=int(edit_dur))).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                             except Exception: pass
                                             try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
                                             except Exception: pass
@@ -472,9 +475,8 @@ with tab2:
                                         c_id = CALENDAR_MAP.get(cal_name)
                                         event_patch_body = {'summary': edit_name, 'description': processed_notes, 'location': edit_loc}
                                         try:
-                                            dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
                                             event_patch_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=int(edit_dur))).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         except Exception: pass
                                         try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
                                         except Exception: pass
