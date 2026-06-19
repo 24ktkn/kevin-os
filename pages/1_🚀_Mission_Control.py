@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import datetime
+from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
@@ -51,9 +51,9 @@ tasks_service = get_tasks_service()
 # --- SYNCHRONIZATION ENGINE ---
 def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     st.toast("🔄 Scanning Google Calendars and Tasks for updates...")
-    now = datetime.datetime.utcnow()
-    time_min = (now - datetime.timedelta(days=7)).isoformat() + 'Z'
-    time_max = (now + datetime.timedelta(days=30)).isoformat() + 'Z'
+    now = pd.Timestamp.utcnow() # Updated for smoother pandas integration
+    time_min = (now - pd.Timedelta(days=7)).isoformat()
+    time_max = (now + pd.Timedelta(days=30)).isoformat()
     sheet_updated = False
     
     text_columns = ["Item Name", "Type", "Calendar", "Date", "Time", "Location", "Notes", "Event ID", "Timeblock ID"]
@@ -105,8 +105,8 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
                 if 'dateTime' in start_info:
                     start_raw = start_info.get('dateTime')
                     end_raw = end_info.get('dateTime')
-                    start_dt = datetime.datetime.fromisoformat(start_raw[:19])
-                    end_dt = datetime.datetime.fromisoformat(end_raw[:19])
+                    start_dt = pd.to_datetime(start_raw)
+                    end_dt = pd.to_datetime(end_raw)
                     duration_mins = int((end_dt - start_dt).total_seconds() / 60)
                     date_str = start_dt.strftime('%Y-%m-%d')
                     time_str = start_dt.strftime('%H:%M:%S')
@@ -187,6 +187,38 @@ def sync_all_to_sheet(df, service_cal, service_tasks, connection):
     st.toast("🌟 Already up to date.")
     return df, False
 
+# --- AUTO-SWEEP ENGINE ---
+def sweep_past_events(dataframe, connection):
+    df_temp = dataframe.copy()
+    try:
+        # Stitch Date and Time together for the math comparison
+        df_temp["Internal_DateTime"] = pd.to_datetime(
+            df_temp["Date"].astype(str) + " " + df_temp["Time"].astype(str), 
+            errors='coerce'
+        )
+    except KeyError:
+        df_temp["Internal_DateTime"] = pd.to_datetime(df_temp["Date"], errors='coerce')
+
+    current_time = pd.Timestamp.now()
+    
+    # Mask to find items where the time has passed AND they are not yet completed
+    past_events_mask = (df_temp["Internal_DateTime"] < current_time) & (dataframe["Status"] == False)
+
+    if past_events_mask.any():
+        num_updated = past_events_mask.sum()
+        
+        # Mark them as complete on the original dataframe
+        dataframe.loc[past_events_mask, "Status"] = True
+        
+        # Push the overwrite back to Google Sheets matching your specific connection settings
+        connection.update(data=dataframe, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+        
+        st.cache_data.clear()
+        st.success(f"🧹 Auto-Sweep Complete: Marked {num_updated} past events as Completed!")
+        st.rerun()
+    else:
+        st.toast("🧹 Schedule is clean! No past pending events found to sweep.")
+
 # --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
@@ -218,9 +250,9 @@ with tab1:
             )
 
         with col2:
-            target_date = st.date_input("Date", datetime.date.today())
+            target_date = st.date_input("Date", pd.Timestamp.today().date())
             all_day = st.checkbox("All-day / No specific time")
-            start_time = st.time_input("Start Time", datetime.time(0, 0), disabled=all_day)
+            start_time = st.time_input("Start Time", pd.Timestamp("00:00:00").time(), disabled=all_day)
             duration = st.number_input("Duration (Mins)", min_value=15, max_value=480, value=60, step=15, disabled=all_day)
             repeat_option = st.selectbox("Repeat", ["None", "Daily", "Weekly", "Monthly", "Every Weekday (Mon-Fri)"])
         
@@ -241,14 +273,14 @@ with tab1:
                 event_body = {
                     'summary': item_name, 'description': notes, 'location': location_input,
                     'start': {'date': target_date.strftime('%Y-%m-%d')},
-                    'end': {'date': (target_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')},
+                    'end': {'date': (target_date + pd.Timedelta(days=1)).strftime('%Y-%m-%d')},
                     'reminders': reminders_payload
                 }
                 time_str = ""
                 duration_val = 0
             else:
                 start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
-                end_dt_obj = datetime.datetime.combine(target_date, start_time) + datetime.timedelta(minutes=int(duration))
+                end_dt_obj = pd.Timestamp.combine(target_date, start_time) + pd.Timedelta(minutes=int(duration))
                 end_dt = f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00"
 
                 event_body = {
@@ -309,14 +341,21 @@ with tab2:
     st.header("Master Task Tracker")
     st.info("Double-click any cell (Name, Date, Location, Notes) to edit. Check the box to delete. Click Save to push to Google Cloud.")
     
-    if st.button("🔄 Sync Everything to Sheet"):
-        df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
-        if was_updated: st.rerun()
+    # --- ADDED NEW BUTTON LAYOUT HERE ---
+    btn_col1, btn_col2 = st.columns([1, 4])
+    with btn_col1:
+        if st.button("🔄 Sync Everything to Sheet"):
+            df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
+            if was_updated: st.rerun()
+    with btn_col2:
+        if st.button("🧹 Auto-Sweep Past Events"):
+            sweep_past_events(df, conn)
+    # ------------------------------------
             
     categories = ["Upcoming", "Upcoming Tasks", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
     task_tabs = st.tabs(categories)
     
-    today = pd.to_datetime(datetime.date.today())
+    today = pd.to_datetime(pd.Timestamp.today().date())
     four_weeks_out = today + pd.Timedelta(weeks=4)
     safe_dates = pd.to_datetime(df["Date"], errors='coerce')
     
@@ -333,10 +372,8 @@ with tab2:
             elif category == "All Tasks": display_df = df[df["Type"] == "Task"].copy()
             else: display_df = df[df["Calendar"] == category].copy()
             
-            # --- THE FIX: ASCENDING SORT ---
             # Sorts the dataframe by Date and Time from oldest to newest
             display_df = display_df.sort_values(by=["Date", "Time"], ascending=[True, True])
-            # -------------------------------
             
             # 1. Safely generate the column first so Pandas doesn't throw a KeyError
             display_df = display_df.assign(**{"🗑️ Delete?": False})
