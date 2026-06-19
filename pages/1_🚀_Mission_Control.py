@@ -357,7 +357,6 @@ with tab2:
                 status_emoji = "✅" if row["Status"] else "⏳"
                 type_emoji = "📅" if row["Type"] == "Event" else "☑️"
                 
-                # Dynamic Parsing fix to handle any trailing structural offsets cleanly
                 if str(row['Time']).strip() not in ["", "None", "nan"]:
                     try: time_display = pd.to_datetime(row['Time']).strftime("%I:%M %p")
                     except Exception: time_display = str(row['Time'])
@@ -381,7 +380,7 @@ with tab2:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
                 
-                # --- COMPACT HORIZONTAL CONTROLS W/ INLINE POPOVER EDITOR ---
+                # --- COMPACT HORIZONTAL CONTROLS W/ RESTORED WORKFLOW LAYER ---
                 with st.container():
                     col_done, col_edit, col_del = st.columns([1, 1, 1])
                     
@@ -407,14 +406,43 @@ with tab2:
                             edit_notes = st.text_area("Notes", value=str(row["Notes"]), key=f"ed_notes_{idx}_{category.lower()}")
                             
                             if st.button("💾 Save Changes", key=f"save_inline_{idx}_{category.lower()}", use_container_width=True):
-                                # 1. Write modifications directly into Master Local DataFrame
-                                df.at[idx, "Item Name"] = edit_name
-                                df.at[idx, "Date"] = edit_date
-                                df.at[idx, "Time"] = edit_time
-                                df.at[idx, "Location"] = edit_loc
-                                df.at[idx, "Notes"] = edit_notes
+                                # 1. DATA NORMALIZATION SHIELD (Force clean formatting structures)
+                                try:
+                                    parsed_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time.strip() else '00:00:00'}")
+                                    final_date_str = parsed_dt.strftime('%Y-%m-%d')
+                                    final_time_str = parsed_dt.strftime('%H:%M:%S') if edit_time.strip() else ""
+                                except Exception:
+                                    st.error("⚠️ Formatting Error: Please ensure your input matches standard Date/Time rules.")
+                                    st.stop()
+
+                                # 2. RESTORED SURGICAL TASK NOTE PARSING ENGINE
+                                processed_notes = edit_notes
+                                if row["Type"] == "Task" and final_time_str != str(row["Time"]):
+                                    try:
+                                        new_time_display = parsed_dt.strftime('%I:%M %p')
+                                        current_notes_str = edit_notes if edit_notes.strip() not in ["None", "nan", ""] else ""
+                                        lines = current_notes_str.split('\n')
+                                        line_found = False
+                                        for j, line in enumerate(lines):
+                                            if "⏰ Scheduled:" in line:
+                                                lines[j] = f"⏰ Scheduled: {new_time_display}"
+                                                line_found = True
+                                                break
+                                        if not line_found:
+                                            processed_notes = f"⏰ Scheduled: {new_time_display}\n\n{current_notes_str}" if current_notes_str else f"⏰ Scheduled: {new_time_display}"
+                                        else:
+                                            processed_notes = "\n".join(lines).strip()
+                                    except Exception:
+                                        pass
                                 
-                                # 2. Intercept and dispatch API patches to Google Server networks
+                                # 3. Commit back into local Master DataFrames
+                                df.at[idx, "Item Name"] = edit_name
+                                df.at[idx, "Date"] = final_date_str
+                                df.at[idx, "Time"] = final_time_str
+                                df.at[idx, "Location"] = edit_loc
+                                df.at[idx, "Notes"] = processed_notes
+                                
+                                # 4. Dispatch Google Network Structural API Updates
                                 g_id = str(row.get("Event ID", ""))
                                 item_type = row.get("Type")
                                 cal_name = row.get("Calendar")
@@ -422,39 +450,36 @@ with tab2:
                                 if g_id and g_id not in ["None", "", "nan"]:
                                     if item_type == "Task":
                                         t_id = TASKLIST_MAP.get(cal_name, "@default")
-                                        task_body = {'title': edit_name, 'notes': edit_notes}
-                                        try: task_body['due'] = pd.to_datetime(edit_date).strftime('%Y-%m-%dT00:00:00.000Z')
+                                        task_body = {'title': edit_name, 'notes': processed_notes}
+                                        try: task_body['due'] = pd.to_datetime(final_date_str).strftime('%Y-%m-%dT00:00:00.000Z')
                                         except Exception: pass
                                         try: tasks_service.tasks().patch(tasklist=t_id, task=g_id, body=task_body).execute()
                                         except Exception: pass
                                         
-                                        # Handle linked calendar timeblock patch
                                         tb_id = str(row.get("Timeblock ID", ""))
                                         if tb_id and tb_id.lower() not in ["none", "", "nan"]:
                                             c_id = CALENDAR_MAP.get(cal_name)
-                                            tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': edit_notes, 'location': edit_loc}
+                                            tb_body = {'summary': f"☑️ [Task] {edit_name}", 'description': processed_notes, 'location': edit_loc}
                                             try:
-                                                start_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time else '00:00:00'}")
                                                 dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
-                                                tb_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                                tb_body['end'] = {'dateTime': (start_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                             except Exception: pass
                                             try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
                                             except Exception: pass
                                             
                                     elif item_type == "Event":
                                         c_id = CALENDAR_MAP.get(cal_name)
-                                        event_patch_body = {'summary': edit_name, 'description': edit_notes, 'location': edit_loc}
+                                        event_patch_body = {'summary': edit_name, 'description': processed_notes, 'location': edit_loc}
                                         try:
-                                            start_dt = pd.to_datetime(f"{edit_date} {edit_time if edit_time else '00:00:00'}")
                                             dur = int(row["Duration (Mins)"]) if pd.notna(row["Duration (Mins)"]) else 60
-                                            event_patch_body['start'] = {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
-                                            event_patch_body['end'] = {'dateTime': (start_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['start'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['end'] = {'dateTime': (parsed_dt + pd.Timedelta(minutes=dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
                                         except Exception: pass
                                         try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
                                         except Exception: pass
                                 
-                                # 3. Synchronize storage engine layer and rebuild environment layout
+                                # 5. Persist to storage engine layer and trigger display updates
                                 conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                                 st.cache_data.clear()
                                 st.rerun()
