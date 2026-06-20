@@ -127,7 +127,7 @@ df_raw["Phase/Trip"] = df_raw["Phase/Trip"].astype(str)
 df_raw["Department"] = df_raw["Department"].astype(str)
 
 sheet_trip_filter = "Trip 1 (Day 1)" if "Trip 1" in selected_trip else "Trip 2 (Day 15)"
-df_filtered = df_raw[df_raw["Phase/Trip"].str.contains(sheet_trip_filter, na=False, case=False)]
+df_filtered = df_raw[df_raw["Phase/Trip"].str.contains(sheet_trip_filter, na=False, case=False, regex=False)]
 
 # --- WORKSPACE TAB LAYOUT ---
 tab_shopping, tab_blueprint = st.tabs(["🛒 Costco Checklist", "🗓️ Weekly Menu Blueprint"])
