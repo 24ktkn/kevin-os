@@ -438,7 +438,13 @@ with tab2:
                     time_display = "All Day"
                     dur_suffix = ""
                 
-                date_display = pd.to_datetime(row['Date']).strftime('%a, %b %d')
+            # 🛡️ Crash-proof Date Parsing Guard
+                try:
+                    # If the row value is a boolean or bad type, coerce it safely to a null time instead of throwing an error
+                    parsed_date = pd.to_datetime(row['Date'], errors='coerce')
+                    date_display = parsed_date.strftime('%a, %b %d') if pd.notna(parsed_date) else "Malformed Date"
+                except Exception:
+                    date_display = "Invalid Date"
                 
                 # Unified single-line formatting sequence stops code block division leakages
                 card_html = f"""<div class="task-card {status_class}"><div><div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px;"><span class="badge {badge_class}">{row['Calendar']}</span><span style="font-size: 0.75rem;">{type_emoji}</span></div><div class="card-title">{row['Item Name']}</div><div class="meta-row">🕒 <b>{date_display}</b> @ {time_display}{dur_suffix}</div>{f'<div class="meta-row">📍 {cleaned_loc}</div>' if cleaned_loc else ''}{f'<div class="meta-row" style="font-style: italic; color:#71717A; margin-top:2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{cleaned_notes}</div>' if cleaned_notes else ''}</div></div>""".replace("\n", " ")
