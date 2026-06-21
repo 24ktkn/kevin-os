@@ -63,7 +63,15 @@ try:
             hrv = float(latest_day["HRV"]) if "HRV" in latest_day and pd.notna(latest_day["HRV"]) else 0
             sleep = float(latest_day["Sleep Duration"]) if "Sleep Duration" in latest_day and pd.notna(latest_day["Sleep Duration"]) else 0
             rhr = float(latest_day["RHR"]) if "RHR" in latest_day and pd.notna(latest_day["RHR"]) else 0
-            weight = float(latest_day["Bodyweight"]) if "Bodyweight" in latest_day and pd.notna(latest_day["Bodyweight"]) else 0
+            
+            # Find the most recent non-zero bodyweight from history
+            weight = 0.0
+            if "Bodyweight" in df_bio_clean.columns:
+                valid_weights = df_bio_clean[df_bio_clean["Bodyweight"] > 0]
+                if not valid_weights.empty:
+                    weight = float(valid_weights.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
+            if weight == 0:
+                weight = 170.0 # absolute fallback
 
             # Render Daily Steps
             step_goal = 10000
