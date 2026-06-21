@@ -4,6 +4,8 @@ import plotly.express as px
 import datetime
 from zoneinfo import ZoneInfo
 from streamlit_gsheets import GSheetsConnection
+import calendar
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="Habit Core", layout="wide")
 
@@ -181,3 +183,129 @@ with tab_analytics:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Timeline visualization will render here as soon as habits are checked off.")
+            
+        st.write("---")
+        st.write("### 📅 Monthly Habit Calendar Heatmap")
+        
+        # Select habit to view on calendar
+        cal_habit = st.selectbox("Select Habit to Plot on Calendar Grid", ["All Habits (Combined Count)"] + HABITS_LIST)
+        
+        # Select month/year
+        months_list = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        col_y, col_m = st.columns(2)
+        with col_y:
+            selected_year = st.selectbox("Calendar Year", sorted(list(range(2025, now_local.year + 2))), index=sorted(list(range(2025, now_local.year + 2))).index(now_local.year))
+        with col_m:
+            selected_month = st.selectbox("Calendar Month", months_list, index=now_local.month - 1)
+            selected_month_num = months_list.index(selected_month) + 1
+            
+        # Build calendar grid
+        cal_grid = calendar.monthcalendar(selected_year, selected_month_num)
+        days_of_week = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        
+        grid_values = []
+        grid_labels = []
+        grid_hovers = []
+        
+        for week in cal_grid:
+            row_vals = []
+            row_lbls = []
+            row_hovers = []
+            for day_idx, day_num in enumerate(week):
+                if day_num == 0:
+                    row_vals.append(None)
+                    row_lbls.append("")
+                    row_hovers.append("")
+                else:
+                    current_date = datetime.date(selected_year, selected_month_num, day_num)
+                    date_str = current_date.strftime('%Y-%m-%d')
+                    matching_rows = df_sorted[df_sorted["Date"] == date_str]
+                    
+                    if matching_rows.empty:
+                        row_vals.append(0.0)
+                        row_lbls.append(str(day_num))
+                        row_hovers.append(f"{current_date.strftime('%b %d, %Y')}: No record logged / Not completed")
+                    else:
+                        row_data = matching_rows.iloc[0]
+                        if cal_habit == "All Habits (Combined Count)":
+                            completed_count = sum(bool(row_data[h]) for h in HABITS_LIST)
+                            row_vals.append(completed_count)
+                            row_lbls.append(str(day_num))
+                            row_hovers.append(f"{current_date.strftime('%b %d, %Y')}: {completed_count}/{len(HABITS_LIST)} habits completed")
+                        else:
+                            completed = bool(row_data[cal_habit])
+                            row_vals.append(1.0 if completed else 0.0)
+                            row_lbls.append(str(day_num))
+                            row_hovers.append(f"{current_date.strftime('%b %d, %Y')}: {cal_habit} - {'Done ✅' if completed else 'Not Done ❌'}")
+            grid_values.append(row_vals)
+            grid_labels.append(row_lbls)
+            grid_hovers.append(row_hovers)
+
+        # Plotly configuration
+        if cal_habit == "All Habits (Combined Count)":
+            colorscale = [
+                [0.0, "#16161D"],   # background gray
+                [0.2, "#0D3E26"],   # dark green
+                [0.4, "#14623C"],
+                [0.6, "#1B8752"],
+                [0.8, "#22AC68"],
+                [1.0, "#00FF66"]    # neon green
+            ]
+            zmin_val, zmax_val = 0, len(HABITS_LIST)
+        else:
+            colorscale = [
+                [0.0, "#16161D"],
+                [1.0, "#00FF66"]
+            ]
+            zmin_val, zmax_val = 0, 1
+
+        fig_cal = go.Figure(data=go.Heatmap(
+            z=grid_values,
+            x=days_of_week,
+            y=[f"Week {i+1}" for i in range(len(grid_values))],
+            colorscale=colorscale,
+            zmin=zmin_val,
+            zmax=zmax_val,
+            showscale=True if cal_habit == "All Habits (Combined Count)" else False,
+            xgap=5,
+            ygap=5,
+            hoverinfo="text",
+            text=grid_hovers,
+            colorbar=dict(title="Habits", tickmode="linear", tick0=0, dtick=1) if cal_habit == "All Habits (Combined Count)" else None
+        ))
+        
+        fig_cal.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            height=320,
+            margin=dict(l=10, r=10, t=30, b=10),
+            yaxis=dict(autorange="reversed", showgrid=False, showticklabels=False, fixedrange=True),
+            xaxis=dict(showgrid=False, position="top", fixedrange=True)
+        )
+        
+        # Add cell day annotations
+        for y_idx, row in enumerate(grid_labels):
+            for x_idx, val in enumerate(row):
+                if val != "":
+                    cell_val = grid_values[y_idx][x_idx]
+                    is_hit = cell_val is not None and cell_val > 0
+                    
+                    # Decides on black or white text depending on cell brightness for high contrast
+                    if is_hit:
+                        if cal_habit == "All Habits (Combined Count)":
+                            text_color = "#000000" if cell_val >= 3 else "#FFFFFF"
+                        else:
+                            text_color = "#000000"
+                    else:
+                        text_color = "#8E8E93"
+                        
+                    fig_cal.add_annotation(
+                        x=days_of_week[x_idx],
+                        y=f"Week {y_idx+1}",
+                        text=val,
+                        showarrow=False,
+                        font=dict(color=text_color, size=11, bold=True)
+                    )
+                    
+        st.plotly_chart(fig_cal, use_container_width=True)
