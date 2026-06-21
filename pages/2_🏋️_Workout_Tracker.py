@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+import datetime
+from zoneinfo import ZoneInfo
 from streamlit_gsheets import GSheetsConnection
 
 # --- APP CONFIGURATION ---
@@ -11,6 +12,41 @@ st.markdown("""
     <style>
     .main { background-color: #121212; color: #FFFFFF; }
     div.stButton > button:first-child { background-color: #00CC66; color: white; border-radius: 8px; font-weight: bold; }
+    
+    /* Premium Premium Stat Cards */
+    .stat-card {
+        background: #16161D;
+        border: 1px solid #23232F;
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
+    .stat-val {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: #00CC66;
+        line-height: 1.2;
+    }
+    .stat-lbl {
+        font-size: 0.75rem;
+        color: #A0A0AB;
+        text-transform: uppercase;
+        font-weight: 700;
+        margin-top: 4px;
+    }
+    
+    /* Muscle Recovery Grid System */
+    .muscle-box {
+        background: #1A1A24;
+        border: 1px solid #2D2D3D;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 6px;
+    }
+    .status-fresh { border-left: 5px solid #00FF66; }
+    .status-recovering { border-left: 5px solid #FFA500; }
+    .status-fatigued { border-left: 5px solid #FF3333; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -62,7 +98,7 @@ st.subheader("6-Day Home Gym PPL - Permanent Cloud Storage Edition")
 
 # --- SIDEBAR: MANUAL BULK LOGGING DATA ---
 st.sidebar.header("🏋️ Log a Workout")
-date_input = st.sidebar.date_input("Workout Date", datetime.today())
+date_input = st.sidebar.date_input("Workout Date", datetime.date.today())
 split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
 exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
 
@@ -70,7 +106,7 @@ if split_input == "Cardio (Treadmill)":
     with st.sidebar.form("cardio_form", clear_on_submit=True):
         duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
         if st.form_submit_button("Log Cardio Session"):
-            new_row = {"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": 1, "Weight (lbs)": 0.0, "Reps": duration_input, "Estimated 1RM": 0.0, "Timestamp": datetime.now().strftime("%H:%M:%S")}
+            new_row = {"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": 1, "Weight (lbs)": 0.0, "Reps": duration_input, "Estimated 1RM": 0.0, "Timestamp": datetime.datetime.now().strftime("%H:%M:%S")}
             updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
             push_df = updated_df.copy()
             push_df["Date"] = push_df["Date"].astype(str)
@@ -102,7 +138,7 @@ else:
                 new_rows = []
                 for s in valid_sets:
                     est_1rm = 0.0 if is_bodyweight else (round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight)
-                    new_rows.append({"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": s["set"], "Weight (lbs)": master_weight, "Reps": s["r"], "Estimated 1RM": est_1rm, "Timestamp": datetime.now().strftime("%H:%M:%S")})
+                    new_rows.append({"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": s["set"], "Weight (lbs)": master_weight, "Reps": s["r"], "Estimated 1RM": est_1rm, "Timestamp": datetime.datetime.now().strftime("%H:%M:%S")})
                 updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
                 push_df = updated_df.copy()
                 push_df["Date"] = push_df["Date"].astype(str)
@@ -115,7 +151,7 @@ else:
                 except Exception as e: st.sidebar.error(f"Save failed: {e}")
 
 # --- MAIN DASHBOARD INTERFACE ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Progress Analytics", "📜 Session History Ledger", "⏱️ Rest Interval Pacer", "❤️ Recovery & Readiness"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Premium Analytics Suite", "📜 Session History Ledger", "⏱️ Rest Interval Pacer", "❤️ Recovery & Readiness"])
 
 with tab1:
     st.markdown("### Your Active 6-Day Home Gym Routine")
@@ -144,16 +180,133 @@ with tab1:
             st.write(pd.DataFrame(guide_data).to_html(escape=False, index=False), unsafe_allow_html=True)
 
 with tab2:
-    if df_logs.empty: st.info("No logs present. Use the sidebar or Hevy importer to start!")
+    st.markdown("### 📊 Hevy & LifeApp Premium Analytics Engine")
+    
+    if df_logs.empty:
+        st.info("Ingest training sessions using the uploader or sidebar form to build visual aggregates.")
     else:
-        selected_chart_exe = st.selectbox("Select Exercise to Visualize", sorted(df_logs["Exercise"].dropna().unique()))
-        filtered_df = df_logs[df_logs["Exercise"] == selected_chart_exe].sort_values(by="Date")
+        # --- PRE-COMPUTATION DATA PIPELINE ---
+        df_analytics = df_logs.copy()
+        df_analytics["Volume"] = df_analytics["Weight (lbs)"] * df_analytics["Reps"]
+        df_analytics["Month_Year"] = df_analytics["Date"].dt.strftime('%b %Y')
+        df_analytics["Year_Week"] = df_analytics["Date"].dt.strftime('%Y-W%U')
+        
+        # Heuristic calculation for gym duration:
+        # Weight training sessions average ~45 mins per date split block. Cardio tracks raw time explicitly in Reps.
+        weight_sessions = df_analytics[df_analytics["Split Day"] != "Cardio (Treadmill)"]
+        cardio_sessions = df_analytics[df_analytics["Split Day"] == "Cardio (Treadmill)"]
+        
+        unique_weight_days = weight_sessions.groupby(weight_sessions["Date"].dt.date)["Split Day"].nunique().sum()
+        total_cardio_minutes = cardio_sessions["Reps"].sum()
+        total_gym_minutes = int((unique_weight_days * 45) + total_cardio_minutes)
+        total_volume_moved = int(df_analytics["Volume"].sum())
+        total_workouts_logged = int(df_analytics["Date"].dt.date.nunique())
+
+        # --- TOP LEVEL BANNER METRICS ---
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_workouts_logged}</div><div class="stat-lbl">Workouts Logged</div></div>', unsafe_allow_html=True)
+        with m_col2:
+            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_gym_minutes // 60}h {total_gym_minutes % 60}m</div><div class="stat-lbl">Gym Investment Time</div></div>', unsafe_allow_html=True)
+        with m_col3:
+            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_volume_moved:,} lbs</div><div class="stat-lbl">Total Volume Moved</div></div>', unsafe_allow_html=True)
+        with m_col4:
+            # Active historical exercise configurations tracked
+            st.markdown(f'<div class="stat-card"><div class="stat-val">{df_analytics["Exercise"].nunique()}</div><div class="stat-lbl">Exercises Mastered</div></div>', unsafe_allow_html=True)
+
+        st.write(" ")
+        
+        # --- SPLIT LAYOUT FOR CHARTS & BIOMECHANICAL RECOVERY ---
+        left_panel, right_panel = st.columns([3, 2])
+        
+        with left_panel:
+            st.markdown("#### 📈 Training Frequency & Volume Trends")
+            
+            # Chart A: Workouts Done per Month
+            monthly_frequency = df_analytics.groupby("Month_Year")["Date"].nunique().reset_index(name="Sessions Completed")
+            fig_freq = px.bar(monthly_frequency, x="Month_Year", y="Sessions Completed", title="Monthly Training Frequency", text_auto=True)
+            fig_freq.update_traces(marker_color='#00CC66').update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_freq, use_container_width=True)
+            
+            # Chart B: Total Tonnage Moved over time
+            weekly_volume = df_analytics.groupby("Year_Week")["Volume"].sum().reset_index(name="Weekly Mass (lbs)")
+            fig_vol = px.line(weekly_volume, x="Year_Week", y="Weekly Mass (lbs)", title="Weekly Mechanical Load Progression (Tonnage Line)", markers=True)
+            fig_vol.update_traces(line_color='#00F0FF', marker=dict(size=6)).update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_vol, use_container_width=True)
+            
+            # Table C: Strength PR Ledger (Strongest Lifts / Top Estimated 1RMs)
+            st.markdown("#### 🏆 Strongest Lifts (Historical Personal Records)")
+            pr_df = df_analytics.groupby("Exercise").agg({"Weight (lbs)": "max", "Estimated 1RM": "max"}).reset_index()
+            pr_df = pr_df[pr_df["Estimated 1RM"] > 0].sort_values(by="Estimated 1RM", ascending=False).rename(columns={"Weight (lbs)": "Max Working Weight", "Estimated 1RM": "Peak Absolute 1RM"})
+            st.dataframe(pr_df, use_container_width=True, hide_index=True)
+
+        with right_panel:
+            st.markdown("#### 🧬 Live Muscle Recovery Map")
+            st.caption("Calculated using standard sports-science localized fatigue models (48-hour muscular optimization windows).")
+            
+            # Extract current timestamp locked to Eastern zone parameters
+            right_now = datetime.datetime.now(ZoneInfo("America/Toronto"))
+            
+            # Map muscular categories back to their specific database splits
+            muscle_targets = {
+                "Chest / Shoulders / Triceps": ["Push (Chest/Shoulders/Triceps)", "Chest Focus", "Push", "Push Day"],
+                "Back / Biceps": ["Pull (Back/Biceps)", "Back Focus", "Pull", "Pull Day"],
+                "Quads / Hamstrings / Calves": ["Legs & Abs (Thigh/Calf Focus)", "Legs", "Leg Day", "Legs & Abs"],
+                "Core Pillars (Abs)": ["Legs & Abs (Thigh/Calf Focus)", "Push (Chest/Shoulders/Triceps)"] # Multi-layered cross recruitment
+            }
+            
+            for muscle, split_names in muscle_targets.items():
+                # Locate the absolute latest entry date matching the target muscle tracking row
+                matching_logs = df_analytics[df_analytics["Split Day"].isin(split_names)]
+                
+                if matching_logs.empty:
+                    hours_since = 999
+                    last_trained_str = "No recent records tracked"
+                else:
+                    latest_entry_date = matching_logs["Date"].max()
+                    time_delta = right_now - latest_entry_date.replace(tzinfo=ZoneInfo("America/Toronto"))
+                    hours_since = max(0, int(time_delta.total_seconds() / 3600))
+                    last_trained_str = f"Last trained: {latest_entry_date.strftime('%a, %b %d')}"
+                
+                # Biomechanical logic thresholds
+                if hours_since >= 48:
+                    status_lbl, status_css, rec_pct = "Optimized (100% Ready)", "status-fresh", 100
+                elif hours_since >= 24:
+                    status_lbl, status_css, rec_pct = f"Recovering ({int((hours_since/48)*100)}%)", "status-recovering", int((hours_since/48)*100)
+                else:
+                    status_lbl, status_css, rec_pct = f"Fatigued / Broken Down ({int((hours_since/48)*100)}%)", "status-fatigued", max(5, int((hours_since/48)*100))
+                
+                st.markdown(f"""
+                <div class="muscle-box {status_css}">
+                    <div style="display:flex; justify-content:between; align-items:center;">
+                        <span style="font-weight:700; font-size:0.95rem; color:#FFFFFF; width:60%;">{muscle}</span>
+                        <span style="font-size:0.75rem; font-weight:700; text-align:right; width:40%; color:#A0A0AB;">{last_trained_str}</span>
+                    </div>
+                    <div style="font-size:0.8rem; font-weight:600; margin-top:2px; color:#E4E4E7;">Status: {status_lbl}</div>
+                    <div style="background-color:#2A2A35; border-radius:4px; height:6px; margin-top:6px; width:100%;">
+                        <div style="background-color:{'#00FF66' if rec_pct==100 else ('#FFA500' if rec_pct>=50 else '#FF3333')}; width:{rec_pct}%; height:6px; border-radius:4px;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            # Chart D: Muscle Split Target Work Distribution
+            st.markdown("<br>#### 🎯 Target Work Volume Allocation", unsafe_allow_html=True)
+            split_volume = df_analytics.groupby("Split Day")["Volume"].sum().reset_index(name="Total Volume")
+            fig_pie = px.pie(split_volume, values="Total Volume", names="Split Day", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_pie.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", showlegend=True, margin=dict(l=10, r=10, t=10, b=10), height=240)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # --- INDIVIDUAL SPECIFIC EXERCISE PROGRESS OVERLAY SCREEN ---
+        st.write("---")
+        st.markdown("#### 🔍 Micro Exercise Progression Overlays")
+        selected_chart_exe = st.selectbox("Select Target Exercise to Plot Progression Path", sorted(df_analytics["Exercise"].dropna().unique()))
+        filtered_df = df_analytics[df_analytics["Exercise"] == selected_chart_exe].sort_values(by="Date")
         if not filtered_df.empty:
             y_axis = "Reps" if ("Treadmill" in selected_chart_exe or selected_chart_exe in ["Pull-Ups", "Hanging Knee Raises"]) else "Estimated 1RM"
             lbl = "Duration (Mins)" if "Treadmill" in selected_chart_exe else "Performance Units"
-            fig = px.line(filtered_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe}", labels={y_axis: lbl})
-            fig.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
+            fig_micro = px.line(filtered_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe}", labels={y_axis: lbl})
+            fig_micro.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
+            st.plotly_chart(fig_micro, use_container_width=True)
 
 with tab3:
     st.markdown("### Cloud Sync Master Ledger")
@@ -166,7 +319,6 @@ with tab3:
                 h_date, h_exe, h_weight, h_reps, h_set, h_title = next((c for c in df_hevy.columns if "start" in c or "date" in c), None), next((c for c in df_hevy.columns if "exercise" in c), None), next((c for c in df_hevy.columns if "weight" in c), None), next((c for c in df_hevy.columns if "reps" in c), None), next((c for c in df_hevy.columns if "set" in c and "type" not in c), None), next((c for c in df_hevy.columns if "title" in c or "workout" in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
-                    # 🛡️ GLOBAL SANITIZATION SHIELD (Converts columns safely at scale before execution loop)
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
                     df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
                     if h_set:
