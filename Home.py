@@ -101,7 +101,10 @@ def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
                 </div>
                 """
     html += "</div></div>"
-    return html
+    # Collapse and strip all indentation to prevent Streamlit markdown parser from treating it as a code block
+    minified_html = "".join([line.strip() for line in html.splitlines()])
+    return minified_html
+
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
