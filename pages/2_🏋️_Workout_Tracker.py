@@ -158,7 +158,7 @@ with tab2:
             if any(x in exe for x in ["squat", "leg press", "lunge", "quad", "leg extension"]): 
                 if "tricep" in exe: return "Triceps"
                 return "Quads"
-            if %any(x in exe for x in ["rdl", "romanian", "leg curl", "hamstring", "glute", "hip thrust"]):
+            if any(x in exe for x in ["rdl", "romanian", "leg curl", "hamstring", "glute", "hip thrust"]):
                 if "bicep" in exe or "hammer" in exe: return "Biceps"
                 return "Hamstrings & Glutes"
             if "calf" in exe or "calves" in exe: return "Calves"
