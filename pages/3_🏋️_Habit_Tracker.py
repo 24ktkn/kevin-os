@@ -281,7 +281,7 @@ with tab_analytics:
             height=320,
             margin=dict(l=10, r=10, t=30, b=10),
             yaxis=dict(autorange="reversed", showgrid=False, showticklabels=False, fixedrange=True),
-            xaxis=dict(showgrid=False, position="top", fixedrange=True)
+            xaxis=dict(showgrid=False, side="top", fixedrange=True)
         )
         
         # Add cell day annotations
