@@ -59,6 +59,7 @@ if "master_workout_df" not in st.session_state:
     required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)"]
     for col in required_cols:
         if col not in raw_df.columns: raw_df[col] = ""
+        
     df_logs = raw_df[raw_df["Exercise"].astype(str).str.strip() != ""].copy()
     df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
     df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
@@ -66,6 +67,14 @@ if "master_workout_df" not in st.session_state:
     df_logs["Duration (Mins)"] = pd.to_numeric(df_logs["Duration (Mins)"], errors='coerce').fillna(0.0)
     df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
     df_logs = df_logs[df_logs["Date"].notna()]
+    
+    # 🩹 AUTOMATIC DATABASE HEALER ENGINE
+    # Automatically fixes rows with corrupted set numbers by sorting chronologically
+    # and re-indexing sequences per day/exercise block.
+    if not df_logs.empty:
+        df_logs = df_logs.sort_values(by=["Date", "Timestamp"]).reset_index(drop=True)
+        df_logs["Set Number"] = df_logs.groupby(["Date", "Exercise"]).cumcount() + 1
+        
     st.session_state.master_workout_df = df_logs
 
 df_logs = st.session_state.master_workout_df
@@ -149,7 +158,7 @@ with tab2:
             if any(x in exe for x in ["squat", "leg press", "lunge", "quad", "leg extension"]): 
                 if "tricep" in exe: return "Triceps"
                 return "Quads"
-            if any(x in exe for x in ["rdl", "romanian", "leg curl", "hamstring", "glute", "hip thrust"]):
+            if %any(x in exe for x in ["rdl", "romanian", "leg curl", "hamstring", "glute", "hip thrust"]):
                 if "bicep" in exe or "hammer" in exe: return "Biceps"
                 return "Hamstrings & Glutes"
             if "calf" in exe or "calves" in exe: return "Calves"
@@ -272,13 +281,16 @@ with tab3:
                 if h_date and h_exe and h_weight and h_reps:
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
                     df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
-                    if h_set: df_hevy[h_set] = pd.to_numeric(df_hevy[h_set], errors='coerce').fillna(1).astype(int)
                     
                     if h_start and h_end:
                         df_hevy[h_start] = pd.to_datetime(df_hevy[h_start], errors='coerce')
                         df_hevy[h_end] = pd.to_datetime(df_hevy[h_end], errors='coerce')
                         df_hevy['computed_dur'] = (df_hevy[h_end] - df_hevy[h_start]).dt.total_seconds() / 60.0
                         df_hevy['computed_dur'] = df_hevy['computed_dur'].fillna(60.0).round(1)
+                    
+                    # 🛠️ AUTONOMOUS SET COUNT GENERATOR
+                    # Completely bypasses hardcoded text columns to evaluate set progression lines by appearance
+                    df_hevy['computed_set_num'] = df_hevy.groupby([h_date, h_exe]).cumcount() + 1
                     
                     parsed_rows = []
                     for _, row in df_hevy.iterrows():
@@ -287,7 +299,7 @@ with tab3:
                         
                         w_val = float(row[h_weight])
                         r_val = int(row[h_reps])
-                        s_val = int(row[h_set]) if h_set else 1
+                        s_val = int(row['computed_set_num'])
                         dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
                         
                         if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
@@ -299,15 +311,11 @@ with tab3:
                     
                     # --- 🛡️ COMPOSITE MATRIX DEDUPLICATION ENGINE ---
                     combined_df = pd.concat([df_logs, hevy_parsed_df], ignore_index=True)
-                    
-                    # Force strict structural matching definitions
                     combined_df["Date"] = pd.to_datetime(combined_df["Date"])
-                    combined_df["Timestamp"] = combined_df["Timestamp"].astype(str).str.strip()
                     combined_df["Exercise"] = combined_df["Exercise"].astype(str).str.strip()
-                    combined_df["Set Number"] = pd.to_numeric(combined_df["Set Number"]).fillna(1).astype(int)
+                    combined_df["Set Number"] = combined_df["Set Number"].astype(int)
                     
-                    # Drop duplicate rows by matching composite values (protect your existing dataset)
-                    deduped_df = combined_df.drop_duplicates(subset=["Date", "Timestamp", "Exercise", "Set Number"], keep="first").reset_index(drop=True)
+                    deduped_df = combined_df.drop_duplicates(subset=["Date", "Exercise", "Set Number"], keep="first").reset_index(drop=True)
                     new_rows_discovered = len(deduped_df) - len(df_logs)
                     
                     st.success(f"Processed CSV! Found {len(hevy_parsed_df)} parsed sets. ({new_rows_discovered} are brand-new additions).")
@@ -331,7 +339,10 @@ with tab3:
         display_ledger = df_logs.copy()
         display_ledger['Date'] = pd.to_datetime(display_ledger['Date']).dt.date
         display_ledger["🗑️ Delete?"] = False
-        display_ledger = display_ledger.sort_values(by=["Date", "Timestamp"], ascending=[False, False])
+        
+        # 📐 UNIFIED GROUPED SORT ENGINE
+        # Groups matching exercises together for that day, sorted numerically by set sequence
+        display_ledger = display_ledger.sort_values(by=["Date", "Exercise", "Set Number"], ascending=[False, True, True])
         edited_ledger = st.data_editor(display_ledger, use_container_width=True, hide_index=True, column_config={"🗑️ Delete?": st.column_config.CheckboxColumn("Delete Action", default=False), "Date": st.column_config.DateColumn("Date")})
         
         if st.button("💾 Save Ledger Changes"):
