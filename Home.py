@@ -2,6 +2,109 @@ import streamlit as st
 import pandas as pd
 import datetime
 from streamlit_gsheets import GSheetsConnection
+from zoneinfo import ZoneInfo
+import calendar
+
+# --- ⏳ TIMEZONE & NIGHT OWL ROLLOVER ENGINE ---
+now_local = datetime.datetime.now(ZoneInfo("America/Toronto"))
+if now_local.hour < 2:
+    productivity_date = now_local - datetime.timedelta(days=1)
+else:
+    productivity_date = now_local
+today_str = productivity_date.strftime('%Y-%m-%d')
+
+HABITS_LIST = ["Gym Workout", "Journaling"]
+
+def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
+    streak = 0
+    for val in reversed(df_sorted[habit_name].values):
+        if val:
+            streak += 1
+        else:
+            break
+            
+    total_days = len(df_sorted)
+    completions = df_sorted[habit_name].sum()
+    rate = int((completions / total_days) * 100) if total_days > 0 else 0
+    
+    cal = calendar.monthcalendar(year, month)
+    month_name = calendar.month_name[month]
+    
+    completions_dict = {}
+    for idx, row in df_sorted.iterrows():
+        try:
+            r_date = datetime.datetime.strptime(str(row["Date"]).strip(), "%Y-%m-%d")
+            if r_date.year == year and r_date.month == month:
+                completions_dict[r_date.strftime("%Y-%m-%d")] = bool(row[habit_name])
+        except ValueError:
+            continue
+            
+    html = f"""
+    <div style="background: #16161D; border: 1px solid #23232F; border-radius: 8px; padding: 16px; margin-bottom: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; border-bottom: 1px solid #23232F; padding-bottom: 8px;">
+            <div>
+                <div style="font-size: 1.1rem; font-weight: 800; color: #FFFFFF; display: flex; align-items: center; gap: 6px;">
+                    { '💪' if 'Gym' in habit_name else '✍️' } {habit_name}
+                </div>
+                <div style="font-size: 0.72rem; color: #A0A0AB; text-transform: uppercase; font-weight: 700; margin-top: 2px;">{month_name} {year}</div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 1.2rem; font-weight: 800; color: #00FF66;">{streak} 🔥</div>
+                <div style="font-size: 0.65rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Streak</div>
+            </div>
+            <div style="text-align: right; margin-left: 12px;">
+                <div style="font-size: 1.2rem; font-weight: 800; color: #00F0FF;">{rate}%</div>
+                <div style="font-size: 0.65rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Cons.</div>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center;">
+    """
+    
+    for d in ["M", "T", "W", "T", "F", "S", "S"]:
+        html += f'<div style="font-size: 0.65rem; color: #5E5E6E; font-weight: 700; padding-bottom: 4px;">{d}</div>'
+        
+    for week in cal:
+        for day in week:
+            if day == 0:
+                html += '<div></div>'
+            else:
+                date_str = f"{year:04d}-{month:02d}-{day:02d}"
+                completed = completions_dict.get(date_str, False)
+                is_today = (date_str == today_str)
+                
+                if completed:
+                    bg = "#00FF66"
+                    color = "#000000"
+                    border = "none"
+                else:
+                    bg = "#1E1E24"
+                    color = "#8E8E93"
+                    border = "1px solid #2D2D3D"
+                    
+                today_style = "outline: 2px solid #00F0FF; outline-offset: 1px;" if is_today else ""
+                
+                html += f"""
+                <div style="
+                    background: {bg};
+                    color: {color};
+                    border: {border};
+                    border-radius: 4px;
+                    font-size: 0.72rem;
+                    font-weight: 700;
+                    aspect-ratio: 1;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    {today_style}
+                ">
+                    {day}
+                </div>
+                """
+    html += "</div></div>"
+    return html
+
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 
 st.set_page_config(page_title="Kevin's Operating System", page_icon="🧠", layout="wide")
 
@@ -37,6 +140,39 @@ st.markdown("""
         font-weight: 800;
         color: #00F0FF;
     }
+    
+    /* Habit Button Styles */
+    .habit-button button {
+        background-color: #1E1E24 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #2D2D3D !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        transition: all 0.3s ease !important;
+        font-size: 0.85rem !important;
+        padding: 6px 12px !important;
+    }
+    .habit-button button:hover {
+        border-color: #00FF66 !important;
+        color: #00FF66 !important;
+        box-shadow: 0 0 8px rgba(0, 255, 102, 0.2) !important;
+    }
+    .habit-button-completed button {
+        background-color: rgba(0, 255, 102, 0.1) !important;
+        color: #00FF66 !important;
+        border: 1px solid #00FF66 !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        transition: all 0.3s ease !important;
+        font-size: 0.85rem !important;
+        padding: 6px 12px !important;
+    }
+    .habit-button-completed button:hover {
+        background-color: rgba(255, 51, 51, 0.1) !important;
+        color: #FF3333 !important;
+        border-color: #FF3333 !important;
+        box-shadow: 0 0 8px rgba(255, 51, 51, 0.2) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,7 +181,6 @@ st.write("Welcome to your unified dashboard.")
 
 # --- DYNAMIC BIOMETRICS SUMMARY PANEL ---
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
     raw_bio = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="health_metrics", ttl=0)
     
     # Check that Date exists
@@ -138,6 +273,80 @@ try:
 except Exception:
     # Fail silently to avoid breaking the Home page if the sheet connection fails
     pass
+
+# --- HABITS COMMAND CENTER ---
+st.write("<div style='height:16px;'></div>", unsafe_allow_html=True)
+st.markdown("### ⚡ Habits Command Center")
+
+try:
+    df_habits = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits", ttl=0)
+    if df_habits is None or df_habits.empty or "Date" not in df_habits.columns:
+        df_habits = pd.DataFrame(columns=["Date"] + HABITS_LIST)
+        
+    df_habits["Date"] = df_habits["Date"].astype(str)
+    for h in HABITS_LIST:
+        if h not in df_habits.columns:
+            df_habits[h] = False
+        df_habits[h] = df_habits[h].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
+    df_habits = df_habits[["Date"] + HABITS_LIST]
+    
+    # Initialize today's productivity row if missing
+    if today_str not in df_habits["Date"].values:
+        new_day = {col: (today_str if col == "Date" else False) for col in df_habits.columns}
+        df_habits = pd.concat([df_habits, pd.DataFrame([new_day])], ignore_index=True)
+        conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+        
+    today_idx = df_habits[df_habits["Date"] == today_str].index[0]
+    df_sorted = df_habits.sort_values(by="Date", ascending=True).copy()
+    
+    h_col1, h_col2 = st.columns(2)
+    
+    with h_col1:
+        habit = "Gym Workout"
+        cal_html = draw_mini_calendar(df_sorted, habit, today_str, productivity_date.year, productivity_date.month)
+        st.markdown(cal_html, unsafe_allow_html=True)
+        
+        completed = bool(df_habits.at[today_idx, habit])
+        button_class = "habit-button-completed" if completed else "habit-button"
+        st.markdown(f"<div class='{button_class}'>", unsafe_allow_html=True)
+        if completed:
+            if st.button("Completed ✅", key=f"btn_{habit}", use_container_width=True):
+                df_habits.at[today_idx, habit] = False
+                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                st.toast("Unmarked Gym Workout as completed.")
+                st.rerun()
+        else:
+            if st.button("Mark Done", key=f"btn_{habit}", use_container_width=True):
+                df_habits.at[today_idx, habit] = True
+                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                st.toast("Logged Gym Workout as completed!")
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    with h_col2:
+        habit = "Journaling"
+        cal_html = draw_mini_calendar(df_sorted, habit, today_str, productivity_date.year, productivity_date.month)
+        st.markdown(cal_html, unsafe_allow_html=True)
+        
+        completed = bool(df_habits.at[today_idx, habit])
+        button_class = "habit-button-completed" if completed else "habit-button"
+        st.markdown(f"<div class='{button_class}'>", unsafe_allow_html=True)
+        if completed:
+            if st.button("Completed ✅", key=f"btn_{habit}", use_container_width=True):
+                df_habits.at[today_idx, habit] = False
+                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                st.toast("Unmarked Journaling as completed.")
+                st.rerun()
+        else:
+            if st.button("Mark Done", key=f"btn_{habit}", use_container_width=True):
+                df_habits.at[today_idx, habit] = True
+                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                st.toast("Logged Journaling as completed!")
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+except Exception as e:
+    st.error(f"Error loading habits data: {e}")
 
 st.write(" ")
 st.markdown("""
