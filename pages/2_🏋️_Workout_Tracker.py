@@ -98,7 +98,7 @@ df_bio = st.session_state.master_bio_df
 exercises_dict = {
     "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
     "Pull (Back/Biceps)": ["Pull Up", "Bent Over Row (Barbell)", "Face Pull", "Incline Bicep Curl (Dumbbell)", "Hammer Curl (Dumbbell)"],
-    "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
+    "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Romanian Deadlift (Barbell)", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
     "Cardio (Treadmill)": ["Treadmill Steady State", "Treadmill Intervals"]
 }
 
@@ -149,7 +149,7 @@ with tab1:
                         
                         last_date_str = last_session['Date'].strftime('%b %d, %Y')
                 
-                target_range = "3 Sets x 10-12 Reps (60s rest)" if ("raise" in exe.lower() or "curl" in exe.lower() or "extension" in exe.lower() or "twist" in exe.lower()) else ("3 Sets x 8-12 Reps (90s rest)" if ("squat" in exe.lower() or "press" in exe.lower() or "row" in exe.lower()) else ("45-60 Mins (Treadmill)" if "cardio" in split.lower() else "3 Sets x AMRAP (90s rest)"))
+                target_range = "3 Sets x 10-12 Reps (60s rest)" if ("raise" in exe.lower() or "curl" in exe.lower() or "extension" in exe.lower() or "twist" in exe.lower()) else ("3 Sets x 8-12 Reps (90s rest)" if ("squat" in exe.lower() or "press" in exe.lower() or "row" in exe.lower() or "deadlift" in exe.lower() or "romanian" in exe.lower()) else ("45-60 Mins (Treadmill)" if "cardio" in split.lower() else "3 Sets x AMRAP (90s rest)"))
                 guide_data.append({"Exercise Name": exe, "Target Progression Protocol": target_range, "Last Weight Used": last_weight_str, "Last Reps/Duration": last_reps_str, "Last Workout Date": last_date_str})
             st.write(pd.DataFrame(guide_data).to_html(escape=False, index=False), unsafe_allow_html=True)
 
