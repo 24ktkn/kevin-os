@@ -134,8 +134,19 @@ with tab1:
                     
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
-                        last_weight_str = "Cardio Session" if split == "Cardio (Treadmill)" else ("Bodyweight" if any(x in exe_clean for x in ["pull up", "knee raise"]) else f"**{last_session['Weight (lbs)']} lbs**")
-                        last_reps_str = f"{int(last_session['Reps'])} mins" if split == "Cardio (Treadmill)" else f"{int(last_session['Reps'])} reps"
+                        is_cardio = "cardio" in split.lower() or any(x in exe_clean for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
+                        is_bodyweight = not is_cardio and (any(x in exe_clean for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel", "twist"]) or last_session['Weight (lbs)'] == 0)
+                        
+                        if is_cardio:
+                            last_weight_str = "Cardio Session"
+                            last_reps_str = f"{int(last_session['Reps'])} mins" if last_session['Reps'] > 0 else (f"{last_session['Duration (Mins)']} mins" if last_session['Duration (Mins)'] > 0 else "0 mins")
+                        elif is_bodyweight:
+                            last_weight_str = "Bodyweight"
+                            last_reps_str = f"{int(last_session['Reps'])} reps"
+                        else:
+                            last_weight_str = f"**{last_session['Weight (lbs)']} lbs**"
+                            last_reps_str = f"{int(last_session['Reps'])} reps"
+                        
                         last_date_str = last_session['Date'].strftime('%b %d, %Y')
                 
                 target_range = "3 Sets x 10-12 Reps (60s rest)" if ("raise" in exe.lower() or "curl" in exe.lower() or "extension" in exe.lower() or "twist" in exe.lower()) else ("3 Sets x 8-12 Reps (90s rest)" if ("squat" in exe.lower() or "press" in exe.lower() or "row" in exe.lower()) else ("45-60 Mins (Treadmill)" if "cardio" in split.lower() else "3 Sets x AMRAP (90s rest)"))
@@ -259,8 +270,20 @@ with tab2:
         selected_chart_exe = st.selectbox("Select Target Exercise to Plot Progression Path", sorted(df_analytics["Exercise"].dropna().unique()))
         filtered_df = df_analytics[df_analytics["Exercise"] == selected_chart_exe].sort_values(by="Date")
         if not filtered_df.empty:
-            y_axis = "Reps" if ("Treadmill" in selected_chart_exe or selected_chart_exe in ["Pull-Ups", "Hanging Knee Raises"]) else "Estimated 1RM"
-            lbl = "Duration (Mins)" if "Treadmill" in selected_chart_exe else "Performance Units"
+            exe_name_lower = selected_chart_exe.lower()
+            is_cardio = "cardio" in exe_name_lower or any(x in exe_name_lower for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
+            is_bodyweight = not is_cardio and (any(x in exe_name_lower for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel", "twist"]) or filtered_df["Weight (lbs)"].max() == 0)
+            
+            if is_cardio:
+                y_axis = "Duration (Mins)" if filtered_df["Duration (Mins)"].max() > 0 else "Reps"
+                lbl = "Duration (Mins)" if y_axis == "Duration (Mins)" else "Minutes / Reps"
+            elif is_bodyweight:
+                y_axis = "Reps"
+                lbl = "Reps Completed"
+            else:
+                y_axis = "Estimated 1RM"
+                lbl = "Estimated 1RM (lbs)"
+                
             fig_micro = px.line(filtered_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe}", labels={y_axis: lbl})
             fig_micro.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
             st.plotly_chart(fig_micro, use_container_width=True)
