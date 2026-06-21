@@ -83,16 +83,68 @@ df_logs = st.session_state.master_workout_df
 if "master_bio_df" not in st.session_state:
     try:
         raw_bio = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="health_metrics", ttl=0)
-        for col in ["Date", "HRV", "Sleep Duration", "RHR", "Steps"]:
+        for col in ["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight"]:
             if col not in raw_bio.columns: raw_bio[col] = ""
         df_bio_clean = raw_bio[raw_bio["Date"].astype(str).str.strip() != ""].copy()
         df_bio_clean["Date"] = pd.to_datetime(df_bio_clean["Date"].astype(str).str.strip(), errors='coerce')
         df_bio_clean = df_bio_clean[df_bio_clean["Date"].notna()]
+        df_bio_clean["Bodyweight"] = pd.to_numeric(df_bio_clean["Bodyweight"], errors='coerce').fillna(0.0)
         st.session_state.master_bio_df = df_bio_clean
     except Exception:
-        st.session_state.master_bio_df = pd.DataFrame(columns=["Date", "HRV", "Sleep Duration", "RHR", "Steps"])
+        st.session_state.master_bio_df = pd.DataFrame(columns=["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight"])
 
 df_bio = st.session_state.master_bio_df
+if "Bodyweight" not in df_bio.columns:
+    df_bio["Bodyweight"] = 0.0
+df_bio["Bodyweight"] = pd.to_numeric(df_bio["Bodyweight"], errors='coerce').fillna(0.0)
+
+# --- REUSABLE BODYWEIGHT TRACKER WIDGET ---
+def render_bodyweight_tracker(key_prefix):
+    latest_bw = 170.0
+    if not df_bio.empty and "Bodyweight" in df_bio.columns:
+        valid_bw = df_bio[df_bio["Bodyweight"] > 0]
+        if not valid_bw.empty:
+            latest_bw = float(valid_bw.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
+            
+    st.markdown(f"##### ⚖️ Bodyweight Tracker (Current Baseline: **{latest_bw} lbs**)")
+    bw_col1, bw_col2 = st.columns([3, 1])
+    with bw_col1:
+        new_bw = st.number_input("Log current weight (lbs):", min_value=50.0, max_value=500.0, value=latest_bw, step=0.5, key=f"{key_prefix}_bw_input")
+    with bw_col2:
+        st.write("<div style='height:28px;'></div>", unsafe_allow_html=True) # spacing
+        if st.button("Log Weight", key=f"{key_prefix}_bw_btn"):
+            today_dt = pd.to_datetime(datetime.date.today())
+            df_bio_copy = df_bio.copy()
+            df_bio_copy["Date"] = pd.to_datetime(df_bio_copy["Date"])
+            
+            # Check if today's date already exists
+            matching_idx = df_bio_copy[df_bio_copy["Date"].dt.date == today_dt.date()]
+            if not matching_idx.empty:
+                idx = matching_idx.index[0]
+                df_bio_copy.at[idx, "Bodyweight"] = new_bw
+            else:
+                new_row = {
+                    "Date": today_dt,
+                    "HRV": 0,
+                    "Sleep Duration": 0.0,
+                    "RHR": 0,
+                    "Steps": 0,
+                    "Bodyweight": new_bw
+                }
+                df_bio_copy = pd.concat([df_bio_copy, pd.DataFrame([new_row])], ignore_index=True)
+            
+            # Push to sheet
+            push_bio = df_bio_copy.copy()
+            push_bio["Date"] = push_bio["Date"].dt.strftime('%Y-%m-%d')
+            try:
+                conn.update(data=push_bio, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="health_metrics")
+                st.cache_data.clear()
+                st.session_state.master_bio_df = df_bio_copy
+                st.success(f"Logged bodyweight: {new_bw} lbs!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to log weight: {e}")
+
 
 # --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
@@ -112,6 +164,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Exercise Guide & Target Weights", 
 
 with tab1:
     st.markdown("### Your Active Hevy-Synced Target Guidelines")
+    render_bodyweight_tracker("tab1")
+    st.markdown("---")
     if st.button("🔄 Force Cloud Sync (Pull latest from Sheet)"):
         st.cache_data.clear()
         if "master_workout_df" in st.session_state: del st.session_state["master_workout_df"]
@@ -166,11 +220,51 @@ with tab1:
 
 with tab2:
     st.markdown("### 📊 Hevy & LifeApp Unified Analytics Engine")
+    render_bodyweight_tracker("tab2")
+    st.markdown("---")
     if df_logs.empty:
         st.info("Ingest training sessions using the uploader tab to build visual aggregates.")
     else:
         df_analytics = df_logs.copy()
-        df_analytics["Volume"] = df_analytics["Weight (lbs)"] * df_analytics["Reps"]
+        
+        # Resolve bodyweight per date
+        def get_bodyweight_for_date(d):
+            if df_bio.empty or "Bodyweight" not in df_bio.columns:
+                return 170.0
+            # Find matching or closest prior date in df_bio
+            matching = df_bio[df_bio["Date"] <= d]
+            if not matching.empty:
+                val = matching.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"]
+                try:
+                    val_f = float(val)
+                    if val_f > 0: return val_f
+                except:
+                    pass
+            # Fallback to latest overall logged bodyweight
+            all_valid = df_bio[pd.to_numeric(df_bio["Bodyweight"], errors='coerce').fillna(0) > 0] if "Bodyweight" in df_bio.columns else pd.DataFrame()
+            if not all_valid.empty:
+                return float(all_valid.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
+            return 170.0
+
+        df_analytics["User Bodyweight"] = df_analytics["Date"].apply(get_bodyweight_for_date)
+        
+        def calculate_effective_volume(row):
+            exe = str(row["Exercise"]).lower().strip()
+            is_cardio = "cardio" in exe or any(x in exe for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
+            if is_cardio:
+                return 0.0
+            
+            weight = float(row["Weight (lbs)"])
+            reps = int(row["Reps"])
+            is_bodyweight = (any(x in exe for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel"]) or weight == 0)
+            
+            if is_bodyweight:
+                effective_weight = row["User Bodyweight"]
+            else:
+                effective_weight = weight
+            return effective_weight * reps
+
+        df_analytics["Volume"] = df_analytics.apply(calculate_effective_volume, axis=1)
         df_analytics["Month_Year"] = df_analytics["Date"].dt.strftime('%b %Y')
         df_analytics["Year_Week"] = df_analytics["Date"].dt.strftime('%Y-W%U')
         
@@ -441,7 +535,8 @@ with tab5:
                         "HRV": int(row[hrv_col]) if hrv_col and pd.notna(row[hrv_col]) else 0,
                         "Sleep Duration": round(float(row[sleep_col]), 1) if sleep_col and pd.notna(row[sleep_col]) else 0.0,
                         "RHR": int(row[rhr_col]) if rhr_col and pd.notna(row[rhr_col]) else 0,
-                        "Steps": int(row[steps_col]) if steps_col and pd.notna(row[steps_col]) else 0
+                        "Steps": int(row[steps_col]) if steps_col and pd.notna(row[steps_col]) else 0,
+                        "Bodyweight": 0.0
                     })
                 df_staging = pd.DataFrame(staging_rows)
                 st.dataframe(df_staging, use_container_width=True)
