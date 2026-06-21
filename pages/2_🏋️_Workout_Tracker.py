@@ -358,6 +358,23 @@ with tab3:
                 st.rerun()
             except Exception as e: st.error(f"Failed to update sheet: {e}")
 
+        st.markdown("---")
+        with st.expander("⚠️ Danger Zone (Destructive Actions)", expanded=False):
+            st.markdown("### 🚨 Delete All Workout Logs")
+            st.warning("Warning: This action is completely permanent and cannot be undone. This will delete all rows from your cloud Google Sheet for workout logs.")
+            
+            confirm = st.checkbox("I confirm that I want to delete ALL workout logs permanently.", key="confirm_clear_all_logs")
+            if st.button("🔥 Permanently Clear All Workout Logs", disabled=not confirm):
+                empty_df = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)"])
+                try:
+                    conn.update(data=empty_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
+                    st.cache_data.clear()
+                    st.session_state.master_workout_df = empty_df
+                    st.success("✅ All workout logs have been permanently cleared!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to clear sheet: {e}")
+
 with tab4:
     col1, col2 = st.columns(2)
     with col1: st.metric("Compound Movements Rest", "90 - 120 sec")
