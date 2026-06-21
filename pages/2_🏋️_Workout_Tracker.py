@@ -85,79 +85,24 @@ if "master_bio_df" not in st.session_state:
 
 df_bio = st.session_state.master_bio_df
 
-# --- EXERCISE DATABASE ---
+# --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
-    "Push (Chest/Shoulders/Triceps)": ["Incline Dumbbell Bench Press", "Flat Bench Press", "Cable Lateral Raises", "Seated Overhead Dumbbell Press", "Cable Tricep Overhead Extensions"],
-    "Pull (Back/Biceps)": ["Pull-Ups", "Barbell Row", "Cable Face Pulls", "Dumbbell Incline Bicep Curls", "Cable Hammer Curls"],
-    "Legs & Abs (Thigh/Calf Focus)": ["Barbell Squats", "Dumbbell Bulgarian Split Squats", "Calf Raises", "Hanging Knee Raises", "Cable Woodchoppers"],
+    "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
+    "Pull (Back/Biceps)": ["Pull Up", "Bent Over Row (Barbell)", "Face Pull", "Incline Bicep Curl (Dumbbell)", "Hammer Curl (Dumbbell)"],
+    "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
     "Cardio (Treadmill)": ["Treadmill Steady State", "Treadmill Intervals"]
 }
 
-# --- HEADER ---
-st.title("⚡ Dynamic Performance Dashboard")
-st.subheader("6-Day Home Gym PPL - Permanent Cloud Storage Edition")
-
-# --- SIDEBAR: MANUAL BULK LOGGING DATA ---
-st.sidebar.header("🏋️ Log a Workout")
-date_input = st.sidebar.date_input("Workout Date", datetime.date.today())
-split_input = st.sidebar.selectbox("Select Split Category", list(exercises_dict.keys()))
-exercise_input = st.sidebar.selectbox("Select Exercise", exercises_dict[split_input])
-
-if split_input == "Cardio (Treadmill)":
-    with st.sidebar.form("cardio_form", clear_on_submit=True):
-        duration_input = st.number_input("Duration (Minutes)", min_value=1, max_value=180, value=45)
-        if st.form_submit_button("Log Cardio Session"):
-            new_row = {"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": 1, "Weight (lbs)": 0.0, "Reps": duration_input, "Estimated 1RM": 0.0, "Timestamp": datetime.datetime.now().strftime("%H:%M:%S"), "Duration (Mins)": float(duration_input)}
-            updated_df = pd.concat([df_logs, pd.DataFrame([new_row])], ignore_index=True)
-            push_df = updated_df.copy()
-            push_df["Date"] = push_df["Date"].astype(str)
-            try:
-                conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
-                st.cache_data.clear()
-                st.session_state.master_workout_df = updated_df
-                st.sidebar.success("Cardio logged!")
-                st.rerun()
-            except Exception as e: st.sidebar.error(f"Save failed: {e}")
-else:
-    is_bodyweight = exercise_input in ["Pull-Ups", "Hanging Knee Raises"]
-    last_weight = 135.0
-    if not df_logs.empty and not is_bodyweight:
-        past_exe_data = df_logs[df_logs["Exercise"] == exercise_input]
-        if not past_exe_data.empty: last_weight = float(past_exe_data.sort_values(by="Date").iloc[-1]["Weight (lbs)"])
-
-    num_sets = st.sidebar.number_input("Number of Sets", min_value=1, max_value=10, value=3, step=1)
-    manual_duration = st.sidebar.number_input("Session Length (Total Minutes)", min_value=5, max_value=180, value=60, step=5)
-    with st.sidebar.form("bulk_log_form", clear_on_submit=True):
-        master_weight = st.number_input("Working Weight (lbs)", min_value=0.0, value=last_weight, step=2.5) if not is_bodyweight else 0.0
-        captured_sets = []
-        for i in range(int(num_sets)):
-            r_val = st.number_input(f"Set {i+1}", min_value=0, value=0, step=1, key=f"r_{i}")
-            captured_sets.append({"set": i+1, "r": r_val})
-            
-        if st.form_submit_button("Log All Sets to Dashboard"):
-            valid_sets = [s for s in captured_sets if s["r"] > 0]
-            if valid_sets:
-                per_set_dur = round(float(manual_duration) / len(valid_sets), 2)
-                new_rows = []
-                for s in valid_sets:
-                    est_1rm = 0.0 if is_bodyweight else (round(master_weight * (1 + (s["r"] / 30.0)), 1) if s["r"] > 1 else master_weight)
-                    new_rows.append({"Date": pd.to_datetime(date_input.strftime('%Y-%m-%d')), "Split Day": split_input, "Exercise": exercise_input, "Set Number": s["set"], "Weight (lbs)": master_weight, "Reps": s["r"], "Estimated 1RM": est_1rm, "Timestamp": datetime.datetime.now().strftime("%H:%M:%S"), "Duration (Mins)": per_set_dur})
-                updated_df = pd.concat([df_logs, pd.DataFrame(new_rows)], ignore_index=True)
-                push_df = updated_df.copy()
-                push_df["Date"] = push_df["Date"].astype(str)
-                try:
-                    conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
-                    st.cache_data.clear()
-                    st.session_state.master_workout_df = updated_df
-                    st.sidebar.success(f"Logged {len(valid_sets)} sets!")
-                    st.rerun()
-                except Exception as e: st.sidebar.error(f"Save failed: {e}")
+# --- CLEAN OVERHEAD SIDEBAR ---
+with st.sidebar:
+    st.markdown("### 🛰️ System Control Panel")
+    st.info("Manual logging disabled. Application is running in 100% Autonomous Hevy Cloud-Sync Mode.")
 
 # --- MAIN DASHBOARD INTERFACE ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Premium Analytics Suite", "📜 Session History Ledger", "⏱️ Rest Interval Pacer", "❤️ Recovery & Readiness"])
 
 with tab1:
-    st.markdown("### Your Active 6-Day Home Gym Routine")
+    st.markdown("### Your Active Hevy-Synced Target Guidelines")
     if st.button("🔄 Force Cloud Sync (Pull latest from Sheet)"):
         st.cache_data.clear()
         if "master_workout_df" in st.session_state: del st.session_state["master_workout_df"]
@@ -168,36 +113,38 @@ with tab1:
         with st.expander(f"➔ {split}", expanded=True):
             guide_data = []
             for exe in exercises:
+                last_weight_str, last_reps_str, last_date_str = "No history", "Clear to start", "-"
+                
                 if not df_logs.empty:
-                    exe_history = df_logs[df_logs["Exercise"] == exe].sort_values(by="Date", ascending=False)
+                    exe_clean = exe.lower().strip()
+                    exe_history = df_logs[df_logs["Exercise"].str.lower().str.strip() == exe_clean].sort_values(by="Date", ascending=False)
+                    
+                    if exe_history.empty:
+                        core_keyword = exe_clean.split('(')[0].strip()
+                        exe_history = df_logs[df_logs["Exercise"].str.lower().str.contains(core_keyword, na=False)].sort_values(by="Date", ascending=False)
+                    
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
-                        last_weight_str = "Cardio Session" if split == "Cardio (Treadmill)" else ("Bodyweight" if exe in ["Pull-Ups", "Hanging Knee Raises"] else f"**{last_session['Weight (lbs)']} lbs**")
+                        last_weight_str = "Cardio Session" if split == "Cardio (Treadmill)" else ("Bodyweight" if any(x in exe_clean for x in ["pull up", "knee raise"]) else f"**{last_session['Weight (lbs)']} lbs**")
                         last_reps_str = f"{int(last_session['Reps'])} mins" if split == "Cardio (Treadmill)" else f"{int(last_session['Reps'])} reps"
                         last_date_str = last_session['Date'].strftime('%b %d, %Y')
-                    else: last_weight_str, last_reps_str, last_date_str = "No history", "Clear to start", "-"
-                else: last_weight_str, last_reps_str, last_date_str = "No history", "Clear to start", "-"
                 
-                target_range = "3 Sets x 10-12 Reps (60s rest)" if ("Raises" in exe or "Curls" in exe or "Extensions" in exe) else ("3 Sets x 8-12 Reps (90s rest)" if ("Squats" in exe or "Press" in exe or "Row" in exe) else ("45-60 Mins (Treadmill)" if "Cardio" in split else "3 Sets x AMRAP (90s rest)"))
+                target_range = "3 Sets x 10-12 Reps (60s rest)" if ("raise" in exe.lower() or "curl" in exe.lower() or "extension" in exe.lower() or "twist" in exe.lower()) else ("3 Sets x 8-12 Reps (90s rest)" if ("squat" in exe.lower() or "press" in exe.lower() or "row" in exe.lower()) else ("45-60 Mins (Treadmill)" if "cardio" in split.lower() else "3 Sets x AMRAP (90s rest)"))
                 guide_data.append({"Exercise Name": exe, "Target Progression Protocol": target_range, "Last Weight Used": last_weight_str, "Last Reps/Duration": last_reps_str, "Last Workout Date": last_date_str})
             st.write(pd.DataFrame(guide_data).to_html(escape=False, index=False), unsafe_allow_html=True)
 
 with tab2:
     st.markdown("### 📊 Hevy & LifeApp Unified Analytics Engine")
-    
     if df_logs.empty:
-        st.info("Ingest training sessions using the uploader or sidebar form to build visual aggregates.")
+        st.info("Ingest training sessions using the uploader tab to build visual aggregates.")
     else:
         df_analytics = df_logs.copy()
         df_analytics["Volume"] = df_analytics["Weight (lbs)"] * df_analytics["Reps"]
         df_analytics["Month_Year"] = df_analytics["Date"].dt.strftime('%b %Y')
         df_analytics["Year_Week"] = df_analytics["Date"].dt.strftime('%Y-W%U')
         
-        # --- 🧬 HIGH-PRECISION GRANULAR EXERCISE ANATOMY RESOLVER ---
         def resolve_anatomy(row):
             exe = str(row["Exercise"]).lower().strip()
-            
-            # 1. SCAN UNIQUE EXERCISE TEXT FIRST (Bypasses parent tab categorization block overrides)
             if any(x in exe for x in ["knee raise", "ab ", "ab,", "crunch", "woodchopper", "twist", "plank", "leg raise"]): return "Abs/Core"
             if any(x in exe for x in ["squat", "leg press", "lunge", "quad", "leg extension"]): 
                 if "tricep" in exe: return "Triceps"
@@ -213,7 +160,6 @@ with tab2:
             if "bicep" in exe or "curl" in exe or "hammer" in exe: return "Biceps"
             if any(x in exe for x in ["treadmill", "run", "walk", "bike", "cardio"]): return "Cardio"
             
-            # 2. Split Day Fallback Matching
             split = str(row["Split Day"]).lower().strip()
             if "push" in split: return "Chest"
             if "pull" in split: return "Back"
@@ -223,8 +169,6 @@ with tab2:
 
         df_analytics["Individual Muscle Target"] = df_analytics.apply(resolve_anatomy, axis=1)
         
-        # Calculation Arrays
-        cardio_sessions = df_analytics[df_analytics["Individual Muscle Target"] == "Cardio"]
         if "Duration (Mins)" in df_analytics.columns:
             df_unique_workouts = df_analytics.groupby(["Date", "Timestamp", "Split Day"])["Duration (Mins)"].max().reset_index()
             total_gym_minutes = int(df_unique_workouts["Duration (Mins)"].sum())
@@ -234,20 +178,13 @@ with tab2:
         total_volume_moved = int(df_analytics["Volume"].sum())
         total_workouts_logged = int(df_analytics["Date"].dt.date.nunique())
 
-        # --- TOP LEVEL PERFORMANCE STATS BANNER ---
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        with m_col1:
-            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_workouts_logged}</div><div class="stat-lbl">Total Workouts Logged</div></div>', unsafe_allow_html=True)
-        with m_col2:
-            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_gym_minutes // 60}h {total_gym_minutes % 60}m</div><div class="stat-lbl">Time Invested in Gym</div></div>', unsafe_allow_html=True)
-        with m_col3:
-            st.markdown(f'<div class="stat-card"><div class="stat-val">{total_volume_moved:,} lbs</div><div class="stat-lbl">Hevy Total Volume Moved</div></div>', unsafe_allow_html=True)
-        with m_col4:
-            st.markdown(f'<div class="stat-card"><div class="stat-val">{df_analytics["Exercise"].nunique()}</div><div class="stat-lbl">Exercises Tracked</div></div>', unsafe_allow_html=True)
+        with m_col1: st.markdown(f'<div class="stat-card"><div class="stat-val">{total_workouts_logged}</div><div class="stat-lbl">Total Workouts Logged</div></div>', unsafe_allow_html=True)
+        with m_col2: st.markdown(f'<div class="stat-card"><div class="stat-val">{total_gym_minutes // 60}h {total_gym_minutes % 60}m</div><div class="stat-lbl">Time Invested in Gym</div></div>', unsafe_allow_html=True)
+        with m_col3: st.markdown(f'<div class="stat-card"><div class="stat-val">{total_volume_moved:,} lbs</div><div class="stat-lbl">Hevy Total Volume Moved</div></div>', unsafe_allow_html=True)
+        with m_col4: st.markdown(f'<div class="stat-card"><div class="stat-val">{df_analytics["Exercise"].nunique()}</div><div class="stat-lbl">Exercises Tracked</div></div>', unsafe_allow_html=True)
 
         st.write(" ")
-        
-        # --- SPLIT MONITOR LAYOUT PANELS ---
         left_panel, right_panel = st.columns([3, 2])
         
         with left_panel:
@@ -272,8 +209,6 @@ with tab2:
             st.caption("Tracks fatigue windows for individual muscle types (48-hour localized muscular cell optimization windows).")
             
             right_now = datetime.datetime.now(ZoneInfo("America/Toronto"))
-            
-            # Highly specific granular biological categories split perfectly from PPL combinations
             muscle_targets = ["Chest", "Shoulders", "Triceps", "Back", "Biceps", "Quads", "Hamstrings & Glutes", "Calves", "Abs/Core"]
             
             for muscle in muscle_targets:
@@ -287,12 +222,9 @@ with tab2:
                     hours_since = max(0, int(time_delta.total_seconds() / 3600))
                     last_trained_str = f"Last hit: {latest_entry_date.strftime('%a, %b %d')}"
                 
-                if hours_since >= 48:
-                    status_lbl, status_css, rec_pct = "Optimized (100% Repaired)", "status-fresh", 100
-                elif hours_since >= 24:
-                    status_lbl, status_css, rec_pct = f"Rebuilding ({int((hours_since/48)*100)}%)", "status-recovering", int((hours_since/48)*100)
-                else:
-                    status_lbl, status_css, rec_pct = f"Fatigued ({int((hours_since/48)*100)}%)", "status-fatigued", max(5, int((hours_since/48)*100))
+                if hours_since >= 48: status_lbl, status_css, rec_pct = "Optimized (100% Repaired)", "status-fresh", 100
+                elif hours_since >= 24: status_lbl, status_css, rec_pct = f"Rebuilding ({int((hours_since/48)*100)}%)", "status-recovering", int((hours_since/48)*100)
+                else: status_lbl, status_css, rec_pct = f"Fatigued ({int((hours_since/48)*100)}%)", "status-fatigued", max(5, int((hours_since/48)*100))
                 
                 st.markdown(f"""
                 <div class="muscle-box {status_css}">
@@ -307,14 +239,12 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
                 
-            # --- GRANULAR GRAPH DISTRIBUTION TARGET ---
             st.markdown("<br>#### 🎯 Granular Muscular Volume Distribution Spread", unsafe_allow_html=True)
             split_volume = df_analytics[df_analytics["Individual Muscle Target"] != "Cardio"].groupby("Individual Muscle Target")["Volume"].sum().reset_index(name="Total Tonnage Volume")
             fig_pie = px.pie(split_volume, values="Total Tonnage Volume", names="Individual Muscle Target", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
             fig_pie.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", showlegend=True, margin=dict(l=10, r=10, t=10, b=10), height=260)
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # --- DETAILED PERFORMANCE CHART DROPDOWN OVERLAY SCREEN ---
         st.write("---")
         st.markdown("#### 🔍 Micro Exercise Progression Overlays")
         selected_chart_exe = st.selectbox("Select Target Exercise to Plot Progression Path", sorted(df_analytics["Exercise"].dropna().unique()))
@@ -360,25 +290,40 @@ with tab3:
                         s_val = int(row[h_set]) if h_set else 1
                         dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
                         
-                        if dur_val > 240:
-                            dur_val = round(dur_val / 60.0, 1)
+                        if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
                         
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
                         parsed_rows.append({"Date": raw_dt, "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val})
                     
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
-                    st.success(f"Processed {len(hevy_parsed_df)} entries from Hevy with Timed Delta Integration!")
+                    
+                    # --- 🛡️ COMPOSITE MATRIX DEDUPLICATION ENGINE ---
+                    combined_df = pd.concat([df_logs, hevy_parsed_df], ignore_index=True)
+                    
+                    # Force strict structural matching definitions
+                    combined_df["Date"] = pd.to_datetime(combined_df["Date"])
+                    combined_df["Timestamp"] = combined_df["Timestamp"].astype(str).str.strip()
+                    combined_df["Exercise"] = combined_df["Exercise"].astype(str).str.strip()
+                    combined_df["Set Number"] = pd.to_numeric(combined_df["Set Number"]).fillna(1).astype(int)
+                    
+                    # Drop duplicate rows by matching composite values (protect your existing dataset)
+                    deduped_df = combined_df.drop_duplicates(subset=["Date", "Timestamp", "Exercise", "Set Number"], keep="first").reset_index(drop=True)
+                    new_rows_discovered = len(deduped_df) - len(df_logs)
+                    
+                    st.success(f"Processed CSV! Found {len(hevy_parsed_df)} parsed sets. ({new_rows_discovered} are brand-new additions).")
                     st.dataframe(hevy_parsed_df, use_container_width=True)
                     
-                    if st.button("🔥 Append All Hevy Data & Push to Cloud Sheet"):
-                        updated_df = pd.concat([df_logs, hevy_parsed_df], ignore_index=True)
-                        push_df = updated_df.copy()
-                        push_df["Date"] = push_df["Date"].astype(str)
-                        conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
-                        st.cache_data.clear()
-                        st.session_state.master_workout_df = updated_df
-                        st.success("✅ Injected to cloud sheets!")
-                        st.rerun()
+                    if new_rows_discovered > 0:
+                        if st.button("🔥 Append All Hevy Data & Push to Cloud Sheet"):
+                            push_df = deduped_df.copy()
+                            push_df["Date"] = push_df["Date"].dt.strftime('%Y-%m-%d')
+                            conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
+                            st.cache_data.clear()
+                            st.session_state.master_workout_df = deduped_df
+                            st.success(f"✅ Injected {new_rows_discovered} brand-new rows! Duplicates ignored.")
+                            st.rerun()
+                    else:
+                        st.warning("⚡ All workouts inside this file have already been permanently saved to your sheet database.")
             except Exception as e: st.error(f"Error: {e}")
     
     st.markdown("---")
