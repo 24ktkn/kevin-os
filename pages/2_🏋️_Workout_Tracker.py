@@ -146,7 +146,7 @@ with tab1:
                     if not exe_history.empty:
                         last_session = exe_history.iloc[0]
                         is_cardio = "cardio" in split.lower() or any(x in exe_clean for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
-                        is_bodyweight = not is_cardio and (any(x in exe_clean for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel", "twist"]) or last_session['Weight (lbs)'] == 0)
+                        is_bodyweight = not is_cardio and (any(x in exe_clean for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel"]) or last_session['Weight (lbs)'] == 0)
                         
                         if is_cardio:
                             last_weight_str = "Cardio Session"
@@ -283,7 +283,7 @@ with tab2:
         if not filtered_df.empty:
             exe_name_lower = selected_chart_exe.lower()
             is_cardio = "cardio" in exe_name_lower or any(x in exe_name_lower for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
-            is_bodyweight = not is_cardio and (any(x in exe_name_lower for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel", "twist"]) or filtered_df["Weight (lbs)"].max() == 0)
+            is_bodyweight = not is_cardio and (any(x in exe_name_lower for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel"]) or filtered_df["Weight (lbs)"].max() == 0)
             
             if is_cardio:
                 y_axis = "Duration (Mins)" if filtered_df["Duration (Mins)"].max() > 0 else "Reps"
