@@ -303,9 +303,9 @@ with tab_analytics:
                     fig_cal.add_annotation(
                         x=days_of_week[x_idx],
                         y=f"Week {y_idx+1}",
-                        text=val,
+                        text=f"<b>{val}</b>",
                         showarrow=False,
-                        font=dict(color=text_color, size=11, bold=True)
+                        font=dict(color=text_color, size=11)
                     )
                     
         st.plotly_chart(fig_cal, use_container_width=True)
