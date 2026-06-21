@@ -97,7 +97,7 @@ df_bio = st.session_state.master_bio_df
 # --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
     "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
-    "Pull (Back/Biceps)": ["Pull Up", "Bent Over Row (Barbell)", "Face Pull", "Incline Bicep Curl (Dumbbell)", "Hammer Curl (Dumbbell)"],
+    "Pull (Back/Biceps)": ["Pull Up", "Bent Over Row (Barbell)", "Face Pull", "Seated Incline Curl (Dumbbell)", "Hammer Curl (Dumbbell)"],
     "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Romanian Deadlift (Barbell)", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
     "Cardio (Treadmill)": ["Treadmill Steady State", "Treadmill Intervals"]
 }
@@ -127,6 +127,17 @@ with tab1:
                 if not df_logs.empty:
                     exe_clean = exe.lower().strip()
                     exe_history = df_logs[df_logs["Exercise"].str.lower().str.strip() == exe_clean].sort_values(by="Date", ascending=False)
+                    
+                    if exe_history.empty:
+                        # Fallback for known synonym naming mismatches
+                        synonyms = {
+                            "incline bicep curl": "seated incline curl",
+                            "seated incline curl": "incline bicep curl"
+                        }
+                        for k, v in synonyms.items():
+                            if k in exe_clean:
+                                exe_history = df_logs[df_logs["Exercise"].str.lower().str.contains(v, na=False)].sort_values(by="Date", ascending=False)
+                                break
                     
                     if exe_history.empty:
                         core_keyword = exe_clean.split('(')[0].strip()
