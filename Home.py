@@ -40,28 +40,28 @@ def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
             continue
             
     html = f"""
-    <div style="background: #16161D; border: 1px solid #23232F; border-radius: 8px; padding: 16px; margin-bottom: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; border-bottom: 1px solid #23232F; padding-bottom: 8px;">
+    <div style="background: #16161D; border: 1px solid #23232F; border-radius: 8px; padding: 10px; margin-bottom: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; border-bottom: 1px solid #23232F; padding-bottom: 6px;">
             <div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: #FFFFFF; display: flex; align-items: center; gap: 6px;">
+                <div style="font-size: 0.9rem; font-weight: 800; color: #FFFFFF; display: flex; align-items: center; gap: 4px;">
                     { '💪' if 'Gym' in habit_name else '✍️' } {habit_name}
                 </div>
-                <div style="font-size: 0.72rem; color: #A0A0AB; text-transform: uppercase; font-weight: 700; margin-top: 2px;">{month_name} {year}</div>
+                <div style="font-size: 0.65rem; color: #A0A0AB; text-transform: uppercase; font-weight: 700; margin-top: 1px;">{month_name} {year}</div>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 1.2rem; font-weight: 800; color: #00FF66;">{streak} 🔥</div>
-                <div style="font-size: 0.65rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Streak</div>
+                <div style="font-size: 0.95rem; font-weight: 800; color: #00FF66;">{streak} 🔥</div>
+                <div style="font-size: 0.55rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Streak</div>
             </div>
-            <div style="text-align: right; margin-left: 12px;">
-                <div style="font-size: 1.2rem; font-weight: 800; color: #00F0FF;">{rate}%</div>
-                <div style="font-size: 0.65rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Cons.</div>
+            <div style="text-align: right; margin-left: 8px;">
+                <div style="font-size: 0.95rem; font-weight: 800; color: #00F0FF;">{rate}%</div>
+                <div style="font-size: 0.55rem; color: #A0A0AB; font-weight: 700; text-transform: uppercase;">Cons.</div>
             </div>
         </div>
-        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center;">
+        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center;">
     """
     
     for d in ["M", "T", "W", "T", "F", "S", "S"]:
-        html += f'<div style="font-size: 0.65rem; color: #5E5E6E; font-weight: 700; padding-bottom: 4px;">{d}</div>'
+        html += f'<div style="font-size: 0.55rem; color: #5E5E6E; font-weight: 700; padding-bottom: 2px;">{d}</div>'
         
     for week in cal:
         for day in week:
@@ -88,8 +88,8 @@ def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
                     background: {bg};
                     color: {color};
                     border: {border};
-                    border-radius: 4px;
-                    font-size: 0.72rem;
+                    border-radius: 3px;
+                    font-size: 0.6rem;
                     font-weight: 700;
                     aspect-ratio: 1;
                     display: flex;
@@ -152,8 +152,8 @@ st.markdown("""
         border-radius: 6px !important;
         font-weight: 700 !important;
         transition: all 0.3s ease !important;
-        font-size: 0.85rem !important;
-        padding: 6px 12px !important;
+        font-size: 0.75rem !important;
+        padding: 4px 8px !important;
     }
     .habit-button button:hover {
         border-color: #00FF66 !important;
@@ -167,8 +167,8 @@ st.markdown("""
         border-radius: 6px !important;
         font-weight: 700 !important;
         transition: all 0.3s ease !important;
-        font-size: 0.85rem !important;
-        padding: 6px 12px !important;
+        font-size: 0.75rem !important;
+        padding: 4px 8px !important;
     }
     .habit-button-completed button:hover {
         background-color: rgba(255, 51, 51, 0.1) !important;
