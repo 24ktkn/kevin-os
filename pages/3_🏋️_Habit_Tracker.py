@@ -44,7 +44,7 @@ st.markdown("""
 st.title("🏋️ Habit Core Engine")
 
 # --- TRACKED HABITS CONFIGURATION ---
-HABITS_LIST = ["Gym Workout", "Journaling", "Meditation", "Reading", "Leetcoding"]
+HABITS_LIST = ["Gym Workout", "Journaling"]
 
 # --- ⏳ TIMEZONE & NIGHT OWL ROLLOVER ENGINE ---
 # Force evaluation in local Eastern Time (London, Ontario)
@@ -74,6 +74,7 @@ for h in HABITS_LIST:
     if h not in df.columns:
         df[h] = False
     df[h] = df[h].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
+df = df[["Date"] + HABITS_LIST]
 
 # Initialize today's productivity row if missing
 if today_str not in df["Date"].values:
