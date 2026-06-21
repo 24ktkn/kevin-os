@@ -166,13 +166,24 @@ with tab3:
                 h_date, h_exe, h_weight, h_reps, h_set, h_title = next((c for c in df_hevy.columns if "start" in c or "date" in c), None), next((c for c in df_hevy.columns if "exercise" in c), None), next((c for c in df_hevy.columns if "weight" in c), None), next((c for c in df_hevy.columns if "reps" in c), None), next((c for c in df_hevy.columns if "set" in c and "type" not in c), None), next((c for c in df_hevy.columns if "title" in c or "workout" in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
+                    # 🛡️ GLOBAL SANITIZATION SHIELD (Converts columns safely at scale before execution loop)
+                    df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
+                    df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
+                    if h_set:
+                        df_hevy[h_set] = pd.to_numeric(df_hevy[h_set], errors='coerce').fillna(1).astype(int)
+                    
                     parsed_rows = []
                     for _, row in df_hevy.iterrows():
                         raw_dt = pd.to_datetime(row[h_date], errors='coerce')
                         if pd.isna(raw_dt): continue
-                        w_val, r_val, s_val = pd.to_numeric(row[h_weight], errors='coerce').fillna(0.0), pd.to_numeric(row[h_reps], errors='coerce').fillna(0).astype(int), pd.to_numeric(row[h_set], errors='coerce').fillna(1).astype(int)
+                        
+                        w_val = float(row[h_weight])
+                        r_val = int(row[h_reps])
+                        s_val = int(row[h_set]) if h_set else 1
+                        
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
                         parsed_rows.append({"Date": raw_dt, "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S")})
+                    
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
                     st.success(f"Processed {len(hevy_parsed_df)} entries from Hevy!")
                     st.dataframe(hevy_parsed_df, use_container_width=True)
@@ -233,7 +244,6 @@ with tab5:
             if date_col:
                 df_incoming[date_col] = pd.to_datetime(df_incoming[date_col])
                 
-                # Format to uniform parsing design patterns
                 staging_rows = []
                 for _, row in df_incoming.iterrows():
                     if pd.isna(row[date_col]): continue
@@ -248,7 +258,6 @@ with tab5:
                 st.dataframe(df_staging, use_container_width=True)
                 
                 if st.button("💾 Commit New Biometrics to Permanent Cloud Sheet"):
-                    # Deduplicate rows by checking incoming dates against existing dates
                     if not df_bio.empty:
                         existing_dates = pd.to_datetime(df_bio["Date"]).dt.date.values
                         df_staging = df_staging[~df_staging["Date"].dt.date.isin(existing_dates)]
