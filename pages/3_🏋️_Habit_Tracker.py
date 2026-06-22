@@ -44,7 +44,8 @@ st.markdown("""
 st.title("🏋️ Habit Core Engine")
 
 # --- TRACKED HABITS CONFIGURATION ---
-HABITS_LIST = ["Gym Workout", "Journaling"]
+HABITS_LIST = ["Wake Up On Time", "Gym Workout", "Journaling"]
+
 
 # --- ⏳ TIMEZONE & NIGHT OWL ROLLOVER ENGINE ---
 # Force evaluation in local Eastern Time (London, Ontario)
@@ -310,3 +311,91 @@ with tab_analytics:
                     )
                     
         st.plotly_chart(fig_cal, use_container_width=True)
+        
+        # --- ⏰ WAKE UP TIME LONG-TERM TREND ---
+        st.write("---")
+        st.write("### ⏰ Wake Up Time Trend (Last 30 Days)")
+        
+        try:
+            df_bio = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="health_metrics", ttl=0)
+            if df_bio is not None and not df_bio.empty and "Date" in df_bio.columns and "Wake Time" in df_bio.columns:
+                # Clean up and sort df_bio
+                df_bio_clean = df_bio[df_bio["Date"].astype(str).str.strip() != ""].copy()
+                df_bio_clean["Date"] = pd.to_datetime(df_bio_clean["Date"].astype(str).str.strip(), errors='coerce')
+                df_bio_clean = df_bio_clean[df_bio_clean["Date"].notna()]
+                
+                # Parse Wake Time into float hours
+                def parse_time_to_hours(val):
+                    if pd.isna(val):
+                        return None
+                    val_str = str(val).strip().lower()
+                    if val_str == "" or val_str == "nan" or val_str == "nat":
+                        return None
+                    try:
+                        # "07:30 am" or "7:30 am"
+                        t = datetime.datetime.strptime(val_str, "%i:%m %p")
+                        return t.hour + t.minute / 60.0
+                    except Exception:
+                        try:
+                            # "07:30" or "7:30" (24h)
+                            t = datetime.datetime.strptime(val_str, "%H:%M")
+                            return t.hour + t.minute / 60.0
+                        except Exception:
+                            return None
+
+                df_bio_clean["Wake Hour"] = df_bio_clean["Wake Time"].apply(parse_time_to_hours)
+                
+                # Filter rows that have a valid wake hour
+                df_wake = df_bio_clean[df_bio_clean["Wake Hour"].notna()].sort_values(by="Date", ascending=True).copy()
+                
+                # Filter last 30 days
+                limit_date = now_local - datetime.timedelta(days=30)
+                df_wake = df_wake[df_wake["Date"] >= pd.to_datetime(limit_date.date())]
+                
+                if not df_wake.empty:
+                    fig_wake = px.line(
+                        df_wake, 
+                        x="Date", 
+                        y="Wake Hour", 
+                        title="Daily Waking Timestamps",
+                        labels={"Date": "Date", "Wake Hour": "Time of Day"},
+                        markers=True
+                    )
+                    
+                    y_min = int(df_wake["Wake Hour"].min()) - 1
+                    y_max = int(df_wake["Wake Hour"].max()) + 1
+                    
+                    tick_vals = list(range(max(0, y_min), min(24, y_max + 1)))
+                    tick_text = []
+                    for h in tick_vals:
+                        if h == 0:
+                            tick_text.append("12:00 AM")
+                        elif h < 12:
+                            tick_text.append(f"{h}:00 AM")
+                        elif h == 12:
+                            tick_text.append("12:00 PM")
+                        else:
+                            tick_text.append(f"{h-12}:00 PM")
+                            
+                    fig_wake.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        height=280,
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        yaxis=dict(
+                            tickvals=tick_vals,
+                            ticktext=tick_text,
+                            gridcolor="#2D2D3D"
+                        ),
+                        xaxis=dict(
+                            gridcolor="#2D2D3D"
+                        )
+                    )
+                    st.plotly_chart(fig_wake, use_container_width=True)
+                else:
+                    st.info("No sleep wake-up time history found within the last 30 days.")
+            else:
+                st.info("Wake Time tracker data not detected in sheet. Enable automatic sync via your Google Fit script.")
+        except Exception as ex:
+            st.error(f"Could not load wake time trend data: {ex}")

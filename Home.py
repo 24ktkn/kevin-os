@@ -13,7 +13,8 @@ else:
     productivity_date = now_local
 today_str = productivity_date.strftime('%Y-%m-%d')
 
-HABITS_LIST = ["Gym Workout", "Journaling"]
+HABITS_LIST = ["Wake Up On Time", "Gym Workout", "Journaling"]
+
 
 def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
     streak = 0
@@ -44,7 +45,7 @@ def draw_mini_calendar(df_sorted, habit_name, today_str, year, month):
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; border-bottom: 1px solid #23232F; padding-bottom: 6px;">
             <div>
                 <div style="font-size: 0.9rem; font-weight: 800; color: #FFFFFF; display: flex; align-items: center; gap: 4px;">
-                    { '💪' if 'Gym' in habit_name else '✍️' } {habit_name}
+                    { '⏰' if 'Wake' in habit_name else ('💪' if 'Gym' in habit_name else '✍️') } {habit_name}
                 </div>
                 <div style="font-size: 0.65rem; color: #A0A0AB; text-transform: uppercase; font-weight: 700; margin-top: 1px;">{month_name} {year}</div>
             </div>
@@ -202,6 +203,13 @@ try:
             sleep = float(latest_day["Sleep Duration"]) if "Sleep Duration" in latest_day and pd.notna(latest_day["Sleep Duration"]) else 0
             rhr = float(latest_day["RHR"]) if "RHR" in latest_day and pd.notna(latest_day["RHR"]) else 0
             
+            # Fetch wake time if available
+            wake_time = ""
+            if "Wake Time" in latest_day and pd.notna(latest_day["Wake Time"]):
+                wake_val = str(latest_day["Wake Time"]).strip()
+                if wake_val != "" and wake_val.lower() != "nan" and wake_val.lower() != "nat":
+                    wake_time = wake_val
+            
             # Find the most recent non-zero bodyweight from history
             weight = 0.0
             if "Bodyweight" in df_bio_clean.columns:
@@ -249,10 +257,12 @@ try:
                 
             with m_col2:
                 sleep_str = f"{sleep} hrs" if sleep > 0 else "No data"
+                wake_info = f"<div style='font-size:0.75rem; color:#A0A0AB; margin-top:4px;'>Woke at {wake_time}</div>" if wake_time else ""
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
                     <div class="status-lbl">Sleep Duration</div>
                     <div class="status-val" style="color: #FFB703; font-size: 1.6rem;">{sleep_str}</div>
+                    {wake_info}
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -302,51 +312,29 @@ try:
     today_idx = df_habits[df_habits["Date"] == today_str].index[0]
     df_sorted = df_habits.sort_values(by="Date", ascending=True).copy()
     
-    h_col1, h_col2 = st.columns(2)
+    cols = st.columns(len(HABITS_LIST))
     
-    with h_col1:
-        habit = "Gym Workout"
-        cal_html = draw_mini_calendar(df_sorted, habit, today_str, productivity_date.year, productivity_date.month)
-        st.markdown(cal_html, unsafe_allow_html=True)
-        
-        completed = bool(df_habits.at[today_idx, habit])
-        button_class = "habit-button-completed" if completed else "habit-button"
-        st.markdown(f"<div class='{button_class}'>", unsafe_allow_html=True)
-        if completed:
-            if st.button("Completed ✅", key=f"btn_{habit}", use_container_width=True):
-                df_habits.at[today_idx, habit] = False
-                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
-                st.toast("Unmarked Gym Workout as completed.")
-                st.rerun()
-        else:
-            if st.button("Mark Done", key=f"btn_{habit}", use_container_width=True):
-                df_habits.at[today_idx, habit] = True
-                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
-                st.toast("Logged Gym Workout as completed!")
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-    with h_col2:
-        habit = "Journaling"
-        cal_html = draw_mini_calendar(df_sorted, habit, today_str, productivity_date.year, productivity_date.month)
-        st.markdown(cal_html, unsafe_allow_html=True)
-        
-        completed = bool(df_habits.at[today_idx, habit])
-        button_class = "habit-button-completed" if completed else "habit-button"
-        st.markdown(f"<div class='{button_class}'>", unsafe_allow_html=True)
-        if completed:
-            if st.button("Completed ✅", key=f"btn_{habit}", use_container_width=True):
-                df_habits.at[today_idx, habit] = False
-                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
-                st.toast("Unmarked Journaling as completed.")
-                st.rerun()
-        else:
-            if st.button("Mark Done", key=f"btn_{habit}", use_container_width=True):
-                df_habits.at[today_idx, habit] = True
-                conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
-                st.toast("Logged Journaling as completed!")
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    for idx, habit in enumerate(HABITS_LIST):
+        with cols[idx]:
+            cal_html = draw_mini_calendar(df_sorted, habit, today_str, productivity_date.year, productivity_date.month)
+            st.markdown(cal_html, unsafe_allow_html=True)
+            
+            completed = bool(df_habits.at[today_idx, habit])
+            button_class = "habit-button-completed" if completed else "habit-button"
+            st.markdown(f"<div class='{button_class}'>", unsafe_allow_html=True)
+            if completed:
+                if st.button("Completed ✅", key=f"btn_{habit}", use_container_width=True):
+                    df_habits.at[today_idx, habit] = False
+                    conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                    st.toast(f"Unmarked {habit} as completed.")
+                    st.rerun()
+            else:
+                if st.button("Mark Done", key=f"btn_{habit}", use_container_width=True):
+                    df_habits.at[today_idx, habit] = True
+                    conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
+                    st.toast(f"Logged {habit} as completed!")
+                    st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"Error loading habits data: {e}")
