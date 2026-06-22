@@ -115,11 +115,11 @@ try:
     df_raw = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Costco_MealPlan", ttl=0)
 except Exception:
     fallback_data = {
-        "Phase/Trip": ["Trip 1 (Day 1)"]*5 + ["Trip 2 (Day 15)"]*2,
-        "Department": ["Meat & Deli", "Meat & Deli", "Dairy & Eggs", "Produce & Frozen", "Produce & Frozen", "Meat & Deli", "Produce & Frozen"],
-        "Item Name": ["Kirkland Lean Ground Beef", "Kirkland Frozen Chicken Breasts", "Fresh Eggs", "Kirkland Frozen Broccoli Florets", "Kirkland Frozen Salmon Fillets", "Kirkland Hand-Pulled Rotisserie Meat", "Kirkland Frozen Stir-Fry Veg Blend"],
-        "Target Scale/Size": ["3-Pack", "1 Bulk Bag", "5-Dozen Crate", "1 Bulk Bag", "1 Bulk Bag", "1.2 kg Pack", "1 Bulk Bag"],
-        "Meal Prep Target Assignment": ["Lunch W1-2", "Dinner W1&3", "Lunch W1-2", "Dinner Side", "Dinner W2", "Lunch W3-4", "Dinner Side"]
+        "Phase/Trip": ["Trip 1 (Day 1)"]*6 + ["Trip 2 (Day 15)"]*2,
+        "Department": ["Meat & Deli", "Meat & Deli", "Dairy & Eggs", "Dairy & Eggs", "Produce & Frozen", "Produce & Frozen", "Meat & Deli", "Produce & Frozen"],
+        "Item Name": ["Kirkland Lean Ground Beef", "Kirkland Frozen Chicken Breasts", "Fresh Eggs", "Kirkland Organic Cottage Cheese", "Kirkland Frozen Broccoli Florets", "Kirkland Frozen Salmon Fillets", "Kirkland Hand-Pulled Rotisserie Meat", "Kirkland Frozen Stir-Fry Veg Blend"],
+        "Target Scale/Size": ["3-Pack", "1 Bulk Bag", "5-Dozen Crate", "3-Pack (or 2-Pack 32oz)", "1 Bulk Bag", "1 Bulk Bag", "1.2 kg Pack", "1 Bulk Bag"],
+        "Meal Prep Target Assignment": ["Lunch W1-2", "Dinner W1&3", "Lunch W1-2", "Universal Binder W1-4", "Dinner Side", "Dinner W2", "Lunch W3-4", "Dinner Side"]
     }
     df_raw = pd.DataFrame(fallback_data)
 
@@ -182,19 +182,29 @@ with tab_blueprint:
     st.markdown('<div class="meal-box"><div class="meal-title">🌅 Daily Breakfast Launch (Blender Action)</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-desc">High-Protein Fruit Smoothie</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-instructions"><b>Ingredients:</b> 1.5 cups Fairlife 2% Milk, 1 cup Vanilla Greek Yogurt, 1 cup <b>{smoothie_fruit}</b>, 1 tbsp Chia Seeds, 3 tbsp Manitoba Harvest Hemp Hearts.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meta-row" style="margin-left: 12px; margin-top: 4px; color: #FF9900; font-size: 0.78rem;">💡 Smoothie Swap: Replace half/all Greek Yogurt with cottage cheese. High-speed blending makes it milkshake-thick and adds a rich, slightly salty profile!</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Lunch
     st.markdown('<div class="meal-box"><div class="meal-title">☀️ Daily Mid-Day Fuel (2 Wraps)</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-desc">{lunch_title}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-instructions"><b>Workflow:</b> {lunch_guide}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meta-row" style="margin-left: 12px; margin-top: 4px; color: #FF9900; font-size: 0.78rem;">💡 Wrap Binder (Weeks 3-4): Toss your cold rotisserie chicken with a scoop of cottage cheese, hot sauce, and taco seasoning to bind the spinach and meat perfectly!</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Dinner
     st.markdown('<div class="meal-box"><div class="meal-title">🌙 Hands-Off Performance Dinner (Air Fryer + Microwave Core)</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-desc">{dinner_prot} on Starch Grid</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-instructions"><b>Starch Core:</b> Cook a 50/50 blend of Jasmine Rice and Organic Quinoa in the rice cooker completely unattended.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meta-row" style="margin-left: 12px; margin-top: 4px; color: #FF9900; font-size: 0.78rem;">💡 "Risotto" Hack: Immediately stir 2-3 tbsp of cold cottage cheese into your hot rice/quinoa blend portion. The heat melts it into a rich, creamy, high-protein cream base!</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-instructions"><b>Protein Execution:</b> Air-fry your seasoned protein for <b>{dinner_time}</b> at 400°F until internal temperature target is hit.</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meta-row" style="margin-left: 12px; margin-top: -2px; margin-bottom: 4px; color: #00FF66; font-size: 0.78rem;">💡 Tip: If prepping Romanian Deadlifts (RDLs) on your Leg days, ensure you hit your hydration goals here to maximize muscle volume!</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="meal-instructions"><b>Vegetable Prep:</b> Pack <b>{dinner_veg}</b> completely raw into your batch prep boxes directly on top of the cooked rice and protein. They will perfectly steam live when the entire container is microwaved for 2.5 minutes at dinner time.</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Late-Night Snack
+    st.markdown('<div class="meal-box"><div class="meal-title">🌙 Late-Night Study Fuel (Zero-Prep Snack)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meal-desc">Cottage Cheese & Warm Berries</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meal-instructions"><b>Workflow:</b> Scoop 1 cup of cottage cheese into a bowl, top with a handful of Kirkland Frozen Three Berry Blend, microwave the berries for 20 seconds to run the juices, and eat cold.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="meta-row" style="margin-left: 12px; margin-top: 4px; color: #FF9900; font-size: 0.78rem;">💡 Why it works: Slow-releasing casein protein feeds your muscles a steady stream of amino acids while you sleep, protecting recovery after heavy leg days!</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
