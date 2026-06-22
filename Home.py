@@ -249,7 +249,7 @@ try:
             st.write("<div style='height:12px;'></div>", unsafe_allow_html=True)
             
             # Render secondary metrics in columns
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
             
             with m_col1:
                 hrv_str = f"{int(hrv)} ms" if hrv > 0 else "No data"
@@ -262,16 +262,23 @@ try:
                 
             with m_col2:
                 sleep_str = f"{sleep} hrs" if sleep > 0 else "No data"
-                wake_info = f"<div style='font-size:0.75rem; color:#A0A0AB; margin-top:4px;'>Woke at {wake_time}</div>" if wake_time else ""
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
                     <div class="status-lbl">Sleep Duration</div>
                     <div class="status-val" style="color: #FFB703; font-size: 1.6rem;">{sleep_str}</div>
-                    {wake_info}
                 </div>
                 """, unsafe_allow_html=True)
                 
             with m_col3:
+                wake_str = wake_time if wake_time else "No data"
+                st.markdown(f"""
+                <div class="status-card" style="text-align:center;">
+                    <div class="status-lbl">Wake Up Time</div>
+                    <div class="status-val" style="color: #A855F7; font-size: 1.6rem;">{wake_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with m_col4:
                 rhr_str = f"{int(rhr)} bpm" if rhr > 0 else "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
@@ -280,7 +287,7 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
                 
-            with m_col4:
+            with m_col5:
                 weight_str = f"{weight} lbs" if weight > 0 else "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
