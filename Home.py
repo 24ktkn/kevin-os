@@ -194,8 +194,13 @@ try:
         df_bio_clean = df_bio_clean[df_bio_clean["Date"].notna()]
         
         if not df_bio_clean.empty:
-            latest_day = df_bio_clean.sort_values(by="Date", ascending=False).iloc[0]
+            df_today = df_bio_clean[df_bio_clean["Date"].dt.strftime('%Y-%m-%d') == today_str]
+            if not df_today.empty:
+                latest_day = df_today.iloc[0]
+            else:
+                latest_day = df_bio_clean.sort_values(by="Date", ascending=False).iloc[0]
             latest_date_str = latest_day["Date"].strftime('%A, %b %d')
+
             
             # Parse values (safe check)
             steps = int(latest_day["Steps"]) if "Steps" in latest_day and pd.notna(latest_day["Steps"]) else 0
