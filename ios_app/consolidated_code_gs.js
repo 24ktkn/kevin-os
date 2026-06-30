@@ -568,6 +568,7 @@ function doPost(e) {
     }
     
     var action = params.action;
+    logDebugRequest(action, params);
     
     var now = new Date();
     var torontoDateStr = Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd");
@@ -611,8 +612,11 @@ function doPost(e) {
         }
       }
       
-      var steps = params.steps !== undefined ? parseInt(params.steps, 10) : null;
-      var sleep = params.sleep !== undefined ? parseFloat(params.sleep) : null;
+      var stepsVal = getParam(params, ["steps"]);
+      var steps = stepsVal !== undefined && stepsVal !== null ? parseInt(stepsVal, 10) : null;
+      
+      var sleepVal = getParam(params, ["sleep", "sleepDuration"]);
+      var sleep = sleepVal !== undefined && sleepVal !== null ? parseFloat(sleepVal) : null;
       var sleepStr = null;
       if (sleep !== null) {
         if (sleep > 24) {
@@ -626,11 +630,21 @@ function doPost(e) {
         }
         sleepStr = hours + "h " + minutes + "m";
       }
-      var hrv = params.hrv !== undefined ? parseInt(params.hrv, 10) : null;
-      var rhr = params.rhr !== undefined ? parseInt(params.rhr, 10) : null;
-      var weight = params.weight !== undefined ? parseFloat(params.weight) : null;
-      var wakeTime = params.wakeTime !== undefined ? String(params.wakeTime).trim() : null;
-      var sleepTime = params.sleepTime !== undefined ? String(params.sleepTime).trim() : null;
+      
+      var hrvVal = getParam(params, ["hrv"]);
+      var hrv = hrvVal !== undefined && hrvVal !== null ? parseInt(hrvVal, 10) : null;
+      
+      var rhrVal = getParam(params, ["rhr"]);
+      var rhr = rhrVal !== undefined && rhrVal !== null ? parseInt(rhrVal, 10) : null;
+      
+      var weightVal = getParam(params, ["weight", "bodyweight"]);
+      var weight = weightVal !== undefined && weightVal !== null ? parseFloat(weightVal) : null;
+      
+      var wakeTimeVal = getParam(params, ["wakeTime", "wake_time", "wake", "wakeUpTime", "wake_up_time"]);
+      var wakeTime = wakeTimeVal !== undefined && wakeTimeVal !== null ? String(wakeTimeVal).trim() : null;
+      
+      var sleepTimeVal = getParam(params, ["sleepTime", "sleep_time", "sleep_start", "sleepstart"]);
+      var sleepTime = sleepTimeVal !== undefined && sleepTimeVal !== null ? String(sleepTimeVal).trim() : null;
       
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
@@ -1453,3 +1467,29 @@ function parseDistanceToKm(val) {
   }
   return "";
 }
+
+function getParam(params, keys) {
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (params[key] !== undefined) return params[key];
+    var cleanKey = key.toLowerCase().replace(/_/g, "").replace(/\s/g, "");
+    for (var p in params) {
+      var cleanP = p.toLowerCase().replace(/_/g, "").replace(/\s/g, "");
+      if (cleanP === cleanKey) return params[p];
+    }
+  }
+  return undefined;
+}
+
+function logDebugRequest(action, params) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var debugSheet = ss.getSheetByName("debug_logs");
+    if (!debugSheet) {
+      debugSheet = ss.insertSheet("debug_logs");
+      debugSheet.appendRow(["Timestamp", "Action", "Parameters JSON"]);
+    }
+    debugSheet.appendRow([new Date(), action, JSON.stringify(params)]);
+  } catch (e) {}
+}
+
