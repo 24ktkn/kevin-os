@@ -161,7 +161,7 @@ with st.sidebar:
     st.info("Manual logging disabled. Application is running in 100% Autonomous Hevy Cloud-Sync Mode.")
 
 # --- MAIN DASHBOARD INTERFACE ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Premium Analytics Suite", "📜 Session History Ledger", "⏱️ Rest Interval Pacer", "❤️ Recovery & Readiness"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Premium Analytics Suite", "📜 Session History Ledger", "❤️ Recovery & Readiness"])
 
 with tab1:
     st.markdown("### Your Active Hevy-Synced Target Guidelines")
@@ -539,11 +539,6 @@ with tab3:
                     st.error(f"Failed to clear sheet: {e}")
 
 with tab4:
-    col1, col2 = st.columns(2)
-    with col1: st.metric("Compound Movements Rest", "90 - 120 sec")
-    with col2: st.metric("Isolation Movements Rest", "60 sec")
-
-with tab5:
     st.markdown("### 🍏 Permanent Apple Health Ledger (AI Health Export)")
     st.info("Upload your 7-day export CSV. It will be merged permanently into your cloud sheet without duplicates.")
 
