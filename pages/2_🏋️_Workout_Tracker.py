@@ -128,9 +128,9 @@ with st.sidebar:
     st.info("Manual logging disabled. Application is running in 100% Autonomous Hevy Cloud-Sync Mode.")
 
 # --- MAIN DASHBOARD INTERFACE ---
-tab1, tab2, tab3, tab4 = st.tabs(["📋 Exercise Guide & Target Weights", "📈 Premium Analytics Suite", "📜 Session History Ledger", "❤️ Recovery & Readiness"])
+tab_analytics, tab_guide, tab_ledger, tab_recovery = st.tabs(["📈 Premium Analytics Suite", "📋 Exercise Guide & Target Weights", "📜 Session History Ledger", "❤️ Recovery & Readiness"])
 
-with tab1:
+with tab_guide:
     st.markdown("### Your Active Hevy-Synced Target Guidelines")
     render_bodyweight_tracker("tab1")
     st.markdown("---")
@@ -186,7 +186,7 @@ with tab1:
                 guide_data.append({"Exercise Name": exe, "Target Progression Protocol": target_range, "Last Weight Used": last_weight_str, "Last Reps/Duration": last_reps_str, "Last Workout Date": last_date_str})
             st.write(pd.DataFrame(guide_data).to_html(escape=False, index=False), unsafe_allow_html=True)
 
-with tab2:
+with tab_analytics:
     st.markdown("### 📊 Hevy & LifeApp Unified Analytics Engine")
     render_bodyweight_tracker("tab2")
     st.markdown("---")
@@ -392,7 +392,7 @@ with tab2:
             fig_micro.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
             st.plotly_chart(fig_micro, use_container_width=True)
 
-with tab3:
+with tab_ledger:
     st.markdown("### Cloud Sync Master Ledger")
     with st.expander("📥 Bulk Import Workouts from Hevy App CSV", expanded=False):
         uploaded_hevy_file = st.file_uploader("Drop Hevy CSV File Here", type=["csv"], key="hevy_importer_zone")
@@ -558,7 +558,7 @@ with tab3:
                 except Exception as e:
                     st.error(f"Failed to clear sheet: {e}")
 
-with tab4:
+with tab_recovery:
     st.markdown("### 🍏 Permanent Apple Health Ledger (AI Health Export)")
     st.info("Upload your 7-day export CSV. It will be merged permanently into your cloud sheet without duplicates.")
 
