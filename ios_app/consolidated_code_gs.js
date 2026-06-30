@@ -776,8 +776,8 @@ function doPost(e) {
         if (head.indexOf("set") !== -1 && head.indexOf("type") === -1) setIdx = h;
         if (head.indexOf("weight") !== -1) weightIdx = h;
         if (head.indexOf("rep") !== -1) repsIdx = h;
-        if (head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) distanceIdx = h;
-        if (head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) durationIdx = h;
+        if ((head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) && head.indexOf("unit") === -1) distanceIdx = h;
+        if ((head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) && head.indexOf("workout") === -1 && head.indexOf("unit") === -1) durationIdx = h;
         
         // Exclude notes, descriptions, or target from exercise matching
         if (head.indexOf("exercise") !== -1 && head.indexOf("note") === -1 && head.indexOf("desc") === -1 && head.indexOf("target") === -1) {
@@ -899,16 +899,8 @@ function doPost(e) {
         var repsRaw = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : NaN;
         var reps = isNaN(repsRaw) ? "" : repsRaw;
         
-        var durationRaw = durationIdx !== -1 ? parseFloat(row[durationIdx]) / 60.0 : NaN;
-        var duration = isNaN(durationRaw) ? "" : Math.round(durationRaw * 10) / 10;
-        
-        var distanceRaw = distanceIdx !== -1 ? parseFloat(row[distanceIdx]) : NaN;
-        var distance = isNaN(distanceRaw) ? "" : Math.round(distanceRaw * 100) / 100;
-        
-        // Auto convert miles to km
-        if (exercise.toLowerCase().indexOf("treadmill") !== -1 && distance !== "") {
-          distance = Math.round(distance * 1.60934 * 100) / 100;
-        }
+        var duration = durationIdx !== -1 ? parseDurationToMins(row[durationIdx]) : "";
+        var distance = distanceIdx !== -1 ? parseDistanceToKm(row[distanceIdx]) : "";
         
         var est1rm = "";
         if (weight !== "" && reps !== "") {
@@ -1021,4 +1013,67 @@ function parseCSVLine(line) {
   }
   result.push(current.trim());
   return result;
+}
+
+function parseDurationToMins(val) {
+  if (!val) return "";
+  var valStr = String(val).trim().toLowerCase();
+  if (valStr === "" || valStr === "nan") return "";
+  
+  // Handle colon format (HH:MM:SS or MM:SS)
+  if (valStr.indexOf(":") !== -1) {
+    var parts = valStr.split(":");
+    try {
+      if (parts.length === 3) {
+        var h = parseInt(parts[0], 10) || 0;
+        var m = parseInt(parts[1], 10) || 0;
+        var s = parseFloat(parts[2]) || 0;
+        return Math.round((h * 60.0 + m + s / 60.0) * 10) / 10;
+      } else if (parts.length === 2) {
+        var m = parseInt(parts[0], 10) || 0;
+        var s = parseFloat(parts[1]) || 0;
+        return Math.round((m + s / 60.0) * 10) / 10;
+      }
+    } catch (err) {
+      // fallback
+    }
+  }
+  
+  var num = parseFloat(valStr);
+  if (isNaN(num)) return "";
+  
+  // If it is seconds (typically > 300), convert to minutes
+  if (num > 300) {
+    return Math.round((num / 60.0) * 10) / 10;
+  }
+  return num;
+}
+
+function parseDistanceToKm(val) {
+  if (!val) return "";
+  var valStr = String(val).trim().toLowerCase();
+  if (valStr === "" || valStr === "nan") return "";
+  
+  // Extract number
+  var match = valStr.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if (match) {
+    var num = parseFloat(match[1]);
+    if (isNaN(num)) return "";
+    
+    // If it contains "km" or "kilometer", it is already in km
+    if (valStr.indexOf("km") !== -1 || valStr.indexOf("kilometer") !== -1) {
+      return Math.round(num * 100) / 100;
+    }
+    // If it contains "m" but not "k", it is in meters (convert to km)
+    if (valStr.indexOf("m") !== -1 && valStr.indexOf("k") === -1) {
+      return Math.round((num / 1000.0) * 100) / 100;
+    }
+    // If the number is large (> 50), it is likely meters
+    if (num > 50) {
+      return Math.round((num / 1000.0) * 100) / 100;
+    }
+    // Otherwise, assume miles and convert to km
+    return Math.round(num * 1.60934 * 100) / 100;
+  }
+  return "";
 }
