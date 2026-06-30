@@ -39,8 +39,8 @@ struct ContentView: View {
                 }
                 .tag(0)
             
-            // --- TAB 2: WORKOUT LOGGER ---
-            WorkoutLoggerView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor)
+            // --- TAB 2: WORKOUT WEBVIEW ---
+            WorkoutWebView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen)
                 .tabItem {
                     Image(systemName: "dumbbell.fill")
                     Text("Workouts")
@@ -282,6 +282,45 @@ struct OSHubView: View {
         .refreshable {
             networkManager.fetchData()
         }
+    }
+}
+
+struct WorkoutWebView: View {
+    @ObservedObject var networkManager: NetworkManager
+    let bgColor: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    let neonGreen: Color
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("🏋️ Workout Insights")
+                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                Spacer()
+                if networkManager.isLoading {
+                    ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
+                } else {
+                    Button(action: { networkManager.fetchData() }) {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .background(bgColor)
+            
+            // Embedded WebView
+            WebView(urlString: "https://kevin-os.streamlit.app/Workout_Tracker?embed=true")
+                .background(bgColor)
+                .edgesIgnoringSafeArea(.bottom)
+        }
+        .background(bgColor.ignoresSafeArea())
     }
 }
 
