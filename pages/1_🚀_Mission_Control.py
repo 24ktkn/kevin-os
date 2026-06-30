@@ -267,7 +267,15 @@ def sweep_past_events(dataframe, connection, service_tasks):
         if row["Status"] == True:
             continue
             
-        if row["Scheduled?"] == True and row["Type"] == "Event" and pd.notna(df_temp.at[idx, "Internal_DateTime"]) and df_temp.at[idx, "Internal_DateTime"] < current_time:
+        is_past_event = False
+        if row["Type"] == "Event":
+            event_date = pd.to_datetime(row["Date"]).date()
+            if event_date < current_time.date():
+                is_past_event = True
+            elif event_date == current_time.date() and row["Scheduled?"] == True and pd.notna(df_temp.at[idx, "Internal_DateTime"]) and df_temp.at[idx, "Internal_DateTime"] < current_time:
+                is_past_event = True
+                
+        if is_past_event:
             dataframe.at[idx, "Status"] = True
             completed_count += 1
             sheet_updated = True
@@ -309,6 +317,32 @@ df["Status"] = df["Status"].replace({"TRUE": True, "FALSE": False, "True": True,
 df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 df["Type"] = df["Type"].fillna("Event").astype(str)
 df["Location"] = df["Location"].fillna("").astype(str)
+
+# Auto-sweep past events to complete them silently on load
+try:
+    df_temp = df.copy()
+    df_temp["Internal_DateTime"] = pd.to_datetime(df_temp["Date"].astype(str) + " " + df_temp["Time"].astype(str), errors='coerce')
+    current_time = pd.Timestamp.now()
+    today_date = current_time.date()
+    
+    sheet_updated = False
+    for idx, row in df.iterrows():
+        if row["Type"] == "Event" and not row["Status"]:
+            event_date = pd.to_datetime(row["Date"]).date()
+            is_past = False
+            if event_date < today_date:
+                is_past = True
+            elif event_date == today_date and row["Scheduled?"] == True and pd.notna(df_temp.at[idx, "Internal_DateTime"]) and df_temp.at[idx, "Internal_DateTime"] < current_time:
+                is_past = True
+            
+            if is_past:
+                df.at[idx, "Status"] = True
+                sheet_updated = True
+                
+    if sheet_updated:
+        conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+except Exception:
+    pass
 
 # --- NAVIGATION HUB LAYOUT ---
 categories = ["Upcoming", "Upcoming Tasks", "All Completed", "All History", "All Events", "All Tasks"] + list(CALENDAR_MAP.keys())
