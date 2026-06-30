@@ -1329,7 +1329,8 @@ struct MissionItemRow: View {
                 
                 if !item.notes.isEmpty {
                     Text(item.notes)
-                        .font(.system(size: 11, style: .italic))
+                        .font(.system(size: 11))
+                        .italic()
                         .foregroundColor(.gray.opacity(0.7))
                         .lineLimit(2)
                 }
