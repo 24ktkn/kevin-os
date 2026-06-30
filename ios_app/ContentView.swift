@@ -614,20 +614,18 @@ struct MealPrepView: View {
     }
     
     var completedItems: Set<String> {
-        get {
-            let list = completedItemsData.components(separatedBy: ",")
-            return Set(list.filter { !$0.isEmpty })
-        }
-        set {
-            completedItemsData = Array(newValue).joined(separator: ",")
-        }
+        let list = completedItemsData.components(separatedBy: ",")
+        return Set(list.filter { !$0.isEmpty })
     }
     
-    // Bridging completedItems to the subview
+    // Bridging completedItems to the subview in a non-mutating way by writing directly to UserDefaults
     var completedItemsBinding: Binding<Set<String>> {
         Binding(
             get: { self.completedItems },
-            set: { self.completedItems = $0 }
+            set: { newValue in
+                let str = Array(newValue).joined(separator: ",")
+                UserDefaults.standard.set(str, forKey: "completed_costco_items")
+            }
         )
     }
     
