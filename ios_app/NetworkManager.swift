@@ -214,4 +214,59 @@ class NetworkManager: ObservableObject {
             }
         }.resume()
     }
+    
+    func importHevyCSV(csvText: String, completion: @escaping (Bool, Int) -> Void) {
+        guard let url = URL(string: apiURLString) else {
+            completion(false, 0)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "action": "import_hevy_csv",
+            "csvText": csvText
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        } catch {
+            print("Payload serialization error: \(error)")
+            completion(false, 0)
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error importing Hevy CSV: \(error.localizedDescription)")
+                completion(false, 0)
+                return
+            }
+            
+            guard let data = data else {
+                completion(false, 0)
+                return
+            }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
+                    if let success = json["success"] as? Bool, success {
+                        let count = json["importedSets"] as? Int ?? 0
+                        // Re-fetch to sync status on MainActor
+                        Task { @MainActor in
+                            self.fetchData()
+                        }
+                        completion(true, count)
+                        return
+                    }
+                }
+            } catch {
+                print("JSON parsing error: \(error)")
+            }
+            
+            completion(false, 0)
+        }.resume()
+    }
 }

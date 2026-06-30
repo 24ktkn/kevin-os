@@ -3,6 +3,9 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var networkManager = NetworkManager()
     @State private var selectedTab = 0
+    @State private var showingImportAlert = false
+    @State private var importSuccessCount = 0
+    @State private var showingImportError = false
     
     // Core color palette matching premium web app
     let bgColor = Color(red: 0.06, green: 0.06, blue: 0.07) // #0F0F12
@@ -62,6 +65,51 @@ struct ContentView: View {
         .accentColor(neonGreen)
         .onAppear {
             networkManager.fetchData()
+        }
+        .onOpenURL { url in
+            // Handle CSV file shared from iOS Share Sheet
+            guard url.pathExtension.lowercased() == "csv" else { return }
+            
+            // Start accessing secure resource sandbox URL
+            if url.startAccessingSecurityScopedResource() {
+                defer { url.stopAccessingSecurityScopedResource() }
+                
+                do {
+                    let csvData = try Data(contentsOf: url)
+                    if let csvText = String(data: csvData, encoding: .utf8) {
+                        networkManager.importHevyCSV(csvText: csvText) { success, count in
+                            DispatchQueue.main.async {
+                                if success {
+                                    self.importSuccessCount = count
+                                    self.showingImportAlert = true
+                                } else {
+                                    self.showingImportError = true
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    print("Failed to read shared CSV file: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.showingImportError = true
+                    }
+                }
+            }
+        }
+        .alert(isPresented: $showingImportAlert) {
+            Alert(
+                title: Text("Hevy CSV Imported"),
+                message: Text("Success! Discovered and added \(importSuccessCount) new workout sets to your Google Sheet without any duplicates."),
+                dismissButton: .default(Text("Awesome"))
+            )
+        }
+        // Custom warning alert on failure
+        .alert(isPresented: $showingImportError) {
+            Alert(
+                title: Text("Import Failed"),
+                message: Text("We could not import your Hevy CSV file. Make sure it is a valid workout history file and your Apps Script is deployed."),
+                dismissButton: .default(Text("OK"))
+            )
         }
     }
 }

@@ -733,6 +733,136 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
     
+    // --- 4. HANDLE WORKOUT IMPORT FROM HEVY CSV SHARED ON IOS ---
+    if (action === "import_hevy_csv") {
+      var csvText = params.csvText;
+      if (!csvText) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "Missing csvText" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      var workoutSheet = ss.getSheetByName("workout_logs");
+      if (!workoutSheet) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "workout_logs sheet not found" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      // Clean up Windows carriage returns
+      var cleanCsv = csvText.replace(/\r/g, "");
+      var lines = cleanCsv.split("\n");
+      if (lines.length <= 1) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "Empty or invalid CSV file" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      // Parse headers
+      var headers = lines[0].split(",");
+      for (var h = 0; h < headers.length; h++) {
+        headers[h] = headers[h].replace(/^["']|["']$/g, "").trim().toLowerCase();
+      }
+      
+      var dateIdx = headers.indexOf("date");
+      var workoutNameIdx = headers.indexOf("workout name");
+      var exerciseIdx = headers.indexOf("exercise name");
+      var setIdx = headers.indexOf("set index");
+      var weightIdx = headers.indexOf("weight");
+      var repsIdx = headers.indexOf("reps");
+      var distanceIdx = headers.indexOf("distance");
+      var durationIdx = headers.indexOf("duration");
+      
+      if (dateIdx === -1 || exerciseIdx === -1) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "Invalid Hevy CSV format: missing Date or Exercise Name header" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      // Load existing records to deduplicate
+      var wData = workoutSheet.getDataRange().getValues();
+      var wHeaders = wData[0];
+      var wDateCol = wHeaders.indexOf("Date");
+      var wExeCol = wHeaders.indexOf("Exercise");
+      var wSetCol = wHeaders.indexOf("Set Number");
+      var wWeightCol = wHeaders.indexOf("Weight (lbs)");
+      var wRepsCol = wHeaders.indexOf("Reps");
+      var w1rmCol = wHeaders.indexOf("Estimated 1RM");
+      var wTimeCol = wHeaders.indexOf("Timestamp");
+      var wSplitCol = wHeaders.indexOf("Split Day");
+      var wDurCol = wHeaders.indexOf("Duration (Mins)");
+      var wDistCol = wHeaders.indexOf("Distance (km)");
+      
+      var existingKeys = {};
+      for (var r = 1; r < wData.length; r++) {
+        var key = formatDateString(wData[r][wDateCol]) + "_" + String(wData[r][wExeCol]).trim().toLowerCase() + "_" + wData[r][wSetCol];
+        existingKeys[key] = true;
+      }
+      
+      var newRowsCount = 0;
+      
+      for (var i = 1; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line) continue;
+        
+        // CSV parser supporting double quotes
+        var matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+        var row = [];
+        if (matches) {
+          row = matches.map(function(val) {
+            return val.replace(/^["']|["']$/g, "").trim();
+          });
+        } else {
+          row = line.split(",");
+        }
+        
+        if (row.length < Math.max(dateIdx, exerciseIdx)) continue;
+        
+        var rawDate = row[dateIdx];
+        var formattedDate = formatDateString(rawDate);
+        if (!formattedDate) continue;
+        
+        var exercise = row[exerciseIdx];
+        var setNum = parseInt(row[setIdx], 10) || 1;
+        
+        var key = formattedDate + "_" + exercise.toLowerCase() + "_" + setNum;
+        if (existingKeys[key]) continue; // Skip duplicates
+        
+        var workoutName = workoutNameIdx !== -1 ? row[workoutNameIdx] : "Hevy App Import";
+        var weight = weightIdx !== -1 ? parseFloat(row[weightIdx]) : 0.0;
+        var reps = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : 0;
+        
+        // Hevy duration is exported in seconds, convert to minutes
+        var duration = durationIdx !== -1 ? parseFloat(row[durationIdx]) / 60.0 : 0.0;
+        var distance = distanceIdx !== -1 ? parseFloat(row[distanceIdx]) : 0.0;
+        
+        // Auto convert miles to km
+        if (exercise.toLowerCase().indexOf("treadmill") !== -1 && distance > 0) {
+          distance = distance * 1.60934;
+        }
+        
+        var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
+        
+        var newRow = [];
+        for (var c = 0; c < wHeaders.length; c++) {
+          if (c === wDateCol) newRow.push(formattedDate);
+          else if (c === wSplitCol) newRow.push(workoutName);
+          else if (c === wExeCol) newRow.push(exercise);
+          else if (c === wSetCol) newRow.push(setNum);
+          else if (c === wWeightCol) newRow.push(weight);
+          else if (c === wRepsCol) newRow.push(reps);
+          else if (c === w1rmCol) newRow.push(est1rm);
+          else if (c === wTimeCol) newRow.push("12:00:00");
+          else if (c === wDurCol) newRow.push(Math.round(duration * 10) / 10);
+          else if (c === wDistCol) newRow.push(Math.round(distance * 100) / 100);
+          else newRow.push("");
+        }
+        
+        workoutSheet.appendRow(newRow);
+        existingKeys[key] = true;
+        newRowsCount++;
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({ success: true, importedSets: newRowsCount }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action or parameters." }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
