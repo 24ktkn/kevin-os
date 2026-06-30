@@ -761,17 +761,29 @@ function doPost(e) {
         headers[h] = headers[h].replace(/^["']|["']$/g, "").trim().toLowerCase();
       }
       
-      var dateIdx = headers.indexOf("date");
-      var workoutNameIdx = headers.indexOf("workout name");
-      var exerciseIdx = headers.indexOf("exercise name");
-      var setIdx = headers.indexOf("set index");
-      var weightIdx = headers.indexOf("weight");
-      var repsIdx = headers.indexOf("reps");
-      var distanceIdx = headers.indexOf("distance");
-      var durationIdx = headers.indexOf("duration");
+      var dateIdx = -1;
+      var workoutNameIdx = -1;
+      var exerciseIdx = -1;
+      var setIdx = -1;
+      var weightIdx = -1;
+      var repsIdx = -1;
+      var distanceIdx = -1;
+      var durationIdx = -1;
+      
+      for (var h = 0; h < headers.length; h++) {
+        var head = headers[h];
+        if (head.indexOf("date") !== -1 || head.indexOf("start") !== -1 || head.indexOf("created") !== -1) dateIdx = h;
+        if (head.indexOf("workout") !== -1 || head.indexOf("title") !== -1) workoutNameIdx = h;
+        if (head.indexOf("exercise") !== -1) exerciseIdx = h;
+        if (head.indexOf("set") !== -1 && head.indexOf("type") === -1) setIdx = h;
+        if (head.indexOf("weight") !== -1) weightIdx = h;
+        if (head.indexOf("rep") !== -1) repsIdx = h;
+        if (head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) distanceIdx = h;
+        if (head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) durationIdx = h;
+      }
       
       if (dateIdx === -1 || exerciseIdx === -1) {
-        return ContentService.createTextOutput(JSON.stringify({ error: "Invalid Hevy CSV format: missing Date or Exercise Name header" }))
+        return ContentService.createTextOutput(JSON.stringify({ error: "Invalid Hevy CSV format: missing Date or Exercise Name header. Found: " + headers.join(", ") }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       
