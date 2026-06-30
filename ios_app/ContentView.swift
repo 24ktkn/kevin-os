@@ -67,9 +67,6 @@ struct ContentView: View {
             networkManager.fetchData()
         }
         .onOpenURL { url in
-            // Handle CSV file shared from iOS Share Sheet
-            guard url.pathExtension.lowercased() == "csv" else { return }
-            
             // Accessing security-scoped resource is optional depending on the origin of the URL.
             // We start accessing it, but we fallback to reading directly if it's not security-scoped.
             let isSecurityScoped = url.startAccessingSecurityScopedResource()
