@@ -111,44 +111,7 @@ def render_bodyweight_tracker(key_prefix):
         if not valid_bw.empty:
             latest_bw = float(valid_bw.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
             
-    st.markdown(f"##### ⚖️ Bodyweight Tracker (Current Baseline: **{latest_bw} lbs**)")
-    bw_col1, bw_col2 = st.columns([3, 1])
-    with bw_col1:
-        new_bw = st.number_input("Log current weight (lbs):", min_value=50.0, max_value=500.0, value=latest_bw, step=0.5, key=f"{key_prefix}_bw_input")
-    with bw_col2:
-        st.write("<div style='height:28px;'></div>", unsafe_allow_html=True) # spacing
-        if st.button("Log Weight", key=f"{key_prefix}_bw_btn"):
-            today_dt = pd.to_datetime(datetime.date.today())
-            df_bio_copy = df_bio.copy()
-            df_bio_copy["Date"] = pd.to_datetime(df_bio_copy["Date"])
-            
-            # Check if today's date already exists
-            matching_idx = df_bio_copy[df_bio_copy["Date"].dt.date == today_dt.date()]
-            if not matching_idx.empty:
-                idx = matching_idx.index[0]
-                df_bio_copy.at[idx, "Bodyweight"] = new_bw
-            else:
-                new_row = {
-                    "Date": today_dt,
-                    "HRV": 0,
-                    "Sleep Duration": 0.0,
-                    "RHR": 0,
-                    "Steps": 0,
-                    "Bodyweight": new_bw
-                }
-                df_bio_copy = pd.concat([df_bio_copy, pd.DataFrame([new_row])], ignore_index=True)
-            
-            # Push to sheet
-            push_bio = df_bio_copy.copy()
-            push_bio["Date"] = push_bio["Date"].dt.strftime('%Y-%m-%d')
-            try:
-                conn.update(data=push_bio, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="health_metrics")
-                st.cache_data.clear()
-                st.session_state.master_bio_df = df_bio_copy
-                st.success(f"Logged bodyweight: {new_bw} lbs!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed to log weight: {e}")
+    st.markdown(f"##### ⚖️ Current Weight: **{latest_bw} lbs** (Synced from Health App)")
 
 
 # --- MASTER EXERCISE DICTIONARY ---
