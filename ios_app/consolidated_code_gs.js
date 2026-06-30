@@ -863,6 +863,7 @@ function doPost(e) {
       // --- NEW WORKOUTS PARSING ---
       var newRowsCount = 0;
       var newRowsToAdd = [];
+      var setCounter = {}; // Dynamically count sets sequentially per exercise per date (bypassing non-numeric strings)
       
       for (var i = 1; i < lines.length; i++) {
         var line = lines[i].trim();
@@ -876,24 +877,43 @@ function doPost(e) {
         if (!formattedDate) continue;
         
         var exercise = row[exerciseIdx];
-        var setNum = parseInt(row[setIdx], 10) || 1;
+        
+        // Generate set number dynamically (cumcount + 1)
+        var setKey = formattedDate + "_" + exercise.toLowerCase();
+        if (!setCounter[setKey]) {
+          setCounter[setKey] = 1;
+        } else {
+          setCounter[setKey]++;
+        }
+        var setNum = setCounter[setKey];
         
         var key = formattedDate + "_" + exercise.toLowerCase() + "_" + setNum;
-        if (existingKeys[key]) continue; // Deduplicate against existing + keeping keys
+        if (existingKeys[key]) continue; // Deduplicate
         
         var workoutName = workoutNameIdx !== -1 ? row[workoutNameIdx] : "Hevy App Import";
-        var weight = weightIdx !== -1 ? parseFloat(row[weightIdx]) : 0.0;
-        var reps = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : 0;
         
-        var duration = durationIdx !== -1 ? parseFloat(row[durationIdx]) / 60.0 : 0.0;
-        var distance = distanceIdx !== -1 ? parseFloat(row[distanceIdx]) : 0.0;
+        // Defensive parsing to write empty cell instead of NaN (#NUM!)
+        var weightRaw = weightIdx !== -1 ? parseFloat(row[weightIdx]) : NaN;
+        var weight = isNaN(weightRaw) ? "" : weightRaw;
+        
+        var repsRaw = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : NaN;
+        var reps = isNaN(repsRaw) ? "" : repsRaw;
+        
+        var durationRaw = durationIdx !== -1 ? parseFloat(row[durationIdx]) / 60.0 : NaN;
+        var duration = isNaN(durationRaw) ? "" : Math.round(durationRaw * 10) / 10;
+        
+        var distanceRaw = distanceIdx !== -1 ? parseFloat(row[distanceIdx]) : NaN;
+        var distance = isNaN(distanceRaw) ? "" : Math.round(distanceRaw * 100) / 100;
         
         // Auto convert miles to km
-        if (exercise.toLowerCase().indexOf("treadmill") !== -1 && distance > 0) {
-          distance = distance * 1.60934;
+        if (exercise.toLowerCase().indexOf("treadmill") !== -1 && distance !== "") {
+          distance = Math.round(distance * 1.60934 * 100) / 100;
         }
         
-        var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
+        var est1rm = "";
+        if (weight !== "" && reps !== "") {
+          est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
+        }
         
         // Extract timestamp from rawDate
         var timestamp = "12:00:00";
@@ -912,8 +932,8 @@ function doPost(e) {
           else if (c === wRepsCol) newRow.push(reps);
           else if (c === w1rmCol) newRow.push(est1rm);
           else if (c === wTimeCol) newRow.push(timestamp);
-          else if (c === wDurCol) newRow.push(Math.round(duration * 10) / 10);
-          else if (c === wDistCol) newRow.push(Math.round(distance * 100) / 100);
+          else if (c === wDurCol) newRow.push(duration);
+          else if (c === wDistCol) newRow.push(distance);
           else newRow.push("");
         }
         
