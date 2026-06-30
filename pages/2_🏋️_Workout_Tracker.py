@@ -28,6 +28,29 @@ def parse_sleep_duration(val):
     except ValueError:
         return 0.0
 
+def parse_workout_duration(val):
+    if pd.isna(val) or val == "":
+        return 0.0
+    val_str = str(val).strip()
+    if ":" in val_str:
+        parts = val_str.split(":")
+        try:
+            if len(parts) == 3:
+                h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                if h >= 24 or (h > 5 and m == 0 and s == 0):
+                    return float(h) + (m / 60.0)
+                return h * 60.0 + m + (s / 60.0)
+            elif len(parts) == 2:
+                m, s = int(parts[0]), float(parts[1])
+                return m + (s / 60.0)
+        except ValueError:
+            pass
+    try:
+        return float(val_str)
+    except ValueError:
+        return 0.0
+
+
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Custom PPL Fitness Tracker", layout="wide", initial_sidebar_state="expanded")
 
@@ -79,7 +102,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- ENGINE 1: WORKOUT LOGS LOCAL MEMORY CACHE ---
 if "master_workout_df" not in st.session_state:
     raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs", ttl=0)
-    required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Distance (km)"]
+    required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Gym Duration (Mins)", "Distance (km)"]
     for col in required_cols:
         if col not in raw_df.columns: raw_df[col] = ""
         
@@ -87,7 +110,8 @@ if "master_workout_df" not in st.session_state:
     df_logs["Weight (lbs)"] = pd.to_numeric(df_logs["Weight (lbs)"], errors='coerce').fillna(0.0)
     df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
     df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
-    df_logs["Duration (Mins)"] = pd.to_numeric(df_logs["Duration (Mins)"], errors='coerce').fillna(0.0)
+    df_logs["Duration (Mins)"] = df_logs["Duration (Mins)"].apply(parse_workout_duration)
+    df_logs["Gym Duration (Mins)"] = df_logs["Gym Duration (Mins)"].apply(parse_workout_duration)
     df_logs["Distance (km)"] = pd.to_numeric(df_logs["Distance (km)"], errors='coerce').fillna(0.0)
     df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
     df_logs = df_logs[df_logs["Date"].notna()]
@@ -103,9 +127,13 @@ if "master_workout_df" not in st.session_state:
 
 df_logs = st.session_state.master_workout_df
 
-# Ensure Distance column exists in case of cached session state
+# Ensure columns exist in case of cached session state
 if "Distance (km)" not in df_logs.columns:
     df_logs["Distance (km)"] = 0.0
+if "Gym Duration (Mins)" not in df_logs.columns:
+    df_logs["Gym Duration (Mins)"] = 0.0
+df_logs["Duration (Mins)"] = df_logs["Duration (Mins)"].apply(parse_workout_duration)
+df_logs["Gym Duration (Mins)"] = df_logs["Gym Duration (Mins)"].apply(parse_workout_duration)
 
 # --- ENGINE 2: BIOMETRICS LOCAL MEMORY CACHE ---
 if "master_bio_df" not in st.session_state:
@@ -117,6 +145,7 @@ if "master_bio_df" not in st.session_state:
         df_bio_clean["Date"] = pd.to_datetime(df_bio_clean["Date"].astype(str).str.strip(), errors='coerce')
         df_bio_clean = df_bio_clean[df_bio_clean["Date"].notna()]
         df_bio_clean["Bodyweight"] = pd.to_numeric(df_bio_clean["Bodyweight"], errors='coerce').fillna(0.0)
+        df_bio_clean["Sleep Duration"] = df_bio_clean["Sleep Duration"].apply(parse_sleep_duration)
         st.session_state.master_bio_df = df_bio_clean
     except Exception:
         st.session_state.master_bio_df = pd.DataFrame(columns=["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight"])
@@ -125,6 +154,8 @@ df_bio = st.session_state.master_bio_df
 if "Bodyweight" not in df_bio.columns:
     df_bio["Bodyweight"] = 0.0
 df_bio["Bodyweight"] = pd.to_numeric(df_bio["Bodyweight"], errors='coerce').fillna(0.0)
+if "Sleep Duration" in df_bio.columns:
+    df_bio["Sleep Duration"] = df_bio["Sleep Duration"].apply(parse_sleep_duration)
 
 # --- REUSABLE BODYWEIGHT TRACKER WIDGET ---
 def render_bodyweight_tracker(key_prefix):
@@ -380,11 +411,26 @@ with tab_analytics:
 
         df_analytics["Individual Muscle Target"] = df_analytics.apply(resolve_anatomy, axis=1)
         
-        if "Duration (Mins)" in df_analytics.columns:
-            df_unique_workouts = df_analytics.groupby(["Date", "Timestamp", "Split Day"])["Duration (Mins)"].max().reset_index()
-            total_gym_minutes = int(df_unique_workouts["Duration (Mins)"].sum())
+        # Calculate gym minutes from Gym Duration (Mins) with fallback to Duration (Mins)
+        if "Gym Duration (Mins)" in df_analytics.columns:
+            # Parse both columns as floats securely
+            df_analytics["Temp_Gym_Dur"] = df_analytics["Gym Duration (Mins)"].apply(parse_workout_duration)
+            df_analytics["Temp_Cardio_Dur"] = df_analytics["Duration (Mins)"].apply(parse_workout_duration)
+            
+            # Use Gym Duration as primary; if 0, fall back to Cardio/Exercise Duration
+            df_analytics["Temp_Final_Dur"] = df_analytics.apply(
+                lambda r: r["Temp_Cardio_Dur"] if r["Temp_Gym_Dur"] == 0 else r["Temp_Gym_Dur"], axis=1
+            )
+            
+            df_unique_workouts = df_analytics.groupby("Date")["Temp_Final_Dur"].max().reset_index()
+            total_gym_minutes = int(df_unique_workouts["Temp_Final_Dur"].sum())
+        elif "Duration (Mins)" in df_analytics.columns:
+            df_analytics["Temp_Cardio_Dur"] = df_analytics["Duration (Mins)"].apply(parse_workout_duration)
+            df_unique_workouts = df_analytics.groupby("Date")["Temp_Cardio_Dur"].max().reset_index()
+            total_gym_minutes = int(df_unique_workouts["Temp_Cardio_Dur"].sum())
         else:
             total_gym_minutes = 0
+
 
         total_volume_moved = int(df_analytics["Volume"].sum())
         total_workouts_logged = int(df_analytics["Date"].dt.date.nunique())
@@ -524,6 +570,7 @@ with tab_ledger:
                 h_end = next((c for c in df_hevy.columns if "end_time" in c or "end" in c), None)
                 h_dist = next((c for c in df_hevy.columns if "distance" in c or "dist" in c), None)
                 h_secs = next((c for c in df_hevy.columns if ("second" in c or "duration" in c) and "workout" not in c), None)
+                h_workout_dur = next((c for c in df_hevy.columns if "workout duration" in c or "workout_duration" in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
@@ -595,41 +642,103 @@ with tab_ledger:
                         # Use set-specific duration (seconds) if available in Hevy CSV for cardio pace calculations
                         raw_secs = row[h_secs] if h_secs and pd.notna(row[h_secs]) else ""
                         cardio_mins = parse_duration_to_mins(raw_secs)
-                        if cardio_mins > 0:
-                            dur_val = cardio_mins
-                        else:
-                            dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
                         
-                        if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
+                        dur_val = cardio_mins if cardio_mins > 0 else 0.0
+                        
+                        # 1. Parse overall workout duration from "Workout Duration" column
+                        gym_dur_val = 0.0
+                        if h_workout_dur:
+                            raw_workout_dur = row[h_workout_dur] if pd.notna(row[h_workout_dur]) else ""
+                            gym_dur_val = parse_duration_to_mins(raw_workout_dur)
+                            
+                        # 2. Fallback to start/end time difference (computed_dur)
+                        if gym_dur_val == 0.0 and 'computed_dur' in df_hevy.columns:
+                            gym_dur_val = float(row['computed_dur'])
+                            
+                        # 3. Apply conversions / fallback
+                        if gym_dur_val > 240:
+                            gym_dur_val = round(gym_dur_val / 60.0, 1)
+                        if gym_dur_val == 0.0 and dur_val > 0.0:
+                            gym_dur_val = dur_val
                         
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
                         raw_dist = row[h_dist] if h_dist and pd.notna(row[h_dist]) else ""
                         dist_val = parse_distance_to_km(raw_dist)
-                        parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val, "Distance (km)": dist_val})
+                        parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val, "Gym Duration (Mins)": gym_dur_val, "Distance (km)": dist_val})
                     
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
                     
-                    # --- 🛡️ COMPOSITE MATRIX DEDUPLICATION ENGINE ---
-                    combined_df = pd.concat([df_logs, hevy_parsed_df], ignore_index=True)
-                    combined_df["Date"] = pd.to_datetime(combined_df["Date"]).dt.normalize()
-                    combined_df["Exercise"] = combined_df["Exercise"].astype(str).str.strip()
-                    combined_df["Set Number"] = combined_df["Set Number"].astype(int)
-                    combined_df["Distance (km)"] = pd.to_numeric(combined_df["Distance (km)"], errors='coerce').fillna(0.0)
+                    # --- 🛡️ COMPOSITE MATRIX DEDUPLICATION & MERGE ENGINE ---
+                    df_logs_copy = df_logs.copy()
+                    df_logs_copy["Date"] = pd.to_datetime(df_logs_copy["Date"]).dt.normalize()
+                    df_logs_copy["Exercise"] = df_logs_copy["Exercise"].astype(str).str.strip()
+                    df_logs_copy["Set Number"] = df_logs_copy["Set Number"].astype(int)
+                    df_logs_copy["Distance (km)"] = pd.to_numeric(df_logs_copy["Distance (km)"], errors='coerce').fillna(0.0)
+                    df_logs_copy["Duration (Mins)"] = df_logs_copy["Duration (Mins)"].apply(parse_workout_duration)
+                    df_logs_copy["Gym Duration (Mins)"] = df_logs_copy["Gym Duration (Mins)"].apply(parse_workout_duration)
                     
-                    deduped_df = combined_df.drop_duplicates(subset=["Date", "Exercise", "Set Number"], keep="first").reset_index(drop=True)
-                    new_rows_discovered = len(deduped_df) - len(df_logs)
+                    hevy_parsed_df["Date"] = pd.to_datetime(hevy_parsed_df["Date"]).dt.normalize()
+                    hevy_parsed_df["Exercise"] = hevy_parsed_df["Exercise"].astype(str).str.strip()
+                    hevy_parsed_df["Set Number"] = hevy_parsed_df["Set Number"].astype(int)
                     
-                    st.success(f"Processed CSV! Found {len(hevy_parsed_df)} parsed sets. ({new_rows_discovered} are brand-new additions).")
+                    new_rows = []
+                    updated_rows_count = 0
+                    
+                    for _, row in hevy_parsed_df.iterrows():
+                        # Find match in existing ledger
+                        match_idx = df_logs_copy[(df_logs_copy["Date"] == row["Date"]) & 
+                                                 (df_logs_copy["Exercise"] == row["Exercise"]) & 
+                                                 (df_logs_copy["Set Number"] == row["Set Number"])].index
+                        if len(match_idx) > 0:
+                            idx = match_idx[0]
+                            changed = False
+                            
+                            # Merge distance
+                            csv_dist = float(row["Distance (km)"])
+                            exist_dist = float(df_logs_copy.at[idx, "Distance (km)"])
+                            if exist_dist == 0.0 and csv_dist > 0.0:
+                                df_logs_copy.at[idx, "Distance (km)"] = csv_dist
+                                changed = True
+                                
+                            # Merge cardio duration
+                            csv_dur = float(row["Duration (Mins)"])
+                            exist_dur = float(df_logs_copy.at[idx, "Duration (Mins)"])
+                            if exist_dur == 0.0 and csv_dur > 0.0:
+                                df_logs_copy.at[idx, "Duration (Mins)"] = csv_dur
+                                changed = True
+                                
+                            # Merge gym duration
+                            csv_gym_dur = float(row["Gym Duration (Mins)"])
+                            exist_gym_dur = float(df_logs_copy.at[idx, "Gym Duration (Mins)"])
+                            if exist_gym_dur == 0.0 and csv_gym_dur > 0.0:
+                                df_logs_copy.at[idx, "Gym Duration (Mins)"] = csv_gym_dur
+                                changed = True
+                                
+                            if changed:
+                                updated_rows_count += 1
+                        else:
+                            new_rows.append(row)
+                            
+                    new_rows_df = pd.DataFrame(new_rows)
+                    if not new_rows_df.empty:
+                        deduped_df = pd.concat([df_logs_copy, new_rows_df], ignore_index=True)
+                    else:
+                        deduped_df = df_logs_copy
+                        
+                    new_rows_discovered = len(new_rows_df)
+                    
+                    st.success(f"Processed CSV! Found {len(hevy_parsed_df)} parsed sets. (Discovered {new_rows_discovered} brand-new sets, updated {updated_rows_count} existing sets with new durations/distances).")
                     st.dataframe(hevy_parsed_df, use_container_width=True)
                     
-                    if new_rows_discovered > 0:
-                        if st.button("🔥 Append All Hevy Data & Push to Cloud Sheet"):
+                    if new_rows_discovered > 0 or updated_rows_count > 0:
+                        if st.button("🔥 Save Hevy Data & Push to Cloud Sheet"):
                             push_df = deduped_df.copy()
                             push_df["Date"] = push_df["Date"].dt.strftime('%Y-%m-%d')
+                            push_df = push_df.fillna("")
                             conn.update(data=push_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
                             st.cache_data.clear()
                             st.session_state.master_workout_df = deduped_df
-                            st.success(f"✅ Injected {new_rows_discovered} brand-new rows! Duplicates ignored.")
+                            st.success(f"✅ Injected {new_rows_discovered} new rows and updated {updated_rows_count} existing rows! Cloud sheet synchronized successfully.")
                             st.rerun()
                     else:
                         st.warning("⚡ All workouts inside this file have already been permanently saved to your sheet database.")
@@ -666,7 +775,7 @@ with tab_ledger:
             
             confirm = st.checkbox("I confirm that I want to delete ALL workout logs permanently.", key="confirm_clear_all_logs")
             if st.button("🔥 Permanently Clear All Workout Logs", disabled=not confirm):
-                empty_df = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Distance (km)"])
+                empty_df = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Gym Duration (Mins)", "Distance (km)"])
                 try:
                     conn.update(data=empty_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
                     st.cache_data.clear()
@@ -739,9 +848,10 @@ with tab_recovery:
         col1.metric("Latest HRV", f"{int(latest_day['HRV'])} ms")
         
         latest_sleep = latest_day['Sleep Duration']
-        if pd.notna(latest_sleep) and latest_sleep > 0:
-            ls_hours = int(latest_sleep)
-            ls_minutes = int(round((latest_sleep - ls_hours) * 60))
+        latest_sleep_numeric = parse_sleep_duration(latest_sleep)
+        if latest_sleep_numeric > 0:
+            ls_hours = int(latest_sleep_numeric)
+            ls_minutes = int(round((latest_sleep_numeric - ls_hours) * 60))
             if ls_minutes == 60:
                 ls_hours += 1
                 ls_minutes = 0
