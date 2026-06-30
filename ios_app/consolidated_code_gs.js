@@ -445,7 +445,7 @@ function doGet(e) {
         var wDurCol = wHeaders.indexOf("Duration (Mins)");
         var wDistCol = wHeaders.indexOf("Distance (km)");
         
-        var wStartRow = Math.max(1, wData.length - 20);
+        var wStartRow = 1;
         for (var w = wData.length - 1; w >= wStartRow; w--) {
           var wDate = formatDateString(wData[w][wDateCol]);
           if (wDate) {

@@ -40,7 +40,7 @@ struct ContentView: View {
                 .tag(0)
             
             // --- TAB 2: WORKOUT WEBVIEW ---
-            WorkoutWebView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen)
+            WorkoutWebView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor)
                 .tabItem {
                     Image(systemName: "dumbbell.fill")
                     Text("Workouts")
@@ -285,12 +285,246 @@ struct OSHubView: View {
     }
 }
 
+struct WeeklyVolume: Identifiable {
+    let id = UUID()
+    let label: String
+    let volume: Double
+}
+
+struct PersonalRecord: Identifiable {
+    let id = UUID()
+    let exercise: String
+    let maxWeight: Double
+    let est1RM: Double
+}
+
+struct MuscleRecovery: Identifiable {
+    let id = UUID()
+    let name: String
+    let lastTrainedStr: String
+    let status: String
+    let percentage: Int
+    let recoveryColor: Color
+}
+
 struct WorkoutWebView: View {
     @ObservedObject var networkManager: NetworkManager
     let bgColor: Color
     let cardBgColor: Color
     let cardBorderColor: Color
     let neonGreen: Color
+    let cyanColor: Color
+    let yellowColor: Color
+    let redColor: Color
+    let lavenderColor: Color
+    
+    @State private var selectedSubview = 0 // 0: Analytics, 1: Recovery & Readiness
+    
+    // NATIVE CALCULATIONS
+    var totalWorkoutsLogged: Int {
+        Set(networkManager.recentWorkouts.map { $0.date }).count
+    }
+    
+    var totalGymMinutes: Int {
+        let grouped = Dictionary(grouping: networkManager.recentWorkouts, by: { $0.date })
+        var total = 0.0
+        for (_, sets) in grouped {
+            let maxDur = sets.map { $0.duration }.max() ?? 0.0
+            total += maxDur
+        }
+        return Int(total)
+    }
+    
+    var totalVolumeMoved: Int {
+        let bodyweight = networkManager.biometrics.weight > 0 ? networkManager.biometrics.weight : 170.0
+        var total = 0.0
+        for wSet in networkManager.recentWorkouts {
+            let exe = wSet.exercise.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let isCardio = exe.contains("treadmill") || exe.contains("run") || exe.contains("walk") || exe.contains("bike") || exe.contains("cycle") || exe.contains("elliptical") || exe.contains("cardio")
+            if isCardio { continue }
+            
+            let isBodyweight = exe.contains("pull up") || exe.contains("pull-up") || exe.contains("chin up") || exe.contains("chin-up") || exe.contains("knee raise") || exe.contains("leg raise") || exe.contains("push up") || exe.contains("pushup") || exe.contains("dip") || exe.contains("bodyweight") || wSet.weight == 0
+            
+            let effectiveWeight = isBodyweight ? bodyweight : wSet.weight
+            total += effectiveWeight * Double(wSet.reps)
+        }
+        return Int(total)
+    }
+    
+    var exercisesTrackedCount: Int {
+        Set(networkManager.recentWorkouts.map { $0.exercise.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }).count
+    }
+    
+    var weeklyVolumes: [WeeklyVolume] {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "America/Toronto")
+        
+        let bodyweight = networkManager.biometrics.weight > 0 ? networkManager.biometrics.weight : 170.0
+        
+        var weeklySums: [String: Double] = [:]
+        
+        for wSet in networkManager.recentWorkouts {
+            guard let date = formatter.date(from: wSet.date) else { continue }
+            let weekOfYear = calendar.component(.weekOfYear, from: date)
+            let year = calendar.component(.year, from: date)
+            let weekKey = String(format: "%d-W%02d", year, weekOfYear)
+            
+            let exe = wSet.exercise.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let isCardio = exe.contains("treadmill") || exe.contains("run") || exe.contains("walk") || exe.contains("bike") || exe.contains("cycle") || exe.contains("elliptical") || exe.contains("cardio")
+            if isCardio { continue }
+            
+            let isBodyweight = exe.contains("pull up") || exe.contains("pull-up") || exe.contains("chin up") || exe.contains("chin-up") || exe.contains("knee raise") || exe.contains("leg raise") || exe.contains("push up") || exe.contains("pushup") || exe.contains("dip") || exe.contains("bodyweight") || wSet.weight == 0
+            
+            let effectiveWeight = isBodyweight ? bodyweight : wSet.weight
+            let setVolume = effectiveWeight * Double(wSet.reps)
+            
+            weeklySums[weekKey, default: 0.0] += setVolume
+        }
+        
+        let sortedKeys = weeklySums.keys.sorted().suffix(5)
+        var result: [WeeklyVolume] = []
+        for key in sortedKeys {
+            let parts = key.components(separatedBy: "-W")
+            let label = parts.count > 1 ? "Wk \(parts[1])" : key
+            result.append(WeeklyVolume(label: label, volume: weeklySums[key] ?? 0.0))
+        }
+        
+        if result.isEmpty {
+            return [
+                WeeklyVolume(label: "Wk 1", volume: 0.0),
+                WeeklyVolume(label: "Wk 2", volume: 0.0)
+            ]
+        }
+        return result
+    }
+    
+    var personalRecords: [PersonalRecord] {
+        var recordsMap: [String: (Double, Double)] = [:]
+        
+        for wSet in networkManager.recentWorkouts {
+            let exe = wSet.exercise
+            let exeLower = exe.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let isCardio = exeLower.contains("treadmill") || exeLower.contains("run") || exeLower.contains("walk") || exeLower.contains("bike") || exeLower.contains("cycle") || exeLower.contains("elliptical") || exeLower.contains("cardio")
+            if isCardio { continue }
+            
+            let est1RM = wSet.reps > 1 ? wSet.weight * (1.0 + Double(wSet.reps)/30.0) : wSet.weight
+            
+            let existing = recordsMap[exe] ?? (0.0, 0.0)
+            let newMaxWeight = max(existing.0, wSet.weight)
+            let newMax1RM = max(existing.1, est1RM)
+            
+            recordsMap[exe] = (newMaxWeight, newMax1RM)
+        }
+        
+        return recordsMap.map { PersonalRecord(exercise: $0.key, maxWeight: $0.value.0, est1RM: $0.value.1) }
+            .sorted(by: { $0.est1RM > $1.est1RM })
+    }
+    
+    var muscleRecoveries: [MuscleRecovery] {
+        let muscleTargets = ["Chest", "Shoulders", "Triceps", "Back", "Biceps", "Quads", "Hamstrings & Glutes", "Calves", "Abs/Core"]
+        var recoveries: [MuscleRecovery] = []
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "America/Toronto")
+        
+        let now = Date()
+        
+        for muscle in muscleTargets {
+            let matchingSets = networkManager.recentWorkouts.filter { wSet in
+                let resolved = resolveAnatomy(exercise: wSet.exercise, splitDay: "")
+                return resolved == muscle
+            }
+            
+            if matchingSets.isEmpty {
+                recoveries.append(MuscleRecovery(
+                    name: muscle,
+                    lastTrainedStr: "No record found",
+                    status: "Optimized (100% Repaired)",
+                    percentage: 100,
+                    recoveryColor: neonGreen
+                ))
+                continue
+            }
+            
+            let dates = matchingSets.compactMap { formatter.date(from: $0.date) }
+            guard let latestDate = dates.max() else {
+                recoveries.append(MuscleRecovery(
+                    name: muscle,
+                    lastTrainedStr: "No record found",
+                    status: "Optimized (100% Repaired)",
+                    percentage: 100,
+                    recoveryColor: neonGreen
+                ))
+                continue
+            }
+            
+            let diffSeconds = now.timeIntervalSince(latestDate)
+            let hoursSince = max(0, Int(diffSeconds / 3600.0))
+            
+            let outFormatter = DateFormatter()
+            outFormatter.dateFormat = "E, MMM d"
+            let lastTrainedStr = "Last hit: \(outFormatter.string(from: latestDate))"
+            
+            var status = ""
+            var percentage = 100
+            var color: Color = neonGreen
+            
+            if hoursSince >= 48 {
+                status = "Optimized (100% Repaired)"
+                percentage = 100
+                color = neonGreen
+            } else if hoursSince >= 24 {
+                percentage = Int((Double(hoursSince) / 48.0) * 100.0)
+                status = "Rebuilding (\(percentage)%)"
+                color = .orange
+            } else {
+                percentage = max(5, Int((Double(hoursSince) / 48.0) * 100.0))
+                status = "Fatigued (\(percentage)%)"
+                color = .red
+            }
+            
+            recoveries.append(MuscleRecovery(
+                name: muscle,
+                lastTrainedStr: lastTrainedStr,
+                status: status,
+                percentage: percentage,
+                recoveryColor: color
+            ))
+        }
+        return recoveries
+    }
+    
+    func resolveAnatomy(exercise: String, splitDay: String) -> String {
+        let exe = exercise.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["knee raise", "ab ", "ab,", "crunch", "woodchopper", "twist", "plank", "leg raise"].contains(where: { exe.contains($0) }) {
+            return "Abs/Core"
+        }
+        if ["squat", "leg press", "lunge", "quad", "leg extension"].contains(where: { exe.contains($0) }) {
+            if exe.contains("tricep") { return "Triceps" }
+            return "Quads"
+        }
+        if ["rdl", "romanian", "leg curl", "hamstring", "glute", "hip thrust"].contains(where: { exe.contains($0) }) {
+            if exe.contains("bicep") || exe.contains("hammer") { return "Biceps" }
+            return "Hamstrings & Glutes"
+        }
+        if exe.contains("calf") || exe.contains("calves") { return "Calves" }
+        if ["bench", "fly", "pushup", "chest", "pec"].contains(where: { exe.contains($0) }) { return "Chest" }
+        if ["lateral raise", "overhead press", "shoulder", "delt", "face pull", "military"].contains(where: { exe.contains($0) }) { return "Shoulders" }
+        if exe.contains("tricep") || exe.contains("kickback") || exe.contains("pushdown") { return "Triceps" }
+        if ["pull-up", "row", "lat", "chin-up", "back", "deadlift"].contains(where: { exe.contains($0) }) { return "Back" }
+        if exe.contains("bicep") || exe.contains("curl") || exe.contains("hammer") { return "Biceps" }
+        if ["treadmill", "run", "walk", "bike", "cardio"].contains(where: { exe.contains($0) }) { return "Cardio" }
+        
+        let split = splitDay.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if split.contains("push") { return "Chest" }
+        if split.contains("pull") { return "Back" }
+        if split.contains("leg") { return "Quads" }
+        if split.contains("cardio") { return "Cardio" }
+        return "Other"
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -315,10 +549,228 @@ struct WorkoutWebView: View {
             .padding(.bottom, 8)
             .background(bgColor)
             
-            // Embedded WebView
-            WebView(urlString: "https://24ktkn.streamlit.app/Workout_Tracker?embed=true")
-                .background(bgColor)
-                .edgesIgnoringSafeArea(.bottom)
+            // Sub-navigation picker
+            Picker("View Selection", selection: $selectedSubview) {
+                Text("📈 Analytics").tag(0)
+                Text("❤️ Recovery").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+            .background(bgColor)
+            
+            ScrollView {
+                VStack(spacing: 20) {
+                    if selectedSubview == 0 {
+                        // --- SUBSCENE 1: PREMIUM ANALYTICS ---
+                        
+                        // Stat Cards Grid
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            // Total Workouts
+                            VStack(alignment: .center, spacing: 6) {
+                                Text("\(totalWorkoutsLogged)")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(neonGreen)
+                                Text("Total Workouts")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Time Invested
+                            VStack(alignment: .center, spacing: 6) {
+                                Text("\(totalGymMinutes / 60)h \(totalGymMinutes % 60)m")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(cyanColor)
+                                Text("Time Invested")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Total Tonnage
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(String(format: "%dk lbs", totalVolumeMoved / 1000))
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(yellowColor)
+                                Text("Hevy Volume")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Exercises Tracked
+                            VStack(alignment: .center, spacing: 6) {
+                                Text("\(exercisesTrackedCount)")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(lavenderColor)
+                                Text("Exercises")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                        }
+                        
+                        // Volume Trend Chart
+                        let volumes = weeklyVolumes
+                        let maxVol = volumes.map { $0.volume }.max() ?? 1.0
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Weekly Volume Progression (lbs)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.gray)
+                                .textCase(.uppercase)
+                            
+                            HStack(alignment: .bottom, spacing: 12) {
+                                ForEach(volumes) { item in
+                                    VStack(spacing: 8) {
+                                        ZStack(alignment: .bottom) {
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(Color.white.opacity(0.04))
+                                                .frame(height: 120)
+                                            
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(cyanColor)
+                                                .frame(height: maxVol > 0 ? CGFloat((item.volume / maxVol)) * 120.0 : 0)
+                                        }
+                                        
+                                        Text(item.label)
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.gray)
+                                        
+                                        Text(String(format: "%dK", Int(item.volume / 1000.0)))
+                                            .font(.system(size: 9, weight: .black, design: .rounded))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            }
+                            .padding()
+                            .background(cardBgColor)
+                            .cornerRadius(12)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                        }
+                        
+                        // Personal records table
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("🏆 Strongest Lifts (Hevy PRs)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.gray)
+                                .textCase(.uppercase)
+                            
+                            let prs = personalRecords
+                            if prs.isEmpty {
+                                Text("No strength logs found.")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.gray)
+                                    .padding()
+                                    .frame(maxWidth: .infinity)
+                                    .background(cardBgColor)
+                                    .cornerRadius(12)
+                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                            } else {
+                                VStack(spacing: 8) {
+                                    ForEach(prs.prefix(6)) { pr in
+                                        HStack {
+                                            Text(pr.exercise)
+                                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                                .foregroundColor(.white)
+                                                .lineLimit(1)
+                                            Spacer()
+                                            VStack(alignment: .trailing, spacing: 2) {
+                                                Text("\(Int(pr.maxWeight)) lbs")
+                                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                                    .foregroundColor(neonGreen)
+                                                Text("Est. 1RM: \(Int(pr.est1RM)) lbs")
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundColor(.gray)
+                                            }
+                                        }
+                                        .padding()
+                                        .background(cardBgColor)
+                                        .cornerRadius(10)
+                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                                    }
+                                }
+                            }
+                        }
+                        
+                    } else {
+                        // --- SUBSCENE 2: RECOVERY & READINESS ---
+                        
+                        // Muscle Recovery Matrix
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("🧬 Premium Muscle Recovery Matrix")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.gray)
+                                .textCase(.uppercase)
+                            
+                            VStack(spacing: 8) {
+                                ForEach(muscleRecoveries) { recovery in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text(recovery.name)
+                                                .font(.system(size: 14, weight: .black, design: .rounded))
+                                                .foregroundColor(.white)
+                                            Spacer()
+                                            Text(recovery.lastTrainedStr)
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundColor(.gray)
+                                        }
+                                        
+                                        HStack {
+                                            Text("Status: \(recovery.status)")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(.white.opacity(0.8))
+                                            Spacer()
+                                        }
+                                        
+                                        // Progress Bar
+                                        GeometryReader { geometry in
+                                            ZStack(alignment: .leading) {
+                                                RoundedRectangle(cornerRadius: 3)
+                                                    .fill(Color.white.opacity(0.06))
+                                                    .frame(height: 6)
+                                                RoundedRectangle(cornerRadius: 3)
+                                                    .fill(recovery.recoveryColor)
+                                                    .frame(width: CGFloat(recovery.percentage) / 100.0 * geometry.size.width, height: 6)
+                                            }
+                                        }
+                                        .frame(height: 6)
+                                    }
+                                    .padding()
+                                    .background(cardBgColor)
+                                    .cornerRadius(10)
+                                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                                }
+                            }
+                        }
+                        
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 20)
+            }
+            .background(bgColor.ignoresSafeArea())
         }
         .background(bgColor.ignoresSafeArea())
     }
