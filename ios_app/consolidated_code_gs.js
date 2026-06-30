@@ -603,6 +603,12 @@ function doPost(e) {
       
       var steps = params.steps !== undefined ? parseInt(params.steps, 10) : null;
       var sleep = params.sleep !== undefined ? parseFloat(params.sleep) : null;
+      if (sleep !== null) {
+        if (sleep > 24) {
+          sleep = sleep / 3600.0; // Convert seconds to hours
+        }
+        sleep = Math.round(sleep * 100) / 100; // Round to 2 decimal places
+      }
       var hrv = params.hrv !== undefined ? parseInt(params.hrv, 10) : null;
       var rhr = params.rhr !== undefined ? parseInt(params.rhr, 10) : null;
       var weight = params.weight !== undefined ? parseFloat(params.weight) : null;
