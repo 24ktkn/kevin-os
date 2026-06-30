@@ -431,6 +431,8 @@ with tab3:
         uploaded_hevy_file = st.file_uploader("Drop Hevy CSV File Here", type=["csv"], key="hevy_importer_zone")
         if uploaded_hevy_file is not None:
             try:
+                df_hevy = pd.read_csv(uploaded_hevy_file)
+                df_hevy.columns = df_hevy.columns.str.strip().str.lower()
                 h_date, h_exe, h_weight, h_reps, h_set, h_title = next((c for c in df_hevy.columns if "start" in c or "date" in c), None), next((c for c in df_hevy.columns if "exercise" in c), None), next((c for c in df_hevy.columns if "weight" in c), None), next((c for c in df_hevy.columns if "reps" in c), None), next((c for c in df_hevy.columns if "set" in c and "type" not in c), None), next((c for c in df_hevy.columns if "title" in c or "workout" in c), None)
                 
                 h_start = next((c for c in df_hevy.columns if "start_time" in c or "start" in c), None)
