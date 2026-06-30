@@ -316,7 +316,7 @@ struct WorkoutWebView: View {
             .background(bgColor)
             
             // Embedded WebView
-            WebView(urlString: "https://kevin-os.streamlit.app/Workout_Tracker?embed=true")
+            WebView(urlString: "https://24ktkn.streamlit.app/Workout_Tracker?embed=true")
                 .background(bgColor)
                 .edgesIgnoringSafeArea(.bottom)
         }
