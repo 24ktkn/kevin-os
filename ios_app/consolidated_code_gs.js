@@ -1020,34 +1020,28 @@ function parseDurationToMins(val) {
   var valStr = String(val).trim().toLowerCase();
   if (valStr === "" || valStr === "nan") return "";
   
-  // Handle colon format (HH:MM:SS or MM:SS)
+  // If it's already in colon format (HH:MM:SS or MM:SS), return it as-is
   if (valStr.indexOf(":") !== -1) {
-    var parts = valStr.split(":");
-    try {
-      if (parts.length === 3) {
-        var h = parseInt(parts[0], 10) || 0;
-        var m = parseInt(parts[1], 10) || 0;
-        var s = parseFloat(parts[2]) || 0;
-        return Math.round((h * 60.0 + m + s / 60.0) * 10) / 10;
-      } else if (parts.length === 2) {
-        var m = parseInt(parts[0], 10) || 0;
-        var s = parseFloat(parts[1]) || 0;
-        return Math.round((m + s / 60.0) * 10) / 10;
-      }
-    } catch (err) {
-      // fallback
-    }
+    return valStr;
   }
   
   var num = parseFloat(valStr);
   if (isNaN(num)) return "";
   
-  // If it is seconds (typically > 300), convert to minutes
-  if (num > 300) {
-    return Math.round((num / 60.0) * 10) / 10;
+  // Convert raw seconds to MM:SS or HH:MM:SS duration string
+  var h = Math.floor(num / 3600);
+  var m = Math.floor((num % 3600) / 60);
+  var s = Math.round(num % 60);
+  
+  var sStr = s < 10 ? "0" + s : String(s);
+  if (h > 0) {
+    var mStr = m < 10 ? "0" + m : String(m);
+    return h + ":" + mStr + ":" + sStr;
+  } else {
+    return m + ":" + sStr;
   }
-  return num;
 }
+
 
 function parseDistanceToKm(val) {
   if (!val) return "";
