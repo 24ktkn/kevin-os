@@ -773,14 +773,23 @@ function doPost(e) {
       for (var h = 0; h < headers.length; h++) {
         var head = headers[h];
         if (head.indexOf("date") !== -1 || head.indexOf("start") !== -1 || head.indexOf("created") !== -1) dateIdx = h;
-        if (head.indexOf("exercise") !== -1) exerciseIdx = h;
         if (head.indexOf("set") !== -1 && head.indexOf("type") === -1) setIdx = h;
         if (head.indexOf("weight") !== -1) weightIdx = h;
         if (head.indexOf("rep") !== -1) repsIdx = h;
         if (head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) distanceIdx = h;
         if (head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) durationIdx = h;
-        // Make sure workout name doesn't match exercise title column
-        if ((head.indexOf("workout") !== -1 || head.indexOf("title") !== -1) && head.indexOf("exercise") === -1) workoutNameIdx = h;
+        
+        // Exclude notes, descriptions, or target from exercise matching
+        if (head.indexOf("exercise") !== -1 && head.indexOf("note") === -1 && head.indexOf("desc") === -1 && head.indexOf("target") === -1) {
+          if (exerciseIdx === -1 || head.indexOf("name") !== -1 || head.indexOf("title") !== -1 || head === "exercise") {
+            exerciseIdx = h;
+          }
+        }
+        
+        // Exclude notes, descriptions, or exercise from workout name matching
+        if ((head.indexOf("workout") !== -1 || head.indexOf("title") !== -1) && head.indexOf("exercise") === -1 && head.indexOf("note") === -1 && head.indexOf("desc") === -1) {
+          workoutNameIdx = h;
+        }
       }
       
       if (dateIdx === -1 || exerciseIdx === -1) {
@@ -832,13 +841,14 @@ function doPost(e) {
           var rawDateVal = wDateCol !== -1 ? rowVal[wDateCol] : "";
           var formattedDateVal = formatDateString(rawDateVal);
           
-          // Skip empty dates or dates that contain text (like "Jun" or comma) which were previously corrupted
-          if (!formattedDateVal || String(rawDateVal).indexOf(",") !== -1 || String(rawDateVal).match(/[a-zA-Z]/)) {
+          var exerciseVal = wExeCol !== -1 ? String(rowVal[wExeCol]).trim() : "";
+          var setNumVal = wSetCol !== -1 ? (parseInt(rowVal[wSetCol], 10) || 1) : 1;
+          
+          // Skip empty dates, dates that contain text (like "Jun" or comma), or empty exercise names (previously corrupted)
+          if (!formattedDateVal || String(rawDateVal).indexOf(",") !== -1 || String(rawDateVal).match(/[a-zA-Z]/) || !exerciseVal) {
             continue;
           }
           
-          var exerciseVal = wExeCol !== -1 ? String(rowVal[wExeCol]).trim() : "";
-          var setNumVal = wSetCol !== -1 ? (parseInt(rowVal[wSetCol], 10) || 1) : 1;
           var keyVal = formattedDateVal + "_" + exerciseVal.toLowerCase() + "_" + setNumVal;
           
           if (existingKeys[keyVal]) {
