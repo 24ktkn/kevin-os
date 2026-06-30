@@ -80,6 +80,23 @@ struct OSHubView: View {
     let redColor: Color
     let lavenderColor: Color
     
+    // Isolated computed properties to speed up Swift compiler type-checking
+    var hrvString: String {
+        networkManager.biometrics.hrv > 0 ? "\(networkManager.biometrics.hrv) ms" : "No data"
+    }
+    
+    var sleepString: String {
+        networkManager.biometrics.sleep > 0 ? String(format: "%.1f hrs", networkManager.biometrics.sleep) : "No data"
+    }
+    
+    var rhrString: String {
+        networkManager.biometrics.rhr > 0 ? "\(networkManager.biometrics.rhr) bpm" : "No data"
+    }
+    
+    var weightString: String {
+        networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data"
+    }
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -156,11 +173,11 @@ struct OSHubView: View {
                         .textCase(.uppercase)
                     
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        BiometricCard(title: "HRV (Variability)", val: networkManager.biometrics.hrv > 0 ? "\(networkManager.biometrics.hrv) ms" : "No data", color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
-                        BiometricCard(title: "Sleep Duration", val: networkManager.biometrics.sleep > 0 ? String(format: "%.1f hrs", networkManager.biometrics.sleep) : "No data", color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "HRV (Variability)", val: hrvString, color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Sleep Duration", val: sleepString, color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Wake Up Time", val: networkManager.biometrics.wakeTime, color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
-                        BiometricCard(title: "Resting Heart Rate", val: networkManager.biometrics.rhr > 0 ? "\(networkManager.biometrics.rhr) bpm" : "No data", color: redColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
-                        BiometricCard(title: "Bodyweight", val: networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data", color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Resting Heart Rate", val: rhrString, color: redColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Bodyweight", val: weightString, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor)
                     }
                 }
                 .padding(.horizontal)
@@ -218,6 +235,11 @@ struct WorkoutLoggerView: View {
     
     let exercisesList = ["Treadmill", "Bench Press (Dumbbell)", "Bench Press (Barbell)", "Squat (Barbell)", "Bent Over Row (Barbell)", "Pull Up", "Romanian Deadlift (Barbell)", "Lateral Raise (Cable)", "Triceps Extension (Cable)", "Seated Incline Curl (Dumbbell)"]
     let splitsList = ["Cardio", "Push (Chest/Shoulders/Triceps)", "Pull (Back/Biceps)", "Legs & Abs"]
+    
+    // Computed property to prevent compilation type-check timeouts
+    var recentWorkoutsList: [WorkoutSet] {
+        Array(networkManager.recentWorkouts.prefix(15))
+    }
     
     var body: some View {
         ScrollView {
@@ -354,7 +376,7 @@ struct WorkoutLoggerView: View {
                         .textCase(.uppercase)
                         .padding(.horizontal)
                     
-                    if networkManager.recentWorkouts.isEmpty {
+                    if recentWorkoutsList.isEmpty {
                         Text("No recent workout history found.")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.gray)
@@ -365,7 +387,7 @@ struct WorkoutLoggerView: View {
                             .padding(.horizontal)
                     } else {
                         VStack(spacing: 8) {
-                            ForEach(Array(networkManager.recentWorkouts.prefix(15))) { setRow in
+                            ForEach(recentWorkoutsList) { setRow in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(setRow.exercise)
@@ -426,6 +448,11 @@ struct HabitsHistoryView: View {
     let cyanColor: Color
     let lavenderColor: Color
     
+    // Computed property to prevent compilation type-check timeouts
+    var recentHabitsList: [HabitDay] {
+        Array(networkManager.habitHistory.prefix(7))
+    }
+    
     // Streaks calculations
     var currentStreak: Int {
         var streak = 0
@@ -482,7 +509,7 @@ struct HabitsHistoryView: View {
                         .textCase(.uppercase)
                         .padding(.horizontal)
                     
-                    if networkManager.habitHistory.isEmpty {
+                    if recentHabitsList.isEmpty {
                         Text("No habit history synced yet.")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.gray)
@@ -493,7 +520,7 @@ struct HabitsHistoryView: View {
                             .padding(.horizontal)
                     } else {
                         VStack(spacing: 8) {
-                            ForEach(Array(networkManager.habitHistory.prefix(7))) { day in
+                            ForEach(recentHabitsList) { day in
                                 HStack {
                                     Text(formatDateLabel(day.date))
                                         .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -581,6 +608,11 @@ struct MealPrepView: View {
         Dictionary(grouping: filteredCostcoItems, by: { $0.department })
     }
     
+    // Computed property to prevent sorted departments type-check timeouts
+    var sortedDepartments: [String] {
+        groupedCostcoItems.keys.sorted()
+    }
+    
     var completedItems: Set<String> {
         get {
             let list = completedItemsData.components(separatedBy: ",")
@@ -589,6 +621,11 @@ struct MealPrepView: View {
         set {
             completedItemsData = Array(newValue).joined(separator: ",")
         }
+    }
+    
+    // Helper function to check item state to prevent compile timeouts
+    func isItemChecked(_ id: String) -> Bool {
+        completedItems.contains(id)
     }
     
     // Computed properties for Weekly Menu Blueprint
@@ -656,7 +693,7 @@ struct MealPrepView: View {
                             .padding(.horizontal)
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
-                            ForEach(Array(groupedCostcoItems.keys.sorted()), id: \.self) { dept in
+                            ForEach(sortedDepartments, id: \.self) { dept in
                                 VStack(alignment: .leading, spacing: 6) {
                                     // Department Header
                                     Text(dept.uppercased())
@@ -668,7 +705,7 @@ struct MealPrepView: View {
                                     ForEach(groupedCostcoItems[dept] ?? []) { item in
                                         Button(action: {
                                             var temp = completedItems
-                                            if completedItems.contains(item.id) {
+                                            if isItemChecked(item.id) {
                                                 temp.remove(item.id)
                                             } else {
                                                 temp.insert(item.id)
@@ -676,16 +713,16 @@ struct MealPrepView: View {
                                             completedItems = temp
                                         }) {
                                             HStack(alignment: .top) {
-                                                Image(systemName: completedItems.contains(item.id) ? "checkmark.square.fill" : "square")
-                                                    .foregroundColor(completedItems.contains(item.id) ? neonGreen : .gray)
+                                                Image(systemName: isItemChecked(item.id) ? "checkmark.square.fill" : "square")
+                                                    .foregroundColor(isItemChecked(item.id) ? neonGreen : .gray)
                                                     .font(.system(size: 16))
                                                     .padding(.top, 2)
                                                 
                                                 VStack(alignment: .leading, spacing: 2) {
                                                     Text(item.name)
                                                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                                                        .foregroundColor(completedItems.contains(item.id) ? .gray : .white)
-                                                        .strikethrough(completedItems.contains(item.id))
+                                                        .foregroundColor(isItemChecked(item.id) ? .gray : .white)
+                                                        .strikethrough(isItemChecked(item.id))
                                                     Text("\(item.size) • \(item.assignment)")
                                                         .font(.system(size: 11))
                                                         .foregroundColor(.gray)
