@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-struct Biometrics: Codable {
+struct Biometrics: Codable, Sendable {
     var steps: Int
     var sleep: Double
     var hrv: Int
@@ -10,13 +10,13 @@ struct Biometrics: Codable {
     var wakeTime: String
 }
 
-struct Habits: Codable {
+struct Habits: Codable, Sendable {
     var wakeUpOnTime: Bool
     var gymWorkout: Bool
     var journaling: Bool
 }
 
-struct HabitDay: Codable, Identifiable {
+struct HabitDay: Codable, Identifiable, Sendable {
     var id: String { date }
     var date: String
     var wakeUpOnTime: Bool
@@ -24,7 +24,7 @@ struct HabitDay: Codable, Identifiable {
     var journaling: Bool
 }
 
-struct WorkoutSet: Codable, Identifiable {
+struct WorkoutSet: Codable, Identifiable, Sendable {
     var id = UUID()
     var date: String
     var exercise: String
@@ -39,7 +39,7 @@ struct WorkoutSet: Codable, Identifiable {
     }
 }
 
-struct CostcoItem: Codable, Identifiable {
+struct CostcoItem: Codable, Identifiable, Sendable {
     var id: String { "\(trip)_\(name)" }
     var trip: String
     var department: String
@@ -48,7 +48,7 @@ struct CostcoItem: Codable, Identifiable {
     var assignment: String
 }
 
-struct DashboardData: Codable {
+struct DashboardData: Codable, Sendable {
     var date: String
     var biometrics: Biometrics
     var habits: Habits
@@ -94,20 +94,21 @@ class NetworkManager: ObservableObject {
                 return
             }
             
-            do {
-                let decoder = JSONDecoder()
-                let decodedData = try decoder.decode(DashboardData.self, from: data)
-                
-                DispatchQueue.main.async {
+            // Perform decoding inside the main queue to satisfy @MainActor isolation rules in Swift 6
+            DispatchQueue.main.async {
+                do {
+                    let decoder = JSONDecoder()
+                    let decodedData = try decoder.decode(DashboardData.self, from: data)
+                    
                     self.dateStr = decodedData.date
                     self.biometrics = decodedData.biometrics
                     self.habits = decodedData.habits
                     self.habitHistory = decodedData.habitHistory
                     self.recentWorkouts = decodedData.recentWorkouts
                     self.costcoItems = decodedData.costcoItems
+                } catch {
+                    print("JSON Decoding error: \(error)")
                 }
-            } catch {
-                print("JSON Decoding error: \(error)")
             }
         }.resume()
     }
