@@ -268,7 +268,15 @@ try:
                 """, unsafe_allow_html=True)
                 
             with m_col2:
-                sleep_str = f"{sleep} hrs" if sleep > 0 else "No data"
+                if sleep > 0:
+                    sleep_hours = int(sleep)
+                    sleep_minutes = int(round((sleep - sleep_hours) * 60))
+                    if sleep_minutes == 60:
+                        sleep_hours += 1
+                        sleep_minutes = 0
+                    sleep_str = f"{sleep_hours}h {sleep_minutes}m"
+                else:
+                    sleep_str = "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
                     <div class="status-lbl">Sleep Duration</div>

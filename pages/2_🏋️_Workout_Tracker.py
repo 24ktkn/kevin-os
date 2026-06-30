@@ -714,7 +714,18 @@ with tab_recovery:
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Latest HRV", f"{int(latest_day['HRV'])} ms")
-        col2.metric("Latest Sleep", f"{latest_day['Sleep Duration']} hrs")
+        
+        latest_sleep = latest_day['Sleep Duration']
+        if pd.notna(latest_sleep) and latest_sleep > 0:
+            ls_hours = int(latest_sleep)
+            ls_minutes = int(round((latest_sleep - ls_hours) * 60))
+            if ls_minutes == 60:
+                ls_hours += 1
+                ls_minutes = 0
+            sleep_val_str = f"{ls_hours}h {ls_minutes}m"
+        else:
+            sleep_val_str = "No data"
+        col2.metric("Latest Sleep", sleep_val_str)
         col3.metric("Latest RHR", f"{int(latest_day['RHR'])} bpm")
         col4.metric("Latest Steps", f"{int(latest_day['Steps']):,}")
         

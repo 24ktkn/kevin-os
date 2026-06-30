@@ -148,7 +148,17 @@ struct OSHubView: View {
     }
     
     var sleepString: String {
-        networkManager.biometrics.sleep > 0 ? String(format: "%.1f hrs", networkManager.biometrics.sleep) : "No data"
+        let sleepVal = networkManager.biometrics.sleep
+        if sleepVal > 0 {
+            let hours = Int(sleepVal)
+            let minutes = Int(round((sleepVal - Double(hours)) * 60))
+            if minutes == 60 {
+                return "\(hours + 1)h 0m"
+            }
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "No data"
+        }
     }
     
     var rhrString: String {
