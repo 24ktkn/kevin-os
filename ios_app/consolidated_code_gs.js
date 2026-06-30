@@ -504,6 +504,18 @@ function doGet(e) {
         for (var m = mData.length - 1; m >= mStartRow; m--) {
           var itemDate = formatDateString(mData[m][mDateCol]);
           if (itemDate) {
+            var timeRaw = mTimeCol !== -1 ? mData[m][mTimeCol] : "";
+            var timeFormatted = "";
+            if (timeRaw) {
+              if (timeRaw instanceof Date) {
+                timeFormatted = Utilities.formatDate(timeRaw, "America/Toronto", "HH:mm:ss");
+              } else {
+                var rawStr = String(timeRaw).trim();
+                var match = rawStr.match(/(\d{2}:\d{2}:\d{2})/);
+                timeFormatted = match ? match[1] : rawStr;
+              }
+            }
+            
             response.missionControlItems.push({
               id: mEventIdCol !== -1 && mData[m][mEventIdCol] ? String(mData[m][mEventIdCol]).trim() : "row_" + m,
               status: mStatusCol !== -1 ? parseBool(mData[m][mStatusCol]) : false,
@@ -511,7 +523,7 @@ function doGet(e) {
               type: mTypeCol !== -1 ? String(mData[m][mTypeCol]).trim() : "",
               calendar: mCalCol !== -1 ? String(mData[m][mCalCol]).trim() : "",
               date: itemDate,
-              time: mTimeCol !== -1 ? String(mData[m][mTimeCol]).trim() : "",
+              time: timeFormatted,
               duration: mDurCol !== -1 ? parseInt(mData[m][mDurCol], 10) || 0 : 0,
               location: mLocationCol !== -1 ? String(mData[m][mLocationCol]).trim() : "",
               notes: mNotesCol !== -1 ? String(mData[m][mNotesCol]).trim() : "",
