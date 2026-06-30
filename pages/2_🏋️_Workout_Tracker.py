@@ -433,13 +433,13 @@ with tab3:
                         if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
                         
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
-                        parsed_rows.append({"Date": raw_dt, "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val})
+                        parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val})
                     
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
                     
                     # --- 🛡️ COMPOSITE MATRIX DEDUPLICATION ENGINE ---
                     combined_df = pd.concat([df_logs, hevy_parsed_df], ignore_index=True)
-                    combined_df["Date"] = pd.to_datetime(combined_df["Date"])
+                    combined_df["Date"] = pd.to_datetime(combined_df["Date"]).dt.normalize()
                     combined_df["Exercise"] = combined_df["Exercise"].astype(str).str.strip()
                     combined_df["Set Number"] = combined_df["Set Number"].astype(int)
                     
