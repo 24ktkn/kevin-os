@@ -94,23 +94,28 @@ class NetworkManager: ObservableObject {
                 return
             }
             
-            // Perform decoding inside the main queue to satisfy @MainActor isolation rules in Swift 6
-            DispatchQueue.main.async {
-                do {
-                    let decoder = JSONDecoder()
-                    let decodedData = try decoder.decode(DashboardData.self, from: data)
-                    
-                    self.dateStr = decodedData.date
-                    self.biometrics = decodedData.biometrics
-                    self.habits = decodedData.habits
-                    self.habitHistory = decodedData.habitHistory
-                    self.recentWorkouts = decodedData.recentWorkouts
-                    self.costcoItems = decodedData.costcoItems
-                } catch {
-                    print("JSON Decoding error: \(error)")
-                }
+            // Dispatch specifically to MainActor via structured Swift concurrency Task
+            Task { @MainActor in
+                self.updateDashboardData(with: data)
             }
         }.resume()
+    }
+    
+    @MainActor
+    private func updateDashboardData(with data: Data) {
+        do {
+            let decoder = JSONDecoder()
+            let decodedData = try decoder.decode(DashboardData.self, from: data)
+            
+            self.dateStr = decodedData.date
+            self.biometrics = decodedData.biometrics
+            self.habits = decodedData.habits
+            self.habitHistory = decodedData.habitHistory
+            self.recentWorkouts = decodedData.recentWorkouts
+            self.costcoItems = decodedData.costcoItems
+        } catch {
+            print("JSON Decoding error: \(error)")
+        }
     }
     
     func toggleHabit(habitName: String, completed: Bool) {
@@ -150,14 +155,18 @@ class NetworkManager: ObservableObject {
             if let error = error {
                 print("Error updating habit: \(error.localizedDescription)")
                 // Revert on failure
-                self.fetchData()
+                Task { @MainActor in
+                    self.fetchData()
+                }
                 return
             }
             
             print("Habit \(habitName) successfully updated on sheet to \(completed)")
             
-            // Re-fetch to sync status
-            self.fetchData()
+            // Re-fetch to sync status on MainActor
+            Task { @MainActor in
+                self.fetchData()
+            }
         }.resume()
     }
     
@@ -198,9 +207,11 @@ class NetworkManager: ObservableObject {
             
             print("Workout set logged successfully: \(exercise)")
             
-            // Re-fetch to sync status
-            self.fetchData()
-            completion(true)
+            // Re-fetch to sync status on MainActor
+            Task { @MainActor in
+                self.fetchData()
+                completion(true)
+            }
         }.resume()
     }
 }

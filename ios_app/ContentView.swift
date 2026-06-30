@@ -623,9 +623,12 @@ struct MealPrepView: View {
         }
     }
     
-    // Helper function to check item state to prevent compile timeouts
-    func isItemChecked(_ id: String) -> Bool {
-        completedItems.contains(id)
+    // Bridging completedItems to the subview
+    var completedItemsBinding: Binding<Set<String>> {
+        Binding(
+            get: { self.completedItems },
+            set: { self.completedItems = $0 }
+        )
     }
     
     // Computed properties for Weekly Menu Blueprint
@@ -703,38 +706,13 @@ struct MealPrepView: View {
                                     
                                     // Items Checklist
                                     ForEach(groupedCostcoItems[dept] ?? []) { item in
-                                        Button(action: {
-                                            var temp = completedItems
-                                            if isItemChecked(item.id) {
-                                                temp.remove(item.id)
-                                            } else {
-                                                temp.insert(item.id)
-                                            }
-                                            completedItems = temp
-                                        }) {
-                                            HStack(alignment: .top) {
-                                                Image(systemName: isItemChecked(item.id) ? "checkmark.square.fill" : "square")
-                                                    .foregroundColor(isItemChecked(item.id) ? neonGreen : .gray)
-                                                    .font(.system(size: 16))
-                                                    .padding(.top, 2)
-                                                
-                                                VStack(alignment: .leading, spacing: 2) {
-                                                    Text(item.name)
-                                                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                                                        .foregroundColor(isItemChecked(item.id) ? .gray : .white)
-                                                        .strikethrough(isItemChecked(item.id))
-                                                    Text("\(item.size) • \(item.assignment)")
-                                                        .font(.system(size: 11))
-                                                        .foregroundColor(.gray)
-                                                }
-                                                Spacer()
-                                            }
-                                            .padding(.vertical, 8)
-                                            .padding(.horizontal, 10)
-                                            .background(cardBgColor)
-                                            .cornerRadius(8)
-                                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(cardBorderColor, lineWidth: 0.5))
-                                        }
+                                        CostcoItemRow(
+                                            item: item,
+                                            completedItems: completedItemsBinding,
+                                            neonGreen: neonGreen,
+                                            cardBgColor: cardBgColor,
+                                            cardBorderColor: cardBorderColor
+                                        )
                                     }
                                 }
                             }
@@ -777,6 +755,52 @@ struct MealPrepView: View {
             .padding(.vertical)
         }
         .background(bgColor.ignoresSafeArea())
+    }
+}
+
+// Extracted Subview to fix compile speed issues in SwiftUI lists
+struct CostcoItemRow: View {
+    let item: CostcoItem
+    @Binding var completedItems: Set<String>
+    let neonGreen: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    
+    var isChecked: Bool {
+        completedItems.contains(item.id)
+    }
+    
+    var body: some View {
+        Button(action: {
+            if isChecked {
+                completedItems.remove(item.id)
+            } else {
+                completedItems.insert(item.id)
+            }
+        }) {
+            HStack(alignment: .top) {
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .foregroundColor(isChecked ? neonGreen : .gray)
+                    .font(.system(size: 16))
+                    .padding(.top, 2)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(isChecked ? .gray : .white)
+                        .strikethrough(isChecked)
+                    Text("\(item.size) • \(item.assignment)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.gray)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(cardBgColor)
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(cardBorderColor, lineWidth: 0.5))
+        }
     }
 }
 
