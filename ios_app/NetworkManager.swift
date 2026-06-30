@@ -8,6 +8,7 @@ struct Biometrics: Codable, Sendable {
     var rhr: Int
     var weight: Double
     var wakeTime: String
+    var sleepTime: String?
 }
 
 struct Habits: Codable, Sendable {
@@ -80,7 +81,7 @@ struct DashboardData: Codable, Sendable {
 
 class NetworkManager: ObservableObject {
     @Published var dateStr: String = "Loading..."
-    @Published var biometrics: Biometrics = Biometrics(steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data")
+    @Published var biometrics: Biometrics = Biometrics(steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data")
     @Published var habits: Habits = Habits(wakeUpOnTime: false, gymWorkout: false, journaling: false)
     @Published var habitHistory: [HabitDay] = []
     @Published var recentWorkouts: [WorkoutSet] = []

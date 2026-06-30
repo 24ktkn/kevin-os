@@ -237,6 +237,7 @@ struct OSHubView: View {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         BiometricCard(title: "HRV (Variability)", val: hrvString, color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Sleep Duration", val: sleepString, color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Fell Asleep", val: networkManager.biometrics.sleepTime ?? "No data", color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Wake Up Time", val: networkManager.biometrics.wakeTime, color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Resting Heart Rate", val: rhrString, color: redColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Bodyweight", val: weightString, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor)

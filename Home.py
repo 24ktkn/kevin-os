@@ -214,6 +214,13 @@ try:
                 wake_val = str(latest_day["Wake Time"]).strip()
                 if wake_val != "" and wake_val.lower() != "nan" and wake_val.lower() != "nat":
                     wake_time = wake_val
+                    
+            # Fetch sleep time if available
+            sleep_time = ""
+            if "Sleep Time" in latest_day and pd.notna(latest_day["Sleep Time"]):
+                sleep_val = str(latest_day["Sleep Time"]).strip()
+                if sleep_val != "" and sleep_val.lower() != "nan" and sleep_val.lower() != "nat":
+                    sleep_time = sleep_val
             
             # Find the most recent non-zero bodyweight from history
             weight = 0.0
@@ -249,7 +256,7 @@ try:
             st.write("<div style='height:12px;'></div>", unsafe_allow_html=True)
             
             # Render secondary metrics in columns
-            m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+            m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
             
             with m_col1:
                 hrv_str = f"{int(hrv)} ms" if hrv > 0 else "No data"
@@ -268,8 +275,17 @@ try:
                     <div class="status-val" style="color: #FFB703; font-size: 1.6rem;">{sleep_str}</div>
                 </div>
                 """, unsafe_allow_html=True)
-                
+
             with m_col3:
+                sleep_time_str = sleep_time if sleep_time else "No data"
+                st.markdown(f"""
+                <div class="status-card" style="text-align:center;">
+                    <div class="status-lbl">Fell Asleep</div>
+                    <div class="status-val" style="color: #FFB703; font-size: 1.6rem;">{sleep_time_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with m_col4:
                 wake_str = wake_time if wake_time else "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
@@ -278,7 +294,7 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
                 
-            with m_col4:
+            with m_col5:
                 rhr_str = f"{int(rhr)} bpm" if rhr > 0 else "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">
@@ -287,7 +303,7 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
                 
-            with m_col5:
+            with m_col6:
                 weight_str = f"{weight} lbs" if weight > 0 else "No data"
                 st.markdown(f"""
                 <div class="status-card" style="text-align:center;">

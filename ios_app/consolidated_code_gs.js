@@ -13,7 +13,7 @@ function syncGoogleFitData() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("health_metrics");
   if (!sheet) {
     sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("health_metrics");
-    sheet.appendRow(["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight", "Wake Time"]);
+    sheet.appendRow(["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight", "Wake Time", "Sleep Time"]);
   }
   
   var now = new Date();
@@ -47,6 +47,13 @@ function syncGoogleFitData() {
     sheet.getRange(1, headers.length + 1).setValue("Wake Time");
     headers.push("Wake Time");
     wakeTimeColIdx = headers.indexOf("Wake Time");
+  }
+  
+  var sleepTimeColIdx = headers.indexOf("Sleep Time");
+  if (sleepTimeColIdx === -1) {
+    sheet.getRange(1, headers.length + 1).setValue("Sleep Time");
+    headers.push("Sleep Time");
+    sleepTimeColIdx = headers.indexOf("Sleep Time");
   }
   
   if (dateColIdx === -1) {
@@ -355,7 +362,7 @@ function doGet(e) {
     
     var response = {
       date: activeDateStr,
-      biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data" },
+      biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data" },
       habits: { wakeUpOnTime: false, gymWorkout: false, journaling: false },
       habitHistory: [],
       recentWorkouts: [],
@@ -373,6 +380,7 @@ function doGet(e) {
       var rhrCol = hHeaders.indexOf("RHR");
       var weightCol = hHeaders.indexOf("Bodyweight");
       var wakeCol = hHeaders.indexOf("Wake Time");
+      var sleepTimeCol = hHeaders.indexOf("Sleep Time");
       
       for (var i = hData.length - 1; i > 0; i--) {
         var rowDate = formatDateString(hData[i][hDateCol]);
@@ -383,6 +391,7 @@ function doGet(e) {
           if (rhrCol !== -1) response.biometrics.rhr = parseInt(hData[i][rhrCol], 10) || 0;
           if (weightCol !== -1) response.biometrics.weight = parseFloat(hData[i][weightCol]) || 170.0;
           if (wakeCol !== -1 && hData[i][wakeCol]) response.biometrics.wakeTime = String(hData[i][wakeCol]).trim();
+          if (sleepTimeCol !== -1 && hData[i][sleepTimeCol]) response.biometrics.sleepTime = String(hData[i][sleepTimeCol]).trim();
           break;
         }
       }
@@ -578,7 +587,7 @@ function doPost(e) {
       var healthSheet = ss.getSheetByName("health_metrics");
       if (!healthSheet) {
         healthSheet = ss.insertSheet("health_metrics");
-        healthSheet.appendRow(["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight", "Wake Time"]);
+        healthSheet.appendRow(["Date", "HRV", "Sleep Duration", "RHR", "Steps", "Bodyweight", "Wake Time", "Sleep Time"]);
       }
       
       var hData = healthSheet.getDataRange().getValues();
@@ -590,6 +599,7 @@ function doPost(e) {
       var stepsCol = hHeaders.indexOf("Steps");
       var weightCol = hHeaders.indexOf("Bodyweight");
       var wakeCol = hHeaders.indexOf("Wake Time");
+      var sleepTimeCol = hHeaders.indexOf("Sleep Time");
       
       // Find row for today
       var targetRow = -1;
@@ -613,6 +623,7 @@ function doPost(e) {
       var rhr = params.rhr !== undefined ? parseInt(params.rhr, 10) : null;
       var weight = params.weight !== undefined ? parseFloat(params.weight) : null;
       var wakeTime = params.wakeTime !== undefined ? String(params.wakeTime).trim() : null;
+      var sleepTime = params.sleepTime !== undefined ? String(params.sleepTime).trim() : null;
       
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
@@ -621,6 +632,7 @@ function doPost(e) {
         if (rhr !== null && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
         if (weight !== null && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
         if (wakeTime !== null && wakeCol !== -1) healthSheet.getRange(targetRow, wakeCol + 1).setValue(wakeTime);
+        if (sleepTime !== null && sleepTimeCol !== -1) healthSheet.getRange(targetRow, sleepTimeCol + 1).setValue(sleepTime);
       } else {
         var newRow = [];
         for (var c = 0; c < hHeaders.length; c++) {
@@ -631,6 +643,7 @@ function doPost(e) {
           else if (c === rhrCol && rhr !== null) newRow.push(rhr);
           else if (c === weightCol && weight !== null) newRow.push(weight);
           else if (c === wakeCol && wakeTime !== null) newRow.push(wakeTime);
+          else if (c === sleepTimeCol && sleepTime !== null) newRow.push(sleepTime);
           else newRow.push("");
         }
         healthSheet.appendRow(newRow);
