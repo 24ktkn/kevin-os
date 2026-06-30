@@ -70,29 +70,38 @@ struct ContentView: View {
             // Handle CSV file shared from iOS Share Sheet
             guard url.pathExtension.lowercased() == "csv" else { return }
             
-            // Start accessing secure resource sandbox URL
-            if url.startAccessingSecurityScopedResource() {
-                defer { url.stopAccessingSecurityScopedResource() }
-                
-                do {
-                    let csvData = try Data(contentsOf: url)
-                    if let csvText = String(data: csvData, encoding: .utf8) {
-                        networkManager.importHevyCSV(csvText: csvText) { success, count in
-                            DispatchQueue.main.async {
-                                if success {
-                                    self.importSuccessCount = count
-                                    self.showingImportAlert = true
-                                } else {
-                                    self.showingImportError = true
-                                }
+            // Accessing security-scoped resource is optional depending on the origin of the URL.
+            // We start accessing it, but we fallback to reading directly if it's not security-scoped.
+            let isSecurityScoped = url.startAccessingSecurityScopedResource()
+            defer {
+                if isSecurityScoped {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            
+            do {
+                let csvData = try Data(contentsOf: url)
+                if let csvText = String(data: csvData, encoding: .utf8) {
+                    networkManager.importHevyCSV(csvText: csvText) { success, count in
+                        DispatchQueue.main.async {
+                            if success {
+                                self.importSuccessCount = count
+                                self.showingImportAlert = true
+                            } else {
+                                self.showingImportError = true
                             }
                         }
                     }
-                } catch {
-                    print("Failed to read shared CSV file: \(error.localizedDescription)")
+                } else {
+                    print("Failed to convert shared CSV data to String")
                     DispatchQueue.main.async {
                         self.showingImportError = true
                     }
+                }
+            } catch {
+                print("Failed to read shared CSV file: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.showingImportError = true
                 }
             }
         }
