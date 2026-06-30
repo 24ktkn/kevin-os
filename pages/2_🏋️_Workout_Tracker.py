@@ -441,16 +441,12 @@ with tab3:
                 
                 h_start = next((c for c in df_hevy.columns if "start_time" in c or "start" in c), None)
                 h_end = next((c for c in df_hevy.columns if "end_time" in c or "end" in c), None)
-                h_dist = next((c for c in df_hevy.columns if "distance" in c), None)
-                h_secs = next((c for c in df_hevy.columns if "seconds" in c or "duration_seconds" in c), None)
+                h_dist = next((c for c in df_hevy.columns if "distance" in c or "dist" in c), None)
+                h_secs = next((c for c in df_hevy.columns if ("second" in c or "duration" in c) and "workout" not in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
                     df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
-                    if h_dist:
-                        df_hevy[h_dist] = pd.to_numeric(df_hevy[h_dist], errors='coerce').fillna(0.0)
-                    if h_secs:
-                        df_hevy[h_secs] = pd.to_numeric(df_hevy[h_secs], errors='coerce').fillna(0.0)
                     
                     if h_start and h_end:
                         df_hevy[h_start] = pd.to_datetime(df_hevy[h_start], errors='coerce')
@@ -462,6 +458,46 @@ with tab3:
                     # Completely bypasses hardcoded text columns to evaluate set progression lines by appearance
                     df_hevy['computed_set_num'] = df_hevy.groupby([h_date, h_exe]).cumcount() + 1
                     
+                    def parse_distance_to_km(val):
+                        if pd.isna(val) or val == "":
+                            return 0.0
+                        val_str = str(val).strip().lower()
+                        import re
+                        match = re.search(r"([0-9]+(?:\.[0-9]+)?)", val_str)
+                        if match:
+                            num = float(match.group(1))
+                            if "mi" in val_str or "mile" in val_str:
+                                return round(num * 1.60934, 2)
+                            if "m" in val_str and "k" not in val_str:
+                                return round(num / 1000.0, 2)
+                            if num > 50:
+                                return round(num / 1000.0, 2)
+                            return num
+                        return 0.0
+
+                    def parse_duration_to_mins(val):
+                        if pd.isna(val) or val == "":
+                            return 0.0
+                        val_str = str(val).strip()
+                        try:
+                            num = float(val_str)
+                            if num > 300: 
+                                return round(num / 60.0, 2)
+                            return num
+                        except ValueError:
+                            pass
+                        parts = val_str.split(":")
+                        try:
+                            if len(parts) == 3:
+                                h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                                return round(h * 60.0 + m + s / 60.0, 2)
+                            elif len(parts) == 2:
+                                m, s = int(parts[0]), float(parts[1])
+                                return round(m + s / 60.0, 2)
+                        except ValueError:
+                            pass
+                        return 0.0
+                    
                     parsed_rows = []
                     for _, row in df_hevy.iterrows():
                         raw_dt = pd.to_datetime(row[h_date], errors='coerce')
@@ -472,16 +508,18 @@ with tab3:
                         s_val = int(row['computed_set_num'])
                         
                         # Use set-specific duration (seconds) if available in Hevy CSV for cardio pace calculations
-                        cardio_seconds = float(row[h_secs]) if h_secs and pd.notna(row[h_secs]) else 0.0
-                        if cardio_seconds > 0:
-                            dur_val = round(cardio_seconds / 60.0, 2)
+                        raw_secs = row[h_secs] if h_secs and pd.notna(row[h_secs]) else ""
+                        cardio_mins = parse_duration_to_mins(raw_secs)
+                        if cardio_mins > 0:
+                            dur_val = cardio_mins
                         else:
                             dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
                         
                         if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
                         
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
-                        dist_val = float(row[h_dist]) if h_dist and pd.notna(row[h_dist]) else 0.0
+                        raw_dist = row[h_dist] if h_dist and pd.notna(row[h_dist]) else ""
+                        dist_val = parse_distance_to_km(raw_dist)
                         parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val, "Distance (km)": dist_val})
                     
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
