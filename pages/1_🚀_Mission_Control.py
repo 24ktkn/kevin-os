@@ -318,6 +318,16 @@ df["Scheduled?"] = df["Scheduled?"].replace({"TRUE": True, "FALSE": False, "True
 df["Type"] = df["Type"].fillna("Event").astype(str)
 df["Location"] = df["Location"].fillna("").astype(str)
 
+# Silent Background Auto-Sync every 3 minutes to pull Google changes automatically on load
+import time
+now_ts = time.time()
+if "last_google_sync" not in st.session_state or now_ts - st.session_state.last_google_sync > 180:
+    try:
+        df, was_updated = sync_all_to_sheet(df, cal_service, tasks_service, conn)
+        st.session_state.last_google_sync = now_ts
+    except Exception:
+        pass
+
 # Auto-sweep past events to complete them silently on load
 try:
     df_temp = df.copy()
