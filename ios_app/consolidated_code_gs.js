@@ -755,10 +755,10 @@ function doPost(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       
-      // Parse headers
-      var headers = lines[0].split(",");
+      // Parse headers using our robust parser
+      var headers = parseCSVLine(lines[0]);
       for (var h = 0; h < headers.length; h++) {
-        headers[h] = headers[h].replace(/^["']|["']$/g, "").trim().toLowerCase();
+        headers[h] = headers[h].toLowerCase();
       }
       
       var dateIdx = -1;
@@ -773,21 +773,22 @@ function doPost(e) {
       for (var h = 0; h < headers.length; h++) {
         var head = headers[h];
         if (head.indexOf("date") !== -1 || head.indexOf("start") !== -1 || head.indexOf("created") !== -1) dateIdx = h;
-        if (head.indexOf("workout") !== -1 || head.indexOf("title") !== -1) workoutNameIdx = h;
         if (head.indexOf("exercise") !== -1) exerciseIdx = h;
         if (head.indexOf("set") !== -1 && head.indexOf("type") === -1) setIdx = h;
         if (head.indexOf("weight") !== -1) weightIdx = h;
         if (head.indexOf("rep") !== -1) repsIdx = h;
         if (head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) distanceIdx = h;
         if (head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) durationIdx = h;
+        // Make sure workout name doesn't match exercise title column
+        if ((head.indexOf("workout") !== -1 || head.indexOf("title") !== -1) && head.indexOf("exercise") === -1) workoutNameIdx = h;
       }
       
       if (dateIdx === -1 || exerciseIdx === -1) {
-        return ContentService.createTextOutput(JSON.stringify({ error: "Invalid Hevy CSV format: missing Date or Exercise Name header. Found: " + headers.join(", ") }))
+        return ContentService.createTextOutput(JSON.stringify({ error: "Invalid Hevy CSV format: missing Date or Exercise Name header. Found headers: " + headers.join(", ") }))
           .setMimeType(ContentService.MimeType.JSON);
       }
       
-      // Load existing records to deduplicate
+      // Load spreadsheet headers
       var wData = workoutSheet.getDataRange().getValues();
       var wHeaders = wData[0];
       var wDateCol = wHeaders.indexOf("Date");
@@ -801,30 +802,44 @@ function doPost(e) {
       var wDurCol = wHeaders.indexOf("Duration (Mins)");
       var wDistCol = wHeaders.indexOf("Distance (km)");
       
+      // --- DATABASE SELF-HEALING & CLEANUP ENGINE ---
+      // We will loop through the existing database, delete corrupted dates, and deduplicate
       var existingKeys = {};
-      for (var r = 1; r < wData.length; r++) {
-        var key = formatDateString(wData[r][wDateCol]) + "_" + String(wData[r][wExeCol]).trim().toLowerCase() + "_" + wData[r][wSetCol];
-        existingKeys[key] = true;
+      var rowsToKeep = [];
+      
+      if (wData.length > 1) {
+        for (var r = 1; r < wData.length; r++) {
+          var rowVal = wData[r];
+          var rawDateVal = rowVal[wDateCol];
+          var formattedDateVal = formatDateString(rawDateVal);
+          
+          // Skip empty dates or dates that contain text (like "Jun" or comma) which were previously corrupted
+          if (!formattedDateVal || String(rawDateVal).indexOf(",") !== -1 || String(rawDateVal).match(/[a-zA-Z]/)) {
+            continue;
+          }
+          
+          var exerciseVal = String(rowVal[wExeCol]).trim();
+          var setNumVal = parseInt(rowVal[wSetCol], 10) || 1;
+          var keyVal = formattedDateVal + "_" + exerciseVal.toLowerCase() + "_" + setNumVal;
+          
+          if (existingKeys[keyVal]) {
+            continue; // Skip duplicate rows
+          }
+          
+          existingKeys[keyVal] = true;
+          rowsToKeep.push(rowVal);
+        }
       }
       
+      // --- NEW WORKOUTS PARSING ---
       var newRowsCount = 0;
-      var rowsToAdd = [];
+      var newRowsToAdd = [];
       
       for (var i = 1; i < lines.length; i++) {
         var line = lines[i].trim();
         if (!line) continue;
         
-        // CSV parser supporting double quotes
-        var matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-        var row = [];
-        if (matches) {
-          row = matches.map(function(val) {
-            return val.replace(/^["']|["']$/g, "").trim();
-          });
-        } else {
-          row = line.split(",");
-        }
-        
+        var row = parseCSVLine(line);
         if (row.length < Math.max(dateIdx, exerciseIdx)) continue;
         
         var rawDate = row[dateIdx];
@@ -835,13 +850,12 @@ function doPost(e) {
         var setNum = parseInt(row[setIdx], 10) || 1;
         
         var key = formattedDate + "_" + exercise.toLowerCase() + "_" + setNum;
-        if (existingKeys[key]) continue; // Skip duplicates
+        if (existingKeys[key]) continue; // Deduplicate against existing + keeping keys
         
         var workoutName = workoutNameIdx !== -1 ? row[workoutNameIdx] : "Hevy App Import";
         var weight = weightIdx !== -1 ? parseFloat(row[weightIdx]) : 0.0;
         var reps = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : 0;
         
-        // Hevy duration is exported in seconds, convert to minutes
         var duration = durationIdx !== -1 ? parseFloat(row[durationIdx]) / 60.0 : 0.0;
         var distance = distanceIdx !== -1 ? parseFloat(row[distanceIdx]) : 0.0;
         
@@ -852,6 +866,13 @@ function doPost(e) {
         
         var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
         
+        // Extract timestamp from rawDate
+        var timestamp = "12:00:00";
+        var parsedDate = new Date(rawDate.trim());
+        if (!isNaN(parsedDate.getTime())) {
+          timestamp = Utilities.formatDate(parsedDate, "America/Toronto", "HH:mm:ss");
+        }
+        
         var newRow = [];
         for (var c = 0; c < wHeaders.length; c++) {
           if (c === wDateCol) newRow.push(formattedDate);
@@ -861,20 +882,41 @@ function doPost(e) {
           else if (c === wWeightCol) newRow.push(weight);
           else if (c === wRepsCol) newRow.push(reps);
           else if (c === w1rmCol) newRow.push(est1rm);
-          else if (c === wTimeCol) newRow.push("12:00:00");
+          else if (c === wTimeCol) newRow.push(timestamp);
           else if (c === wDurCol) newRow.push(Math.round(duration * 10) / 10);
           else if (c === wDistCol) newRow.push(Math.round(distance * 100) / 100);
           else newRow.push("");
         }
         
-        rowsToAdd.push(newRow);
+        newRowsToAdd.push(newRow);
+        rowsToKeep.push(newRow);
         existingKeys[key] = true;
         newRowsCount++;
       }
       
-      if (rowsToAdd.length > 0) {
-        var lastRow = workoutSheet.getLastRow();
-        workoutSheet.getRange(lastRow + 1, 1, rowsToAdd.length, wHeaders.length).setValues(rowsToAdd);
+      // Clear entire sheet below headers
+      if (wData.length > 1) {
+        workoutSheet.getRange(2, 1, wData.length, wHeaders.length).clearContent();
+      }
+      
+      // Sort database rowsToKeep chronologically
+      if (rowsToKeep.length > 0) {
+        rowsToKeep.sort(function(a, b) {
+          var dateStrA = formatDateString(a[wDateCol]);
+          var dateStrB = formatDateString(b[wDateCol]);
+          if (dateStrA !== dateStrB) {
+            return dateStrA < dateStrB ? -1 : 1;
+          }
+          var exeA = String(a[wExeCol]).toLowerCase();
+          var exeB = String(b[wExeCol]).toLowerCase();
+          if (exeA !== exeB) {
+            return exeA < exeB ? -1 : 1;
+          }
+          return (parseInt(a[wSetCol], 10) || 0) - (parseInt(b[wSetCol], 10) || 0);
+        });
+        
+        // Write back clean, sorted, deduplicated, and newly added rows
+        workoutSheet.getRange(2, 1, rowsToKeep.length, wHeaders.length).setValues(rowsToKeep);
       }
       
       return ContentService.createTextOutput(JSON.stringify({ success: true, importedSets: newRowsCount }))
@@ -895,11 +937,39 @@ function formatDateString(val) {
   if (val instanceof Date) {
     return Utilities.formatDate(val, "America/Toronto", "yyyy-MM-dd");
   }
-  return String(val).split("T")[0].trim();
+  var str = String(val).trim();
+  // If already yyyy-MM-dd, return as-is to avoid timezone shifts
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+  var parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, "America/Toronto", "yyyy-MM-dd");
+  }
+  return str.split("T")[0].trim();
 }
 
 function parseBool(val) {
   if (typeof val === "boolean") return val;
   var str = String(val).toLowerCase().trim();
   return str === "true" || str === "1";
+}
+
+function parseCSVLine(line) {
+  var result = [];
+  var current = "";
+  var inQuotes = false;
+  for (var i = 0; i < line.length; i++) {
+    var char = line.charAt(i);
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
 }
