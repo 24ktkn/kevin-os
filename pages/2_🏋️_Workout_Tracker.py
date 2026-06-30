@@ -80,6 +80,10 @@ if "master_workout_df" not in st.session_state:
 
 df_logs = st.session_state.master_workout_df
 
+# Ensure Distance column exists in case of cached session state
+if "Distance (km)" not in df_logs.columns:
+    df_logs["Distance (km)"] = 0.0
+
 # --- ENGINE 2: BIOMETRICS LOCAL MEMORY CACHE ---
 if "master_bio_df" not in st.session_state:
     try:
@@ -374,7 +378,7 @@ with tab2:
         st.write("---")
         st.markdown("#### 🔍 Micro Exercise Progression Overlays")
         selected_chart_exe = st.selectbox("Select Target Exercise to Plot Progression Path", sorted(df_analytics["Exercise"].dropna().unique()))
-        filtered_df = df_analytics[df_analytics["Exercise"] == selected_chart_exe].sort_values(by="Date")
+        filtered_df = df_analytics[df_analytics["Exercise"] == selected_chart_exe].sort_values(by="Date").copy()
         if not filtered_df.empty:
             exe_name_lower = selected_chart_exe.lower()
             is_cardio = "cardio" in exe_name_lower or any(x in exe_name_lower for x in ["treadmill", "run", "walk", "bike", "cycle", "cycling", "elliptical", "rower", "spin"])
@@ -438,12 +442,15 @@ with tab3:
                 h_start = next((c for c in df_hevy.columns if "start_time" in c or "start" in c), None)
                 h_end = next((c for c in df_hevy.columns if "end_time" in c or "end" in c), None)
                 h_dist = next((c for c in df_hevy.columns if "distance" in c), None)
+                h_secs = next((c for c in df_hevy.columns if "seconds" in c or "duration_seconds" in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
                     df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
                     if h_dist:
                         df_hevy[h_dist] = pd.to_numeric(df_hevy[h_dist], errors='coerce').fillna(0.0)
+                    if h_secs:
+                        df_hevy[h_secs] = pd.to_numeric(df_hevy[h_secs], errors='coerce').fillna(0.0)
                     
                     if h_start and h_end:
                         df_hevy[h_start] = pd.to_datetime(df_hevy[h_start], errors='coerce')
@@ -463,7 +470,13 @@ with tab3:
                         w_val = float(row[h_weight])
                         r_val = int(row[h_reps])
                         s_val = int(row['computed_set_num'])
-                        dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
+                        
+                        # Use set-specific duration (seconds) if available in Hevy CSV for cardio pace calculations
+                        cardio_seconds = float(row[h_secs]) if h_secs and pd.notna(row[h_secs]) else 0.0
+                        if cardio_seconds > 0:
+                            dur_val = round(cardio_seconds / 60.0, 2)
+                        else:
+                            dur_val = float(row['computed_dur']) if 'computed_dur' in df_hevy.columns else 60.0
                         
                         if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
                         
