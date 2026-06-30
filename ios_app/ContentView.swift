@@ -14,179 +14,174 @@ struct ContentView: View {
     let lavenderColor = Color(red: 0.66, green: 0.33, blue: 0.97) // #A855F7
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                bgColor.ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+        ZStack {
+            bgColor.ignoresSafeArea()
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    
+                    // --- HEADER ---
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("🧠 Central OS")
+                                .font(.system(size: 28, weight: .black, design: .rounded))
+                                .foregroundColor(.white)
+                            Text(networkManager.dateStr)
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .foregroundColor(.gray)
+                        }
+                        Spacer()
+                        if networkManager.isLoading {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Button(action: {
+                                networkManager.fetchData()
+                            }) {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // --- STEPS PROGRESS BLOCK ---
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Daily Steps Tracker")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
                         
-                        // --- HEADER ---
                         HStack {
                             VStack(alignment: .leading) {
-                                Text("🧠 Central OS")
-                                    .font(.system(size: 28, weight: .black, design: .rounded))
-                                    .foregroundColor(.white)
-                                Text(networkManager.dateStr)
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                Text("\(networkManager.biometrics.steps)")
+                                    .font(.system(size: 32, weight: .black, design: .rounded))
+                                    .foregroundColor(neonGreen)
+                                Text("/ 10,000 steps")
+                                    .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(.gray)
                             }
                             Spacer()
-                            if networkManager.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            } else {
-                                Button(action: {
-                                    networkManager.fetchData()
-                                }) {
-                                    Image(systemName: "arrow.clockwise.circle.fill")
-                                        .font(.system(size: 24))
-                                        .foregroundColor(.white)
-                                }
+                            // Circular Progress Ring
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.05), lineWidth: 8)
+                                    .frame(width: 50, height: 50)
+                                Circle()
+                                    .trim(from: 0.0, to: CGFloat(min(Double(networkManager.biometrics.steps) / 10000.0, 1.0)))
+                                    .stroke(neonGreen, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                                    .frame(width: 50, height: 50)
+                                    .rotationEffect(Angle(degrees: -90))
+                                
+                                Text("\(Int(min(Double(networkManager.biometrics.steps) / 10000.0, 1.0) * 100))%")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
                             }
                         }
-                        .padding(.horizontal)
+                        .padding()
+                        .background(cardBgColor)
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(cardBorderColor, lineWidth: 1)
+                        )
+                    }
+                    .padding(.horizontal)
+                    
+                    // --- BIOMETRICS GRID ---
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Biometrics Command Center")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
                         
-                        // --- STEPS PROGRESS BLOCK ---
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Daily Steps Tracker")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.gray)
-                                .textCase(.uppercase)
-                            
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text("\(networkManager.biometrics.steps)")
-                                        .font(.system(size: 32, weight: .black, design: .rounded))
-                                        .foregroundColor(neonGreen)
-                                    Text("/ 10,000 steps")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(.gray)
-                                }
-                                Spacer()
-                                // Circular Progress Ring
-                                ZStack {
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.05), lineWidth: 8)
-                                        .frame(width: 50, height: 50)
-                                    Circle()
-                                        .trim(from: 0.0, to: CGFloat(min(Double(networkManager.biometrics.steps) / 10000.0, 1.0)))
-                                        .stroke(neonGreen, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                                        .frame(width: 50, height: 50)
-                                        .rotationEffect(Angle(degrees: -90))
-                                    
-                                    Text("\(Int(min(Double(networkManager.biometrics.steps) / 10000.0, 1.0) * 100))%")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .padding()
-                            .background(cardBgColor)
-                            .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(cardBorderColor, lineWidth: 1)
-                            )
-                        }
-                        .padding(.horizontal)
-                        
-                        // --- BIOMETRICS GRID ---
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Biometrics Command Center")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.gray)
-                                .textCase(.uppercase)
-                            
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                                // HRV Card
-                                BiometricCard(title: "HRV (Variability)", 
-                                             val: networkManager.biometrics.hrv > 0 ? "\(networkManager.biometrics.hrv) ms" : "No data", 
-                                             color: cyanColor, 
-                                             cardBg: cardBgColor, 
-                                             cardBorder: cardBorderColor)
-                                
-                                // Sleep Duration Card
-                                BiometricCard(title: "Sleep Duration", 
-                                             val: networkManager.biometrics.sleep > 0 ? String(format: "%.1f hrs", networkManager.biometrics.sleep) : "No data", 
-                                             color: yellowColor, 
-                                             cardBg: cardBgColor, 
-                                             cardBorder: cardBorderColor)
-                                
-                                // Wake Time Card
-                                BiometricCard(title: "Wake Up Time", 
-                                             val: networkManager.biometrics.wakeTime, 
-                                             color: lavenderColor, 
-                                             cardBg: cardBgColor, 
-                                             cardBorder: cardBorderColor)
-                                
-                                // Resting Heart Rate Card
-                                BiometricCard(title: "Resting Heart Rate", 
-                                             val: networkManager.biometrics.rhr > 0 ? "\(networkManager.biometrics.rhr) bpm" : "No data", 
-                                             color: redColor, 
-                                             cardBg: cardBgColor, 
-                                             cardBorder: cardBorderColor)
-                                
-                                // Bodyweight Card
-                                BiometricCard(title: "Bodyweight", 
-                                             val: networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data", 
-                                             color: neonGreen, 
-                                             cardBg: cardBgColor, 
-                                             cardBorder: cardBorderColor)
-                            }
-                        }
-                        .padding(.horizontal)
-                        
-                        // --- HABITS SECTION ---
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("⚡ Habits Command Center")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.gray)
-                                .textCase(.uppercase)
-                            
-                            VStack(spacing: 12) {
-                                HabitRow(title: "Wake Up On Time", 
-                                         icon: "⏰", 
-                                         isCompleted: networkManager.habits.wakeUpOnTime, 
-                                         color: lavenderColor, 
-                                         cardBg: cardBgColor, 
-                                         cardBorder: cardBorderColor,
-                                         action: {
-                                             networkManager.toggleHabit(habitName: "Wake Up On Time", completed: !networkManager.habits.wakeUpOnTime)
-                                         })
-                                
-                                HabitRow(title: "Gym Workout", 
-                                         icon: "💪", 
-                                         isCompleted: networkManager.habits.gymWorkout, 
-                                         color: neonGreen, 
-                                         cardBg: cardBgColor, 
-                                         cardBorder: cardBorderColor,
-                                         action: {
-                                             networkManager.toggleHabit(habitName: "Gym Workout", completed: !networkManager.habits.gymWorkout)
-                                         })
-                                
-                                HabitRow(title: "Journaling", 
-                                         icon: "✍️", 
-                                         isCompleted: networkManager.habits.journaling, 
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            // HRV Card
+                            BiometricCard(title: "HRV (Variability)", 
+                                         val: networkManager.biometrics.hrv > 0 ? "\(networkManager.biometrics.hrv) ms" : "No data", 
                                          color: cyanColor, 
                                          cardBg: cardBgColor, 
-                                         cardBorder: cardBorderColor,
-                                         action: {
-                                             networkManager.toggleHabit(habitName: "Journaling", completed: !networkManager.habits.journaling)
-                                         })
-                            }
+                                         cardBorder: cardBorderColor)
+                            
+                            // Sleep Duration Card
+                            BiometricCard(title: "Sleep Duration", 
+                                         val: networkManager.biometrics.sleep > 0 ? String(format: "%.1f hrs", networkManager.biometrics.sleep) : "No data", 
+                                         color: yellowColor, 
+                                         cardBg: cardBgColor, 
+                                         cardBorder: cardBorderColor)
+                            
+                            // Wake Time Card
+                            BiometricCard(title: "Wake Up Time", 
+                                         val: networkManager.biometrics.wakeTime, 
+                                         color: lavenderColor, 
+                                         cardBg: cardBgColor, 
+                                         cardBorder: cardBorderColor)
+                            
+                            // Resting Heart Rate Card
+                            BiometricCard(title: "Resting Heart Rate", 
+                                         val: networkManager.biometrics.rhr > 0 ? "\(networkManager.biometrics.rhr) bpm" : "No data", 
+                                         color: redColor, 
+                                         cardBg: cardBgColor, 
+                                         cardBorder: cardBorderColor)
+                            
+                            // Bodyweight Card
+                            BiometricCard(title: "Bodyweight", 
+                                         val: networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data", 
+                                         color: neonGreen, 
+                                         cardBg: cardBgColor, 
+                                         cardBorder: cardBorderColor)
                         }
-                        .padding(.horizontal)
-                        
                     }
-                    .padding(.vertical)
+                    .padding(.horizontal)
+                    
+                    // --- HABITS SECTION ---
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("⚡ Habits Command Center")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
+                        
+                        VStack(spacing: 12) {
+                            HabitRow(title: "Wake Up On Time", 
+                                     icon: "⏰", 
+                                     isCompleted: networkManager.habits.wakeUpOnTime, 
+                                     color: lavenderColor, 
+                                     cardBg: cardBgColor, 
+                                     cardBorder: cardBorderColor,
+                                     action: {
+                                         networkManager.toggleHabit(habitName: "Wake Up On Time", completed: !networkManager.habits.wakeUpOnTime)
+                                     })
+                            
+                            HabitRow(title: "Gym Workout", 
+                                     icon: "💪", 
+                                     isCompleted: networkManager.habits.gymWorkout, 
+                                     color: neonGreen, 
+                                     cardBg: cardBgColor, 
+                                     cardBorder: cardBorderColor,
+                                     action: {
+                                         networkManager.toggleHabit(habitName: "Gym Workout", completed: !networkManager.habits.gymWorkout)
+                                     })
+                            
+                            HabitRow(title: "Journaling", 
+                                     icon: "✍️", 
+                                     isCompleted: networkManager.habits.journaling, 
+                                     color: cyanColor, 
+                                     cardBg: cardBgColor, 
+                                     cardBorder: cardBorderColor,
+                                     action: {
+                                         networkManager.toggleHabit(habitName: "Journaling", completed: !networkManager.habits.journaling)
+                                     })
+                        }
+                    }
+                    .padding(.horizontal)
+                    
                 }
-                .refreshable {
-                    networkManager.fetchData()
-                }
+                .padding(.vertical)
             }
-            #if os(iOS)
-            .navigationBarHidden(true)
-            #endif
+            .refreshable {
+                networkManager.fetchData()
+            }
         }
         .onAppear {
             networkManager.fetchData()
