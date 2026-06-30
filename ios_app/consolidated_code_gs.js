@@ -808,6 +808,7 @@ function doPost(e) {
       }
       
       var newRowsCount = 0;
+      var rowsToAdd = [];
       
       for (var i = 1; i < lines.length; i++) {
         var line = lines[i].trim();
@@ -866,9 +867,14 @@ function doPost(e) {
           else newRow.push("");
         }
         
-        workoutSheet.appendRow(newRow);
+        rowsToAdd.push(newRow);
         existingKeys[key] = true;
         newRowsCount++;
+      }
+      
+      if (rowsToAdd.length > 0) {
+        var lastRow = workoutSheet.getLastRow();
+        workoutSheet.getRange(lastRow + 1, 1, rowsToAdd.length, wHeaders.length).setValues(rowsToAdd);
       }
       
       return ContentService.createTextOutput(JSON.stringify({ success: true, importedSets: newRowsCount }))
