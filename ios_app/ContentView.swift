@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 struct ContentView: View {
     @StateObject private var networkManager = NetworkManager()
@@ -61,6 +62,14 @@ struct ContentView: View {
                     Text("Meal Prep")
                 }
                 .tag(3)
+            
+            // --- TAB 5: MISSION CONTROL ---
+            MissionControlView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor)
+                .tabItem {
+                    Image(systemName: "calendar")
+                    Text("Mission")
+                }
+                .tag(4)
         }
         .accentColor(neonGreen)
         .onAppear {
@@ -955,3 +964,433 @@ struct HabitRow: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorder, lineWidth: 1))
     }
 }
+
+// =========================================================================
+// 🚀 VIEW 5: MISSION CONTROL
+// =========================================================================
+struct MissionControlView: View {
+    @ObservedObject var networkManager: NetworkManager
+    let bgColor: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    let neonGreen: Color
+    let cyanColor: Color
+    let yellowColor: Color
+    let redColor: Color
+    let lavenderColor: Color
+    
+    @State private var showingAddForm = false
+    @State private var selectedFilter = 0 // 0: Upcoming, 1: Tasks, 2: Events
+    
+    let calendarsList = ["Kevin Nguyen", "Family", "School", "Volunteering"]
+    
+    func badgeColor(for calendar: String) -> Color {
+        switch calendar.lowercased() {
+        case "kevin nguyen": return .blue
+        case "family": return .red
+        case "school": return lavenderColor
+        case "volunteering": return yellowColor
+        default: return .gray
+        }
+    }
+    
+    var filteredItems: [MissionControlItem] {
+        let items = networkManager.missionControlItems
+        let nowStr = formatDate(Date())
+        
+        switch selectedFilter {
+        case 0: // Upcoming (uncompleted, >= today)
+            return items.filter { !$0.status && $0.date >= nowStr }
+        case 1: // Tasks (uncompleted tasks)
+            return items.filter { !$0.status && $0.type.lowercased() == "task" }
+        case 2: // Events (upcoming events)
+            return items.filter { !$0.status && $0.type.lowercased() == "event" && $0.date >= nowStr }
+        default:
+            return items
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Quick Action: Add item
+                    Button(action: { showingAddForm = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Log New Event or Task")
+                                .font(.system(size: 14, weight: .black, design: .rounded))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(cyanColor)
+                        .foregroundColor(.black)
+                        .cornerRadius(10)
+                    }
+                    .padding(.horizontal)
+                    .sheet(isPresented: $showingAddForm) {
+                        AddMissionItemForm(
+                            networkManager: networkManager,
+                            calendarsList: calendarsList,
+                            badgeColor: badgeColor,
+                            bgColor: bgColor,
+                            cardBgColor: cardBgColor,
+                            cardBorderColor: cardBorderColor,
+                            cyanColor: cyanColor,
+                            lavenderColor: lavenderColor,
+                            isPresented: $showingAddForm
+                        )
+                    }
+                    
+                    // Filter Picker
+                    Picker("Filter", selection: $selectedFilter) {
+                        Text("Upcoming").tag(0)
+                        Text("Tasks").tag(1)
+                        Text("Events").tag(2)
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .padding(.horizontal)
+                    
+                    // Tasks/Events List
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Upcoming Agenda Ledger")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
+                            .padding(.horizontal)
+                        
+                        if filteredItems.isEmpty {
+                            Text("No items found in this section.")
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(cardBgColor)
+                                .cornerRadius(12)
+                                .padding(.horizontal)
+                        } else {
+                            VStack(spacing: 8) {
+                                ForEach(filteredItems) { item in
+                                    MissionItemRow(
+                                        item: item,
+                                        networkManager: networkManager,
+                                        badgeColor: badgeColor(for: item.calendar),
+                                        cardBgColor: cardBgColor,
+                                        cardBorderColor: cardBorderColor,
+                                        neonGreen: neonGreen
+                                    )
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                    
+                    Divider().background(Color.white.opacity(0.1)).padding(.horizontal)
+                    
+                    // Embedded Calendar View
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("📅 Embedded Master Calendar")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
+                            .padding(.horizontal)
+                        
+                        let embedUrl = "https://calendar.google.com/calendar/embed?wkst=1&ctz=America%2FToronto&showPrint=0&src=MjRrdGtuQGdtYWlsLmNvbQ&src=MGRiYzFmNDBjOWRjOTkzYzZiODkzZmEwZTE2NDZiODg4ZWI4ZWQ4NTk5NjY4Yzk2OTdkNzI2ODllMDQxZTMxNUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=NTdiYjhhOGJmNjFlMjMzZThiYjc2YWIwM2Y1M2IwM2VhZDM1ZTdiYTY2ZTM3ZDJiZmQ3Mzc5MmUxYzFlNTc1ZUBncm91cC5jYWxlbmRhci5nb29nbGUuY29t&src=ZmFtaWx5MDU2NjgyMjcyMTU0MjM1ODcyNTFAZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ&color=%23039be5&color=%238e24aa&color=%23f6bf26&color=%23d50000"
+                        
+                        WebView(urlString: embedUrl)
+                            .frame(height: 380)
+                            .cornerRadius(12)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                            .padding(.horizontal)
+                    }
+                }
+                .padding(.vertical)
+            }
+            .background(bgColor.ignoresSafeArea())
+            .navigationTitle("🚀 Mission Control")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if networkManager.isLoading {
+                        ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    } else {
+                        Button(action: { networkManager.fetchData() }) {
+                            Image(systemName: "arrow.clockwise.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+}
+
+struct AddMissionItemForm: View {
+    @ObservedObject var networkManager: NetworkManager
+    let calendarsList: [String]
+    let badgeColor: (String) -> Color
+    let bgColor: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    let cyanColor: Color
+    let lavenderColor: Color
+    @Binding var isPresented: Bool
+    
+    @State private var itemName = ""
+    @State private var itemType = "Task"
+    @State private var calendarCat = "Kevin Nguyen"
+    @State private var targetDate = Date()
+    @State private var allDay = false
+    @State private var startTime = Date()
+    @State private var duration = 60
+    @State private var location = ""
+    @State private var notes = ""
+    @State private var isSubmitting = false
+    @State private var showingAlert = false
+    @State private var alertMsg = ""
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Core Details").foregroundColor(.gray)) {
+                    TextField("Title (e.g., Study Pathology)", text: $itemName)
+                        .listRowBackground(cardBgColor)
+                    
+                    Picker("Type", selection: $itemType) {
+                        Text("Task").tag("Task")
+                        Text("Event").tag("Event")
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .listRowBackground(cardBgColor)
+                    
+                    Picker("Calendar Category", selection: $calendarCat) {
+                        ForEach(calendarsList, id: \.self) { Text($0).tag($0) }
+                    }
+                    .listRowBackground(cardBgColor)
+                }
+                
+                Section(header: Text("Scheduling").foregroundColor(.gray)) {
+                    DatePicker("Target Date", selection: $targetDate, displayedComponents: .date)
+                        .listRowBackground(cardBgColor)
+                    
+                    Toggle("All-day (No specific time)", isOn: $allDay)
+                        .listRowBackground(cardBgColor)
+                    
+                    if !allDay {
+                        DatePicker("Start Time", selection: $startTime, displayedComponents: .hourAndMinute)
+                            .listRowBackground(cardBgColor)
+                        
+                        Stepper("Duration: \(duration) mins", value: $duration, in: 15...480, step: 15)
+                            .listRowBackground(cardBgColor)
+                    }
+                }
+                
+                Section(header: Text("Location & Notes (Optional)").foregroundColor(.gray)) {
+                    TextField("Location", text: $location)
+                        .listRowBackground(cardBgColor)
+                    TextEditor(text: $notes)
+                        .frame(height: 80)
+                        .listRowBackground(cardBgColor)
+                }
+                
+                Section {
+                    Button(action: {
+                        isSubmitting = true
+                        
+                        let dateF = DateFormatter()
+                        dateF.dateFormat = "yyyy-MM-dd"
+                        let dateStr = dateF.string(from: targetDate)
+                        
+                        let timeStr: String
+                        let durVal: Int
+                        if allDay {
+                            timeStr = ""
+                            durVal = 0
+                        } else {
+                            let timeF = DateFormatter()
+                            timeF.dateFormat = "HH:mm:ss"
+                            timeStr = timeF.string(from: startTime)
+                            durVal = duration
+                        }
+                        
+                        networkManager.logMissionItem(
+                            itemName: itemName,
+                            type: itemType,
+                            calendar: calendarCat,
+                            date: dateStr,
+                            time: timeStr,
+                            duration: durVal,
+                            location: location,
+                            notes: notes
+                        ) { success in
+                            DispatchQueue.main.async {
+                                isSubmitting = false
+                                if success {
+                                    isPresented = false
+                                } else {
+                                    alertMsg = "Sync failed. Check your network connection and try again."
+                                    showingAlert = true
+                                }
+                            }
+                        }
+                    }) {
+                        HStack {
+                            if isSubmitting {
+                                ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .black))
+                            } else {
+                                Image(systemName: "cloud.upload.fill")
+                                Text("Publish to Google Workspace")
+                                    .fontWeight(.black)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .disabled(itemName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmitting)
+                    .foregroundColor(itemName.isEmpty ? .gray : .black)
+                    .listRowBackground(itemName.isEmpty ? Color.gray.opacity(0.2) : cyanColor)
+                }
+            }
+            .background(bgColor.ignoresSafeArea())
+            .navigationTitle("Log Task or Event")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { isPresented = false }
+                }
+            }
+            .alert(isPresented: $showingAlert) {
+                Alert(title: Text("Sync Error"), message: Text(alertMsg), dismissButton: .default(Text("OK")))
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+struct MissionItemRow: View {
+    let item: MissionControlItem
+    @ObservedObject var networkManager: NetworkManager
+    let badgeColor: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    let neonGreen: Color
+    
+    var body: some View {
+        HStack(alignment: .top) {
+            Button(action: {
+                networkManager.toggleMissionItem(eventId: item.id, completed: !item.status)
+            }) {
+                Image(systemName: item.status ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(item.status ? neonGreen : .gray)
+                    .font(.system(size: 20))
+                    .padding(.top, 2)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(item.calendar.uppercased())
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(badgeColor)
+                        .foregroundColor(.white)
+                        .cornerRadius(4)
+                    
+                    Spacer()
+                    
+                    Text(item.type.lowercased() == "task" ? "☑️" : "📅")
+                        .font(.system(size: 12))
+                }
+                
+                Text(item.itemName)
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .foregroundColor(item.status ? .gray : .white)
+                    .strikethrough(item.status)
+                
+                let dateDisplay = formatStringDate(item.date)
+                let timeDisplay = item.time.isEmpty || item.time == "00:00:00" ? "All Day" : formatStringTime(item.time)
+                let durSuffix = item.duration > 0 ? " (\(item.duration)m)" : ""
+                
+                Text("🕒 \(dateDisplay) @ \(timeDisplay)\(durSuffix)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.gray)
+                
+                if !item.location.isEmpty {
+                    Text("📍 \(item.location)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.gray)
+                }
+                
+                if !item.notes.isEmpty {
+                    Text(item.notes)
+                        .font(.system(size: 11, style: .italic))
+                        .foregroundColor(.gray.opacity(0.7))
+                        .lineLimit(2)
+                }
+            }
+            .padding(.leading, 4)
+            
+            Spacer()
+            
+            Button(action: {
+                networkManager.deleteMissionItem(eventId: item.id)
+            }) {
+                Image(systemName: "trash")
+                    .foregroundColor(.red.opacity(0.8))
+                    .font(.system(size: 14))
+            }
+            .padding(.top, 2)
+        }
+        .padding()
+        .background(cardBgColor)
+        .cornerRadius(12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+    }
+    
+    func formatStringDate(_ dateString: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let date = formatter.date(from: dateString) {
+            let output = DateFormatter()
+            output.dateFormat = "E, MMM d"
+            return output.string(from: date)
+        }
+        return dateString
+    }
+    
+    func formatStringTime(_ timeString: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        if let date = formatter.date(from: timeString) {
+            let output = DateFormatter()
+            output.dateFormat = "h:mm a"
+            return output.string(from: date)
+        }
+        return timeString
+    }
+}
+
+struct WebView: UIViewRepresentable {
+    let urlString: String
+    
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.backgroundColor = .clear
+        webView.isOpaque = false
+        return webView
+    }
+    
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        if let url = URL(string: urlString) {
+            let request = URLRequest(url: url)
+            uiView.load(request)
+        }
+    }
+}
+
