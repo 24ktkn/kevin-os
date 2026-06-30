@@ -5,6 +5,29 @@ import datetime
 from zoneinfo import ZoneInfo
 from streamlit_gsheets import GSheetsConnection
 
+def parse_sleep_duration(val):
+    if pd.isna(val) or val == "":
+        return 0.0
+    val_str = str(val).strip().lower()
+    if "h" in val_str or "m" in val_str:
+        try:
+            hours = 0.0
+            minutes = 0.0
+            if "h" in val_str:
+                parts = val_str.split("h")
+                hours = float(parts[0].strip())
+                val_str = parts[1].strip()
+            if "m" in val_str:
+                parts = val_str.split("m")
+                minutes = float(parts[0].strip())
+            return hours + (minutes / 60.0)
+        except Exception:
+            pass
+    try:
+        return float(val)
+    except ValueError:
+        return 0.0
+
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Custom PPL Fitness Tracker", layout="wide", initial_sidebar_state="expanded")
 
@@ -678,7 +701,7 @@ with tab_recovery:
                     staging_rows.append({
                         "Date": row[date_col],
                         "HRV": int(row[hrv_col]) if hrv_col and pd.notna(row[hrv_col]) else 0,
-                        "Sleep Duration": round(float(row[sleep_col]), 1) if sleep_col and pd.notna(row[sleep_col]) else 0.0,
+                        "Sleep Duration": round(parse_sleep_duration(row[sleep_col]), 2) if sleep_col else 0.0,
                         "RHR": int(row[rhr_col]) if rhr_col and pd.notna(row[rhr_col]) else 0,
                         "Steps": int(row[steps_col]) if steps_col and pd.notna(row[steps_col]) else 0,
                         "Bodyweight": 0.0

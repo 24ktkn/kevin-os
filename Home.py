@@ -13,6 +13,29 @@ else:
     productivity_date = now_local
 today_str = productivity_date.strftime('%Y-%m-%d')
 
+def parse_sleep_duration(val):
+    if pd.isna(val) or val == "":
+        return 0.0
+    val_str = str(val).strip().lower()
+    if "h" in val_str or "m" in val_str:
+        try:
+            hours = 0.0
+            minutes = 0.0
+            if "h" in val_str:
+                parts = val_str.split("h")
+                hours = float(parts[0].strip())
+                val_str = parts[1].strip()
+            if "m" in val_str:
+                parts = val_str.split("m")
+                minutes = float(parts[0].strip())
+            return hours + (minutes / 60.0)
+        except Exception:
+            pass
+    try:
+        return float(val)
+    except ValueError:
+        return 0.0
+
 HABITS_LIST = ["Wake Up On Time", "Gym Workout", "Journaling"]
 
 
@@ -205,7 +228,7 @@ try:
             # Parse values (safe check)
             steps = int(latest_day["Steps"]) if "Steps" in latest_day and pd.notna(latest_day["Steps"]) else 0
             hrv = float(latest_day["HRV"]) if "HRV" in latest_day and pd.notna(latest_day["HRV"]) else 0
-            sleep = float(latest_day["Sleep Duration"]) if "Sleep Duration" in latest_day and pd.notna(latest_day["Sleep Duration"]) else 0
+            sleep = parse_sleep_duration(latest_day["Sleep Duration"]) if "Sleep Duration" in latest_day else 0.0
             rhr = float(latest_day["RHR"]) if "RHR" in latest_day and pd.notna(latest_day["RHR"]) else 0
             
             # Fetch wake time if available

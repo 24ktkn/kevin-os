@@ -386,7 +386,7 @@ function doGet(e) {
         var rowDate = formatDateString(hData[i][hDateCol]);
         if (rowDate === activeDateStr) {
           if (stepsCol !== -1) response.biometrics.steps = parseInt(hData[i][stepsCol], 10) || 0;
-          if (sleepCol !== -1) response.biometrics.sleep = parseFloat(hData[i][sleepCol]) || 0.0;
+          if (sleepCol !== -1) response.biometrics.sleep = parseSleepDurationHours(hData[i][sleepCol]);
           if (hrvCol !== -1) response.biometrics.hrv = parseInt(hData[i][hrvCol], 10) || 0;
           if (rhrCol !== -1) response.biometrics.rhr = parseInt(hData[i][rhrCol], 10) || 0;
           if (weightCol !== -1) response.biometrics.weight = parseFloat(hData[i][weightCol]) || 170.0;
@@ -613,11 +613,18 @@ function doPost(e) {
       
       var steps = params.steps !== undefined ? parseInt(params.steps, 10) : null;
       var sleep = params.sleep !== undefined ? parseFloat(params.sleep) : null;
+      var sleepStr = null;
       if (sleep !== null) {
         if (sleep > 24) {
           sleep = sleep / 3600.0; // Convert seconds to hours
         }
-        sleep = Math.round(sleep * 100) / 100; // Round to 2 decimal places
+        var hours = Math.floor(sleep);
+        var minutes = Math.round((sleep - hours) * 60);
+        if (minutes === 60) {
+          hours += 1;
+          minutes = 0;
+        }
+        sleepStr = hours + "h " + minutes + "m";
       }
       var hrv = params.hrv !== undefined ? parseInt(params.hrv, 10) : null;
       var rhr = params.rhr !== undefined ? parseInt(params.rhr, 10) : null;
@@ -627,7 +634,7 @@ function doPost(e) {
       
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
-        if (sleep !== null && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleep);
+        if (sleepStr !== null && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
         if (hrv !== null && hrvCol !== -1) healthSheet.getRange(targetRow, hrvCol + 1).setValue(hrv);
         if (rhr !== null && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
         if (weight !== null && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
@@ -638,7 +645,7 @@ function doPost(e) {
         for (var c = 0; c < hHeaders.length; c++) {
           if (c === hDateCol) newRow.push(activeDateStr);
           else if (c === stepsCol && steps !== null) newRow.push(steps);
-          else if (c === sleepCol && sleep !== null) newRow.push(sleep);
+          else if (c === sleepCol && sleepStr !== null) newRow.push(sleepStr);
           else if (c === hrvCol && hrv !== null) newRow.push(hrv);
           else if (c === rhrCol && rhr !== null) newRow.push(rhr);
           else if (c === weightCol && weight !== null) newRow.push(weight);
@@ -1288,6 +1295,26 @@ function formatDateString(val) {
     return Utilities.formatDate(parsed, "America/Toronto", "yyyy-MM-dd");
   }
   return str.split("T")[0].trim();
+}
+
+function parseSleepDurationHours(val) {
+  if (!val) return 0.0;
+  var str = String(val).toLowerCase().trim();
+  if (str.indexOf("h") !== -1 || str.indexOf("m") !== -1) {
+    var hours = 0.0;
+    var minutes = 0.0;
+    if (str.indexOf("h") !== -1) {
+      var parts = str.split("h");
+      hours = parseFloat(parts[0]) || 0.0;
+      str = parts[1];
+    }
+    if (str.indexOf("m") !== -1) {
+      var parts = str.split("m");
+      minutes = parseFloat(parts[0]) || 0.0;
+    }
+    return hours + (minutes / 60.0);
+  }
+  return parseFloat(val) || 0.0;
 }
 
 function parseBool(val) {
