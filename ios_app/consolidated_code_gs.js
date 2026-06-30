@@ -418,6 +418,11 @@ function doPost(e) {
       params = e.parameter;
     }
     
+    if (!params) {
+      return ContentService.createTextOutput(JSON.stringify({ error: "Empty request payload" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     var action = params.action;
     
     var now = new Date();
@@ -476,7 +481,6 @@ function doPost(e) {
         if (weight !== null && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
         if (wakeTime !== null && wakeCol !== -1) healthSheet.getRange(targetRow, wakeCol + 1).setValue(wakeTime);
       } else {
-        // Create new row
         var newRow = [];
         for (var c = 0; c < hHeaders.length; c++) {
           if (c === hDateCol) newRow.push(activeDateStr);
@@ -503,47 +507,52 @@ function doPost(e) {
     }
     
     // --- 2. HANDLE TOGGLE HABIT ---
-    var habitName = params.habit;
-    var completed = parseBool(params.completed);
-    
-    var habitsSheet = ss.getSheetByName("Habits");
-    if (!habitsSheet) {
-      return ContentService.createTextOutput(JSON.stringify({ error: "Habits sheet not found" }))
+    if (action === "toggle_habit" || params.habit) {
+      var habitName = params.habit;
+      var completed = parseBool(params.completed);
+      
+      var habitsSheet = ss.getSheetByName("Habits");
+      if (!habitsSheet) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "Habits sheet not found" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      var habData = habitsSheet.getDataRange().getValues();
+      var habHeaders = habData[0];
+      var habDateCol = habHeaders.indexOf("Date");
+      var targetColIdx = habHeaders.indexOf(habitName);
+      
+      if (habDateCol === -1 || targetColIdx === -1) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "Date or Habit column not found" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      var targetRow = -1;
+      for (var j = 1; j < habData.length; j++) {
+        var rowDate = formatDateString(habData[j][habDateCol]);
+        if (rowDate === activeDateStr) {
+          targetRow = j + 1;
+          break;
+        }
+      }
+      
+      if (targetRow !== -1) {
+        habitsSheet.getRange(targetRow, targetColIdx + 1).setValue(completed);
+      } else {
+        var newRow = [];
+        for (var c = 0; c < habHeaders.length; c++) {
+          if (c === habDateCol) newRow.push(activeDateStr);
+          else if (c === targetColIdx) newRow.push(completed);
+          else newRow.push(false);
+        }
+        habitsSheet.appendRow(newRow);
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({ success: true, date: activeDateStr }))
         .setMimeType(ContentService.MimeType.JSON);
     }
     
-    var habData = habitsSheet.getDataRange().getValues();
-    var habHeaders = habData[0];
-    var habDateCol = habHeaders.indexOf("Date");
-    var targetColIdx = habHeaders.indexOf(habitName);
-    
-    if (habDateCol === -1 || targetColIdx === -1) {
-      return ContentService.createTextOutput(JSON.stringify({ error: "Date or Habit column not found" }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    var targetRow = -1;
-    for (var j = 1; j < habData.length; j++) {
-      var rowDate = formatDateString(habData[j][habDateCol]);
-      if (rowDate === activeDateStr) {
-        targetRow = j + 1;
-        break;
-      }
-    }
-    
-    if (targetRow !== -1) {
-      habitsSheet.getRange(targetRow, targetColIdx + 1).setValue(completed);
-    } else {
-      var newRow = [];
-      for (var c = 0; c < habHeaders.length; c++) {
-        if (c === habDateCol) newRow.push(activeDateStr);
-        else if (c === targetColIdx) newRow.push(completed);
-        else newRow.push(false);
-      }
-      habitsSheet.appendRow(newRow);
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ success: true, date: activeDateStr }))
+    return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action or parameters. Received: " + JSON.stringify(params) }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
