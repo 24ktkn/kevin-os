@@ -4,9 +4,8 @@ struct ContentView: View {
     @StateObject private var networkManager = NetworkManager()
     @State private var selectedTab = 0
     @State private var showingImportAlert = false
-    @State private var importSuccessCount = 0
-    @State private var showingImportError = false
-    @State private var importErrorMessage = ""
+    @State private var importAlertTitle = ""
+    @State private var importAlertMessage = ""
     
     // Core color palette matching premium web app
     let bgColor = Color(red: 0.06, green: 0.06, blue: 0.07) // #0F0F12
@@ -83,41 +82,37 @@ struct ContentView: View {
                     networkManager.importHevyCSV(csvText: csvText) { success, count, errorMsg in
                         DispatchQueue.main.async {
                             if success {
-                                self.importSuccessCount = count
+                                self.importAlertTitle = "Hevy CSV Imported"
+                                self.importAlertMessage = "Success! Discovered and added \(count) new workout sets to your Google Sheet without any duplicates."
                                 self.showingImportAlert = true
                             } else {
-                                self.importErrorMessage = errorMsg
-                                self.showingImportError = true
+                                self.importAlertTitle = "Import Failed"
+                                self.importAlertMessage = errorMsg
+                                self.showingImportAlert = true
                             }
                         }
                     }
                 } else {
                     print("Failed to convert shared CSV data to String")
                     DispatchQueue.main.async {
-                        self.importErrorMessage = "Could not decode CSV data as UTF-8 string."
-                        self.showingImportError = true
+                        self.importAlertTitle = "Import Failed"
+                        self.importAlertMessage = "Could not decode CSV data as UTF-8 string."
+                        self.showingImportAlert = true
                     }
                 }
             } catch {
                 print("Failed to read shared CSV file: \(error.localizedDescription)")
                 DispatchQueue.main.async {
-                    self.importErrorMessage = "Failed to access file: \(error.localizedDescription)"
-                    self.showingImportError = true
+                    self.importAlertTitle = "Import Failed"
+                    self.importAlertMessage = "Failed to access file: \(error.localizedDescription)"
+                    self.showingImportAlert = true
                 }
             }
         }
         .alert(isPresented: $showingImportAlert) {
             Alert(
-                title: Text("Hevy CSV Imported"),
-                message: Text("Success! Discovered and added \(importSuccessCount) new workout sets to your Google Sheet without any duplicates."),
-                dismissButton: .default(Text("Awesome"))
-            )
-        }
-        // Custom warning alert on failure
-        .alert(isPresented: $showingImportError) {
-            Alert(
-                title: Text("Import Failed"),
-                message: Text(importErrorMessage),
+                title: Text(importAlertTitle),
+                message: Text(importAlertMessage),
                 dismissButton: .default(Text("OK"))
             )
         }
