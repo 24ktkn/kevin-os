@@ -788,19 +788,38 @@ function doPost(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       
-      // Load spreadsheet headers
+      // Load spreadsheet headers and normalize them
       var wData = workoutSheet.getDataRange().getValues();
       var wHeaders = wData[0];
-      var wDateCol = wHeaders.indexOf("Date");
-      var wExeCol = wHeaders.indexOf("Exercise");
-      var wSetCol = wHeaders.indexOf("Set Number");
-      var wWeightCol = wHeaders.indexOf("Weight (lbs)");
-      var wRepsCol = wHeaders.indexOf("Reps");
-      var w1rmCol = wHeaders.indexOf("Estimated 1RM");
-      var wTimeCol = wHeaders.indexOf("Timestamp");
-      var wSplitCol = wHeaders.indexOf("Split Day");
-      var wDurCol = wHeaders.indexOf("Duration (Mins)");
-      var wDistCol = wHeaders.indexOf("Distance (km)");
+      var wHeadersClean = [];
+      for (var c = 0; c < wHeaders.length; c++) {
+        wHeadersClean.push(String(wHeaders[c]).trim().toLowerCase());
+      }
+      
+      var wDateCol = -1;
+      var wExeCol = -1;
+      var wSetCol = -1;
+      var wWeightCol = -1;
+      var wRepsCol = -1;
+      var w1rmCol = -1;
+      var wTimeCol = -1;
+      var wSplitCol = -1;
+      var wDurCol = -1;
+      var wDistCol = -1;
+      
+      for (var c = 0; c < wHeadersClean.length; c++) {
+        var hName = wHeadersClean[c];
+        if (hName === "date") wDateCol = c;
+        else if (hName.indexOf("exercise") !== -1) wExeCol = c;
+        else if (hName.indexOf("set number") !== -1 || hName === "set") wSetCol = c;
+        else if (hName.indexOf("weight") !== -1) wWeightCol = c;
+        else if (hName === "reps") wRepsCol = c;
+        else if (hName.indexOf("1rm") !== -1) w1rmCol = c;
+        else if (hName.indexOf("time") !== -1) wTimeCol = c;
+        else if (hName.indexOf("split") !== -1) wSplitCol = c;
+        else if (hName.indexOf("duration") !== -1) wDurCol = c;
+        else if (hName.indexOf("distance") !== -1) wDistCol = c;
+      }
       
       // --- DATABASE SELF-HEALING & CLEANUP ENGINE ---
       // We will loop through the existing database, delete corrupted dates, and deduplicate
@@ -810,7 +829,7 @@ function doPost(e) {
       if (wData.length > 1) {
         for (var r = 1; r < wData.length; r++) {
           var rowVal = wData[r];
-          var rawDateVal = rowVal[wDateCol];
+          var rawDateVal = wDateCol !== -1 ? rowVal[wDateCol] : "";
           var formattedDateVal = formatDateString(rawDateVal);
           
           // Skip empty dates or dates that contain text (like "Jun" or comma) which were previously corrupted
@@ -818,8 +837,8 @@ function doPost(e) {
             continue;
           }
           
-          var exerciseVal = String(rowVal[wExeCol]).trim();
-          var setNumVal = parseInt(rowVal[wSetCol], 10) || 1;
+          var exerciseVal = wExeCol !== -1 ? String(rowVal[wExeCol]).trim() : "";
+          var setNumVal = wSetCol !== -1 ? (parseInt(rowVal[wSetCol], 10) || 1) : 1;
           var keyVal = formattedDateVal + "_" + exerciseVal.toLowerCase() + "_" + setNumVal;
           
           if (existingKeys[keyVal]) {
