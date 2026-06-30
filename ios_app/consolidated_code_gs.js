@@ -851,6 +851,9 @@ function doPost(e) {
       var repsIdx = -1;
       var distanceIdx = -1;
       var durationIdx = -1;
+      var workoutDurIdx = -1;
+      var startTimeIdx = -1;
+      var endTimeIdx = -1;
       
       for (var h = 0; h < headers.length; h++) {
         var head = headers[h];
@@ -860,6 +863,9 @@ function doPost(e) {
         if (head.indexOf("rep") !== -1) repsIdx = h;
         if ((head.indexOf("distance") !== -1 || head.indexOf("dist") !== -1) && head.indexOf("unit") === -1) distanceIdx = h;
         if ((head.indexOf("duration") !== -1 || head.indexOf("second") !== -1) && head.indexOf("workout") === -1 && head.indexOf("unit") === -1) durationIdx = h;
+        if (head.indexOf("workout duration") !== -1 || head.indexOf("workout_duration") !== -1) workoutDurIdx = h;
+        if (head.indexOf("start_time") !== -1 || head.indexOf("start time") !== -1) startTimeIdx = h;
+        if (head.indexOf("end_time") !== -1 || head.indexOf("end time") !== -1) endTimeIdx = h;
         
         // Exclude notes, descriptions, or target from exercise matching
         if (head.indexOf("exercise") !== -1 && head.indexOf("note") === -1 && head.indexOf("desc") === -1 && head.indexOf("target") === -1) {
@@ -896,6 +902,7 @@ function doPost(e) {
       var wTimeCol = -1;
       var wSplitCol = -1;
       var wDurCol = -1;
+      var wGymDurCol = -1;
       var wDistCol = -1;
       
       for (var c = 0; c < wHeadersClean.length; c++) {
@@ -908,13 +915,14 @@ function doPost(e) {
         else if (hName.indexOf("1rm") !== -1) w1rmCol = c;
         else if (hName.indexOf("time") !== -1) wTimeCol = c;
         else if (hName.indexOf("split") !== -1) wSplitCol = c;
-        else if (hName.indexOf("duration") !== -1) wDurCol = c;
+        else if (hName === "duration (mins)") wDurCol = c;
+        else if (hName === "gym duration (mins)") wGymDurCol = c;
         else if (hName.indexOf("distance") !== -1) wDistCol = c;
       }
       
       // --- DATABASE SELF-HEALING & CLEANUP ENGINE ---
       // We will loop through the existing database, delete corrupted dates, and deduplicate
-      var existingKeys = {};
+      var existingKeyToIndex = {};
       var rowsToKeep = [];
       
       if (wData.length > 1) {
@@ -933,17 +941,18 @@ function doPost(e) {
           
           var keyVal = formattedDateVal + "_" + exerciseVal.toLowerCase() + "_" + setNumVal;
           
-          if (existingKeys[keyVal]) {
+          if (existingKeyToIndex[keyVal] !== undefined) {
             continue; // Skip duplicate rows
           }
           
-          existingKeys[keyVal] = true;
+          existingKeyToIndex[keyVal] = rowsToKeep.length;
           rowsToKeep.push(rowVal);
         }
       }
       
-      // --- NEW WORKOUTS PARSING ---
+      // --- NEW WORKOUTS PARSING & MERGE ---
       var newRowsCount = 0;
+      var updatedRowsCount = 0;
       var newRowsToAdd = [];
       var setCounter = {}; // Dynamically count sets sequentially per exercise per date (bypassing non-numeric strings)
       
@@ -969,8 +978,56 @@ function doPost(e) {
         }
         var setNum = setCounter[setKey];
         
+        // Use set-specific duration (seconds) if available in Hevy CSV for cardio pace calculations
+        var rawSecs = durationIdx !== -1 ? row[durationIdx] : "";
+        var cardioDur = parseDurationToMins(rawSecs);
+        
+        // Calculate overall gym duration
+        var gymDur = "";
+        if (workoutDurIdx !== -1) {
+          gymDur = parseDurationToMins(row[workoutDurIdx]);
+        }
+        // Fallback to start/end times if gym duration is empty/0
+        if ((gymDur === "" || gymDur === "0:00") && startTimeIdx !== -1 && endTimeIdx !== -1 && row[startTimeIdx] && row[endTimeIdx]) {
+          var startD = new Date(row[startTimeIdx].trim());
+          var endD = new Date(row[endTimeIdx].trim());
+          if (!isNaN(startD.getTime()) && !isNaN(endD.getTime())) {
+            var diffMins = Math.round((endD.getTime() - startD.getTime()) / 60000);
+            if (diffMins > 0) {
+              gymDur = parseDurationToMins(diffMins * 60);
+            }
+          }
+        }
+        // Fallback to cardio duration
+        if ((gymDur === "" || gymDur === "0:00") && cardioDur !== "" && cardioDur !== "0:00") {
+          gymDur = cardioDur;
+        }
+        
+        var distance = distanceIdx !== -1 ? parseDistanceToKm(row[distanceIdx]) : "";
         var key = formattedDate + "_" + exercise.toLowerCase() + "_" + setNum;
-        if (existingKeys[key]) continue; // Deduplicate
+        
+        if (existingKeyToIndex[key] !== undefined) {
+          // Merge CSV details into existing matches
+          var existingRow = rowsToKeep[existingKeyToIndex[key]];
+          var rowUpdated = false;
+          
+          if (wDistCol !== -1 && (existingRow[wDistCol] === "" || parseFloat(existingRow[wDistCol]) === 0) && distance !== "" && parseFloat(distance) > 0) {
+            existingRow[wDistCol] = distance;
+            rowUpdated = true;
+          }
+          if (wDurCol !== -1 && (existingRow[wDurCol] === "" || existingRow[wDurCol] === "0:00") && cardioDur !== "" && cardioDur !== "0:00") {
+            existingRow[wDurCol] = cardioDur;
+            rowUpdated = true;
+          }
+          if (wGymDurCol !== -1 && (existingRow[wGymDurCol] === "" || existingRow[wGymDurCol] === "0:00") && gymDur !== "" && gymDur !== "0:00") {
+            existingRow[wGymDurCol] = gymDur;
+            rowUpdated = true;
+          }
+          if (rowUpdated) {
+            updatedRowsCount++;
+          }
+          continue; // Skip appending as a new row
+        }
         
         var workoutName = workoutNameIdx !== -1 ? row[workoutNameIdx] : "Hevy App Import";
         
@@ -980,9 +1037,6 @@ function doPost(e) {
         
         var repsRaw = repsIdx !== -1 ? parseInt(row[repsIdx], 10) : NaN;
         var reps = isNaN(repsRaw) ? "" : repsRaw;
-        
-        var duration = durationIdx !== -1 ? parseDurationToMins(row[durationIdx]) : "";
-        var distance = distanceIdx !== -1 ? parseDistanceToKm(row[distanceIdx]) : "";
         
         var est1rm = "";
         if (weight !== "" && reps !== "") {
@@ -1006,14 +1060,15 @@ function doPost(e) {
           else if (c === wRepsCol) newRow.push(reps);
           else if (c === w1rmCol) newRow.push(est1rm);
           else if (c === wTimeCol) newRow.push(timestamp);
-          else if (c === wDurCol) newRow.push(duration);
+          else if (c === wDurCol) newRow.push(cardioDur);
+          else if (c === wGymDurCol) newRow.push(gymDur);
           else if (c === wDistCol) newRow.push(distance);
           else newRow.push("");
         }
         
         newRowsToAdd.push(newRow);
         rowsToKeep.push(newRow);
-        existingKeys[key] = true;
+        existingKeyToIndex[key] = rowsToKeep.length - 1;
         newRowsCount++;
       }
       
