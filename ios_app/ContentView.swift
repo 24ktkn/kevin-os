@@ -666,10 +666,9 @@ struct MealPrepView: View {
                                     
                                     // Items Checklist
                                     ForEach(groupedCostcoItems[dept] ?? []) { item in
-                                        let isChecked = completedItems.contains(item.id)
                                         Button(action: {
                                             var temp = completedItems
-                                            if isChecked {
+                                            if completedItems.contains(item.id) {
                                                 temp.remove(item.id)
                                             } else {
                                                 temp.insert(item.id)
@@ -677,16 +676,16 @@ struct MealPrepView: View {
                                             completedItems = temp
                                         }) {
                                             HStack(alignment: .top) {
-                                                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                                                    .foregroundColor(isChecked ? neonGreen : .gray)
+                                                Image(systemName: completedItems.contains(item.id) ? "checkmark.square.fill" : "square")
+                                                    .foregroundColor(completedItems.contains(item.id) ? neonGreen : .gray)
                                                     .font(.system(size: 16))
                                                     .padding(.top, 2)
                                                 
                                                 VStack(alignment: .leading, spacing: 2) {
                                                     Text(item.name)
                                                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                                                        .foregroundColor(isChecked ? .gray : .white)
-                                                        .strikethrough(isChecked)
+                                                        .foregroundColor(completedItems.contains(item.id) ? .gray : .white)
+                                                        .strikethrough(completedItems.contains(item.id))
                                                     Text("\(item.size) • \(item.assignment)")
                                                         .font(.system(size: 11))
                                                         .foregroundColor(.gray)
