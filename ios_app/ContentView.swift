@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var showingImportAlert = false
     @State private var importSuccessCount = 0
     @State private var showingImportError = false
+    @State private var importErrorMessage = ""
     
     // Core color palette matching premium web app
     let bgColor = Color(red: 0.06, green: 0.06, blue: 0.07) // #0F0F12
@@ -79,12 +80,13 @@ struct ContentView: View {
             do {
                 let csvData = try Data(contentsOf: url)
                 if let csvText = String(data: csvData, encoding: .utf8) {
-                    networkManager.importHevyCSV(csvText: csvText) { success, count in
+                    networkManager.importHevyCSV(csvText: csvText) { success, count, errorMsg in
                         DispatchQueue.main.async {
                             if success {
                                 self.importSuccessCount = count
                                 self.showingImportAlert = true
                             } else {
+                                self.importErrorMessage = errorMsg
                                 self.showingImportError = true
                             }
                         }
@@ -92,12 +94,14 @@ struct ContentView: View {
                 } else {
                     print("Failed to convert shared CSV data to String")
                     DispatchQueue.main.async {
+                        self.importErrorMessage = "Could not decode CSV data as UTF-8 string."
                         self.showingImportError = true
                     }
                 }
             } catch {
                 print("Failed to read shared CSV file: \(error.localizedDescription)")
                 DispatchQueue.main.async {
+                    self.importErrorMessage = "Failed to access file: \(error.localizedDescription)"
                     self.showingImportError = true
                 }
             }
@@ -113,7 +117,7 @@ struct ContentView: View {
         .alert(isPresented: $showingImportError) {
             Alert(
                 title: Text("Import Failed"),
-                message: Text("We could not import your Hevy CSV file. Make sure it is a valid workout history file and your Apps Script is deployed."),
+                message: Text(importErrorMessage),
                 dismissButton: .default(Text("OK"))
             )
         }

@@ -215,9 +215,9 @@ class NetworkManager: ObservableObject {
         }.resume()
     }
     
-    func importHevyCSV(csvText: String, completion: @escaping (Bool, Int) -> Void) {
+    func importHevyCSV(csvText: String, completion: @escaping (Bool, Int, String) -> Void) {
         guard let url = URL(string: apiURLString) else {
-            completion(false, 0)
+            completion(false, 0, "Invalid API URL string")
             return
         }
         
@@ -234,19 +234,19 @@ class NetworkManager: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
         } catch {
             print("Payload serialization error: \(error)")
-            completion(false, 0)
+            completion(false, 0, "Payload serialization error: \(error.localizedDescription)")
             return
         }
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("Error importing Hevy CSV: \(error.localizedDescription)")
-                completion(false, 0)
+                completion(false, 0, error.localizedDescription)
                 return
             }
             
             guard let data = data else {
-                completion(false, 0)
+                completion(false, 0, "No data received from server")
                 return
             }
             
@@ -258,15 +258,28 @@ class NetworkManager: ObservableObject {
                         Task { @MainActor in
                             self.fetchData()
                         }
-                        completion(true, count)
+                        completion(true, count, "")
+                        return
+                    } else if let errorMsg = json["error"] as? String {
+                        completion(false, 0, errorMsg)
                         return
                     }
                 }
+                
+                // Fallback if success key is missing or false without explicit error key
+                if let responseStr = String(data: data, encoding: .utf8) {
+                    completion(false, 0, "Server response: \(responseStr)")
+                } else {
+                    completion(false, 0, "Server returned invalid format")
+                }
             } catch {
                 print("JSON parsing error: \(error)")
+                if let responseStr = String(data: data, encoding: .utf8) {
+                    completion(false, 0, "Parsing error: \(error.localizedDescription). Raw: \(responseStr)")
+                } else {
+                    completion(false, 0, "Parsing error: \(error.localizedDescription)")
+                }
             }
-            
-            completion(false, 0)
         }.resume()
     }
 }
