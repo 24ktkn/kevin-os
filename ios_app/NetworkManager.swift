@@ -48,6 +48,26 @@ struct CostcoItem: Codable, Identifiable, Sendable {
     var assignment: String
 }
 
+struct MissionControlItem: Codable, Identifiable, Sendable {
+    var id: String
+    var status: Bool
+    var scheduled: Bool
+    var type: String
+    var calendar: String
+    var date: String
+    var time: String
+    var duration: Int
+    var location: String
+    var notes: String
+    var eventId: String
+    var timeblockId: String
+    var itemName: String
+    
+    enum CodingKeys: String, CodingKey {
+        case id, status, scheduled, type, calendar, date, time, duration, location, notes, eventId, timeblockId, itemName
+    }
+}
+
 struct DashboardData: Codable, Sendable {
     var date: String
     var biometrics: Biometrics
@@ -55,6 +75,7 @@ struct DashboardData: Codable, Sendable {
     var habitHistory: [HabitDay]
     var recentWorkouts: [WorkoutSet]
     var costcoItems: [CostcoItem]
+    var missionControlItems: [MissionControlItem]?
 }
 
 class NetworkManager: ObservableObject {
@@ -64,6 +85,7 @@ class NetworkManager: ObservableObject {
     @Published var habitHistory: [HabitDay] = []
     @Published var recentWorkouts: [WorkoutSet] = []
     @Published var costcoItems: [CostcoItem] = []
+    @Published var missionControlItems: [MissionControlItem] = []
     @Published var isLoading: Bool = false
     
     // Consolidated Apps Script Web App Endpoint URL
@@ -113,6 +135,7 @@ class NetworkManager: ObservableObject {
             self.habitHistory = decodedData.habitHistory
             self.recentWorkouts = decodedData.recentWorkouts
             self.costcoItems = decodedData.costcoItems
+            self.missionControlItems = decodedData.missionControlItems ?? []
         } catch {
             print("JSON Decoding error: \(error)")
         }
@@ -279,6 +302,133 @@ class NetworkManager: ObservableObject {
                 } else {
                     completion(false, 0, "Parsing error: \(error.localizedDescription)")
                 }
+            }
+        }.resume()
+    }
+    
+    func logMissionItem(itemName: String, type: String, calendar: String, date: String, time: String, duration: Int, location: String, notes: String, completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: apiURLString) else {
+            completion(false)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "action": "log_mission_item",
+            "itemName": itemName,
+            "type": type,
+            "calendar": calendar,
+            "date": date,
+            "time": time,
+            "duration": duration,
+            "location": location,
+            "notes": notes
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        } catch {
+            print("Payload serialization error: \(error)")
+            completion(false)
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error logging mission item: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+            
+            print("Mission item logged successfully: \(itemName)")
+            
+            Task { @MainActor in
+                self.fetchData()
+                completion(true)
+            }
+        }.resume()
+    }
+    
+    func toggleMissionItem(eventId: String, completed: Bool) {
+        DispatchQueue.main.async {
+            if let idx = self.missionControlItems.firstIndex(where: { $0.id == eventId }) {
+                self.missionControlItems[idx].status = completed
+            }
+        }
+        
+        guard let url = URL(string: apiURLString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "action": "toggle_mission_item",
+            "eventId": eventId,
+            "completed": completed
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        } catch {
+            print("Payload serialization error: \(error)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error toggling mission item: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.fetchData()
+                }
+                return
+            }
+            
+            print("Mission item \(eventId) toggled to \(completed)")
+            
+            Task { @MainActor in
+                self.fetchData()
+            }
+        }.resume()
+    }
+    
+    func deleteMissionItem(eventId: String) {
+        DispatchQueue.main.async {
+            self.missionControlItems.removeAll(where: { $0.id == eventId })
+        }
+        
+        guard let url = URL(string: apiURLString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "action": "delete_mission_item",
+            "eventId": eventId
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        } catch {
+            print("Payload serialization error: \(error)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error deleting mission item: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.fetchData()
+                }
+                return
+            }
+            
+            print("Mission item \(eventId) deleted")
+            
+            Task { @MainActor in
+                self.fetchData()
             }
         }.resume()
     }
