@@ -389,7 +389,8 @@ with tab2:
                 y_axis = "Estimated 1RM"
                 lbl = "Estimated 1RM (lbs)"
                 
-            fig_micro = px.line(filtered_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe}", labels={y_axis: lbl})
+            daily_trend_df = filtered_df.groupby("Date")[y_axis].max().reset_index()
+            fig_micro = px.line(daily_trend_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe} (Daily Peak)", labels={y_axis: lbl})
             fig_micro.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
             st.plotly_chart(fig_micro, use_container_width=True)
 
