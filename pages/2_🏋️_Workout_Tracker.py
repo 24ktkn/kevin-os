@@ -56,7 +56,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- ENGINE 1: WORKOUT LOGS LOCAL MEMORY CACHE ---
 if "master_workout_df" not in st.session_state:
     raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs", ttl=0)
-    required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)"]
+    required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Distance (km)"]
     for col in required_cols:
         if col not in raw_df.columns: raw_df[col] = ""
         
@@ -65,6 +65,7 @@ if "master_workout_df" not in st.session_state:
     df_logs["Reps"] = pd.to_numeric(df_logs["Reps"], errors='coerce').fillna(0).astype(int)
     df_logs["Estimated 1RM"] = pd.to_numeric(df_logs["Estimated 1RM"], errors='coerce').fillna(0.0)
     df_logs["Duration (Mins)"] = pd.to_numeric(df_logs["Duration (Mins)"], errors='coerce').fillna(0.0)
+    df_logs["Distance (km)"] = pd.to_numeric(df_logs["Distance (km)"], errors='coerce').fillna(0.0)
     df_logs["Date"] = pd.to_datetime(df_logs["Date"].astype(str).str.strip(), errors='coerce')
     df_logs = df_logs[df_logs["Date"].notna()]
     
@@ -380,8 +381,18 @@ with tab2:
             is_bodyweight = not is_cardio and (any(x in exe_name_lower for x in ["pull up", "pull-up", "chin up", "chin-up", "knee raise", "leg raise", "push up", "pushup", "dip", "bodyweight", "body weight", "plank", "sit up", "situp", "crunch", "ab wheel"]) or filtered_df["Weight (lbs)"].max() == 0)
             
             if is_cardio:
-                y_axis = "Duration (Mins)" if filtered_df["Duration (Mins)"].max() > 0 else "Reps"
-                lbl = "Duration (Mins)" if y_axis == "Duration (Mins)" else "Minutes / Reps"
+                cardio_metric = st.radio("Select Cardio Metric to Plot", ["Distance (km)", "Duration (Mins)", "Pace (min/km)"], horizontal=True, key=f"cardio_metric_{selected_chart_exe}")
+                if cardio_metric == "Distance (km)":
+                    y_axis = "Distance (km)"
+                    lbl = "Distance (km)"
+                elif cardio_metric == "Duration (Mins)":
+                    y_axis = "Duration (Mins)"
+                    lbl = "Duration (Mins)"
+                else:
+                    filtered_df["Pace (min/km)"] = filtered_df["Duration (Mins)"] / filtered_df["Distance (km)"].replace(0, np.nan)
+                    filtered_df["Pace (min/km)"] = filtered_df["Pace (min/km)"].fillna(0.0)
+                    y_axis = "Pace (min/km)"
+                    lbl = "Pace (min/km)"
             elif is_bodyweight:
                 y_axis = "Reps"
                 lbl = "Reps Completed"
@@ -389,8 +400,28 @@ with tab2:
                 y_axis = "Estimated 1RM"
                 lbl = "Estimated 1RM (lbs)"
                 
-            daily_trend_df = filtered_df.groupby("Date")[y_axis].max().reset_index()
-            fig_micro = px.line(daily_trend_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe} (Daily Peak)", labels={y_axis: lbl})
+            if is_cardio and cardio_metric == "Pace (min/km)":
+                temp_df = filtered_df.copy()
+                temp_df.loc[temp_df[y_axis] == 0, y_axis] = np.nan
+                daily_trend_df = temp_df.groupby("Date")[y_axis].min().reset_index()
+                daily_trend_df[y_axis] = daily_trend_df[y_axis].fillna(0.0)
+                
+                def format_pace(decimal_mins):
+                    if decimal_mins <= 0 or pd.isna(decimal_mins) or np.isinf(decimal_mins):
+                        return "N/A"
+                    mins = int(decimal_mins)
+                    secs = int(round((decimal_mins - mins) * 60))
+                    if secs == 60:
+                        mins += 1
+                        secs = 0
+                    return f"{mins}:{secs:02d} /km"
+                daily_trend_df["Pace Label"] = daily_trend_df[y_axis].apply(format_pace)
+                
+                fig_micro = px.line(daily_trend_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe} (Fastest Pace)", labels={y_axis: lbl}, text="Pace Label")
+                fig_micro.update_traces(textposition="top center")
+            else:
+                daily_trend_df = filtered_df.groupby("Date")[y_axis].max().reset_index()
+                fig_micro = px.line(daily_trend_df, x="Date", y=y_axis, markers=True, title=f"Progression Tracking: {selected_chart_exe} (Daily Peak)", labels={y_axis: lbl})
             fig_micro.update_traces(line_color='#00CC66', marker=dict(size=8)).update_layout(template="plotly_dark")
             st.plotly_chart(fig_micro, use_container_width=True)
 
@@ -400,16 +431,17 @@ with tab3:
         uploaded_hevy_file = st.file_uploader("Drop Hevy CSV File Here", type=["csv"], key="hevy_importer_zone")
         if uploaded_hevy_file is not None:
             try:
-                df_hevy = pd.read_csv(uploaded_hevy_file)
-                df_hevy.columns = df_hevy.columns.str.strip().str.lower()
                 h_date, h_exe, h_weight, h_reps, h_set, h_title = next((c for c in df_hevy.columns if "start" in c or "date" in c), None), next((c for c in df_hevy.columns if "exercise" in c), None), next((c for c in df_hevy.columns if "weight" in c), None), next((c for c in df_hevy.columns if "reps" in c), None), next((c for c in df_hevy.columns if "set" in c and "type" not in c), None), next((c for c in df_hevy.columns if "title" in c or "workout" in c), None)
                 
                 h_start = next((c for c in df_hevy.columns if "start_time" in c or "start" in c), None)
                 h_end = next((c for c in df_hevy.columns if "end_time" in c or "end" in c), None)
+                h_dist = next((c for c in df_hevy.columns if "distance" in c), None)
                 
                 if h_date and h_exe and h_weight and h_reps:
                     df_hevy[h_weight] = pd.to_numeric(df_hevy[h_weight], errors='coerce').fillna(0.0)
                     df_hevy[h_reps] = pd.to_numeric(df_hevy[h_reps], errors='coerce').fillna(0).astype(int)
+                    if h_dist:
+                        df_hevy[h_dist] = pd.to_numeric(df_hevy[h_dist], errors='coerce').fillna(0.0)
                     
                     if h_start and h_end:
                         df_hevy[h_start] = pd.to_datetime(df_hevy[h_start], errors='coerce')
@@ -434,7 +466,8 @@ with tab3:
                         if dur_val > 240: dur_val = round(dur_val / 60.0, 1)
                         
                         est_1rm = round(w_val * (1 + (r_val / 30.0)), 1) if r_val > 1 else w_val
-                        parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val})
+                        dist_val = float(row[h_dist]) if h_dist and pd.notna(row[h_dist]) else 0.0
+                        parsed_rows.append({"Date": raw_dt.normalize(), "Split Day": str(row[h_title]).strip() if h_title and pd.notna(row[h_title]) else "Hevy Import", "Exercise": str(row[h_exe]).strip() if h_exe else "Unknown", "Set Number": s_val, "Weight (lbs)": w_val, "Reps": r_val, "Estimated 1RM": est_1rm, "Timestamp": raw_dt.strftime("%H:%M:%S"), "Duration (Mins)": dur_val, "Distance (km)": dist_val})
                     
                     hevy_parsed_df = pd.DataFrame(parsed_rows)
                     
@@ -443,6 +476,7 @@ with tab3:
                     combined_df["Date"] = pd.to_datetime(combined_df["Date"]).dt.normalize()
                     combined_df["Exercise"] = combined_df["Exercise"].astype(str).str.strip()
                     combined_df["Set Number"] = combined_df["Set Number"].astype(int)
+                    combined_df["Distance (km)"] = pd.to_numeric(combined_df["Distance (km)"], errors='coerce').fillna(0.0)
                     
                     deduped_df = combined_df.drop_duplicates(subset=["Date", "Exercise", "Set Number"], keep="first").reset_index(drop=True)
                     new_rows_discovered = len(deduped_df) - len(df_logs)
@@ -494,7 +528,7 @@ with tab3:
             
             confirm = st.checkbox("I confirm that I want to delete ALL workout logs permanently.", key="confirm_clear_all_logs")
             if st.button("🔥 Permanently Clear All Workout Logs", disabled=not confirm):
-                empty_df = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)"])
+                empty_df = pd.DataFrame(columns=["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Distance (km)"])
                 try:
                     conn.update(data=empty_df, spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs")
                     st.cache_data.clear()
