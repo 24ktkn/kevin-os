@@ -466,13 +466,17 @@ with tab3:
                         match = re.search(r"([0-9]+(?:\.[0-9]+)?)", val_str)
                         if match:
                             num = float(match.group(1))
-                            if "mi" in val_str or "mile" in val_str:
-                                return round(num * 1.60934, 2)
+                            # If explicitly km, keep as is
+                            if "km" in val_str or "kilometer" in val_str:
+                                return num
+                            # If explicitly meters, convert to km
                             if "m" in val_str and "k" not in val_str:
                                 return round(num / 1000.0, 2)
+                            # If a raw number is extremely large (e.g. > 50), it is likely meters
                             if num > 50:
                                 return round(num / 1000.0, 2)
-                            return num
+                            # Otherwise, assume miles and convert to km
+                            return round(num * 1.60934, 2)
                         return 0.0
 
                     def parse_duration_to_mins(val):
