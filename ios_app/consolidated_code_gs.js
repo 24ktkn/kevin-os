@@ -480,6 +480,50 @@ function doGet(e) {
       }
     }
     
+    // 5. Fetch Mission Control / Master Task Tracker Items
+    response.missionControlItems = [];
+    var missionSheet = ss.getSheetByName("Master Task Tracker");
+    if (missionSheet) {
+      var mData = missionSheet.getDataRange().getValues();
+      if (mData.length > 1) {
+        var mHeaders = mData[0];
+        var mStatusCol = mHeaders.indexOf("Status");
+        var mSchedCol = mHeaders.indexOf("Scheduled?");
+        var mTypeCol = mHeaders.indexOf("Type");
+        var mCalCol = mHeaders.indexOf("Calendar");
+        var mDateCol = mHeaders.indexOf("Date");
+        var mTimeCol = mHeaders.indexOf("Time");
+        var mDurCol = mHeaders.indexOf("Duration (Mins)");
+        var mLocationCol = mHeaders.indexOf("Location");
+        var mNotesCol = mHeaders.indexOf("Notes");
+        var mEventIdCol = mHeaders.indexOf("Event ID");
+        var mTimeblockIdCol = mHeaders.indexOf("Timeblock ID");
+        var mItemNameCol = mHeaders.indexOf("Item Name");
+        
+        var mStartRow = Math.max(1, mData.length - 100);
+        for (var m = mData.length - 1; m >= mStartRow; m--) {
+          var itemDate = formatDateString(mData[m][mDateCol]);
+          if (itemDate) {
+            response.missionControlItems.push({
+              id: mEventIdCol !== -1 && mData[m][mEventIdCol] ? String(mData[m][mEventIdCol]).trim() : "row_" + m,
+              status: mStatusCol !== -1 ? parseBool(mData[m][mStatusCol]) : false,
+              scheduled: mSchedCol !== -1 ? parseBool(mData[m][mSchedCol]) : false,
+              type: mTypeCol !== -1 ? String(mData[m][mTypeCol]).trim() : "",
+              calendar: mCalCol !== -1 ? String(mData[m][mCalCol]).trim() : "",
+              date: itemDate,
+              time: mTimeCol !== -1 ? String(mData[m][mTimeCol]).trim() : "",
+              duration: mDurCol !== -1 ? parseInt(mData[m][mDurCol], 10) || 0 : 0,
+              location: mLocationCol !== -1 ? String(mData[m][mLocationCol]).trim() : "",
+              notes: mNotesCol !== -1 ? String(mData[m][mNotesCol]).trim() : "",
+              eventId: mEventIdCol !== -1 ? String(mData[m][mEventIdCol]).trim() : "",
+              timeblockId: mTimeblockIdCol !== -1 ? String(mData[m][mTimeblockIdCol]).trim() : "",
+              itemName: mItemNameCol !== -1 ? String(mData[m][mItemNameCol]).trim() : ""
+            });
+          }
+        }
+      }
+    }
+    
     return ContentService.createTextOutput(JSON.stringify(response))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
@@ -961,6 +1005,231 @@ function doPost(e) {
       }
       
       return ContentService.createTextOutput(JSON.stringify({ success: true, importedSets: newRowsCount }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // --- 5. LOG NEW MISSION CONTROL ITEM ---
+    if (action === "log_mission_item") {
+      var calendarIdMap = {
+        "Kevin Nguyen": "24ktkn@gmail.com",
+        "Family": "family05668227215423587251@group.calendar.google.com",
+        "School": "0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com",
+        "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
+      };
+      
+      var eventId = "";
+      var timeblockId = "";
+      
+      if (params.type === "Event" || params.type === "Task") {
+        try {
+          var calId = calendarIdMap[params.calendar] || "24ktkn@gmail.com";
+          var cal = CalendarApp.getCalendarById(calId);
+          if (cal) {
+            var title = params.type === "Task" ? "☑️ [Task] " + params.itemName : params.itemName;
+            var notesStr = params.notes || "";
+            var locStr = params.location || "";
+            
+            var dateParts = params.date.split("-");
+            var year = parseInt(dateParts[0], 10);
+            var month = parseInt(dateParts[1], 10) - 1;
+            var day = parseInt(dateParts[2], 10);
+            
+            if (!params.time || params.time === "00:00:00" || params.time === "") {
+              var startD = new Date(year, month, day);
+              var ev = cal.createAllDayEvent(title, startD, {description: notesStr, location: locStr});
+              if (params.type === "Event") {
+                eventId = ev.getId();
+              } else {
+                timeblockId = ev.getId();
+              }
+            } else {
+              var timeParts = params.time.split(":");
+              var hh = parseInt(timeParts[0], 10);
+              var mm = parseInt(timeParts[1], 10);
+              var ss = parseInt(timeParts[2], 10) || 0;
+              
+              var startD = new Date(year, month, day, hh, mm, ss);
+              var endD = new Date(startD.getTime() + (params.duration || 60) * 60 * 1000);
+              
+              var ev = cal.createEvent(title, startD, endD, {description: notesStr, location: locStr});
+              if (params.type === "Event") {
+                eventId = ev.getId();
+              } else {
+                timeblockId = ev.getId();
+              }
+            }
+          }
+        } catch (calErr) {
+          Logger.log("Calendar error: " + calErr.message);
+        }
+      }
+      
+      if (params.type === "Task") {
+        try {
+          var tasklistMap = {
+            "Kevin Nguyen": "@default", 
+            "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
+            "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        
+            "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"
+          };
+          var tlId = tasklistMap[params.calendar] || "@default";
+          if (typeof Tasks !== 'undefined') {
+            var taskBody = {
+              title: params.itemName,
+              notes: params.notes || "",
+              due: params.date + "T00:00:00.000Z"
+            };
+            var t = Tasks.Tasks.insert(taskBody, tlId);
+            eventId = t.id;
+          } else {
+            eventId = "task_" + Utilities.getUuid();
+          }
+        } catch (taskErr) {
+          Logger.log("Tasks error: " + taskErr.message);
+          eventId = "task_" + Utilities.getUuid();
+        }
+      }
+      
+      var missionSheet = ss.getSheetByName("Master Task Tracker");
+      if (missionSheet) {
+        var mHeaders = missionSheet.getDataRange().getValues()[0];
+        var mStatusCol = mHeaders.indexOf("Status");
+        var mSchedCol = mHeaders.indexOf("Scheduled?");
+        var mTypeCol = mHeaders.indexOf("Type");
+        var mCalCol = mHeaders.indexOf("Calendar");
+        var mDateCol = mHeaders.indexOf("Date");
+        var mTimeCol = mHeaders.indexOf("Time");
+        var mDurCol = mHeaders.indexOf("Duration (Mins)");
+        var mLocationCol = mHeaders.indexOf("Location");
+        var mNotesCol = mHeaders.indexOf("Notes");
+        var mEventIdCol = mHeaders.indexOf("Event ID");
+        var mTimeblockIdCol = mHeaders.indexOf("Timeblock ID");
+        var mItemNameCol = mHeaders.indexOf("Item Name");
+        
+        var isScheduled = (params.time && params.time !== "" && params.time !== "00:00:00");
+        
+        var newRow = [];
+        for (var c = 0; c < mHeaders.length; c++) {
+          if (c === mStatusCol) newRow.push(false);
+          else if (c === mSchedCol) newRow.push(isScheduled);
+          else if (c === mTypeCol) newRow.push(params.type);
+          else if (c === mCalCol) newRow.push(params.calendar);
+          else if (c === mDateCol) newRow.push(params.date);
+          else if (c === mTimeCol) newRow.push(params.time || "");
+          else if (c === mDurCol) newRow.push(params.duration || 0);
+          else if (c === mLocationCol) newRow.push(params.location || "");
+          else if (c === mNotesCol) newRow.push(params.notes || "");
+          else if (c === mEventIdCol) newRow.push(eventId);
+          else if (c === mTimeblockIdCol) newRow.push(timeblockId);
+          else if (c === mItemNameCol) newRow.push(params.itemName);
+          else newRow.push("");
+        }
+        missionSheet.appendRow(newRow);
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // --- 6. TOGGLE MISSION CONTROL ITEM ---
+    if (action === "toggle_mission_item") {
+      var missionSheet = ss.getSheetByName("Master Task Tracker");
+      var eventId = params.eventId;
+      var completed = params.completed;
+      
+      if (missionSheet && eventId) {
+        var mData = missionSheet.getDataRange().getValues();
+        var mHeaders = mData[0];
+        var mEventIdCol = mHeaders.indexOf("Event ID");
+        var mStatusCol = mHeaders.indexOf("Status");
+        var mTypeCol = mHeaders.indexOf("Type");
+        var mCalCol = mHeaders.indexOf("Calendar");
+        
+        for (var i = 1; i < mData.length; i++) {
+          if (String(mData[i][mEventIdCol]).trim() === eventId) {
+            missionSheet.getRange(i + 1, mStatusCol + 1).setValue(completed);
+            
+            var itemType = String(mData[i][mTypeCol]).trim();
+            var calName = String(mData[i][mCalCol]).trim();
+            if (itemType === "Task" && typeof Tasks !== 'undefined') {
+              try {
+                var tasklistMap = {
+                  "Kevin Nguyen": "@default", 
+                  "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
+                  "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        
+                  "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"
+                };
+                var tlId = tasklistMap[calName] || "@default";
+                Tasks.Tasks.patch({ status: completed ? 'completed' : 'needsAction' }, tlId, eventId);
+              } catch (e) {}
+            }
+            break;
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // --- 7. DELETE MISSION CONTROL ITEM ---
+    if (action === "delete_mission_item") {
+      var missionSheet = ss.getSheetByName("Master Task Tracker");
+      var eventId = params.eventId;
+      
+      if (missionSheet && eventId) {
+        var mData = missionSheet.getDataRange().getValues();
+        var mHeaders = mData[0];
+        var mEventIdCol = mHeaders.indexOf("Event ID");
+        var mTimeblockIdCol = mHeaders.indexOf("Timeblock ID");
+        var mTypeCol = mHeaders.indexOf("Type");
+        var mCalCol = mHeaders.indexOf("Calendar");
+        
+        var calendarIdMap = {
+          "Kevin Nguyen": "24ktkn@gmail.com",
+          "Family": "family05668227215423587251@group.calendar.google.com",
+          "School": "0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com",
+          "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
+        };
+        
+        for (var i = 1; i < mData.length; i++) {
+          if (String(mData[i][mEventIdCol]).trim() === eventId) {
+            var itemType = String(mData[i][mTypeCol]).trim();
+            var calName = String(mData[i][mCalCol]).trim();
+            var timeblockId = String(mData[i][mTimeblockIdCol]).trim();
+            
+            try {
+              var calId = calendarIdMap[calName] || "24ktkn@gmail.com";
+              var cal = CalendarApp.getCalendarById(calId);
+              if (cal) {
+                if (itemType === "Event" && eventId) {
+                  var ev = cal.getEventById(eventId);
+                  if (ev) ev.deleteEvent();
+                } else if (itemType === "Task" && timeblockId) {
+                  var ev = cal.getEventById(timeblockId);
+                  if (ev) ev.deleteEvent();
+                }
+              }
+            } catch (e) {}
+            
+            if (itemType === "Task" && typeof Tasks !== 'undefined' && eventId) {
+              try {
+                var tasklistMap = {
+                  "Kevin Nguyen": "@default", 
+                  "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
+                  "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        
+                  "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"
+                };
+                var tlId = tasklistMap[calName] || "@default";
+                Tasks.Tasks.remove(tlId, eventId);
+              } catch (e) {}
+            }
+            
+            missionSheet.deleteRow(i + 1);
+            break;
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
         .setMimeType(ContentService.MimeType.JSON);
     }
     
