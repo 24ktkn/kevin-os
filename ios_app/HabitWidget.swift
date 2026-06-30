@@ -4,7 +4,7 @@ import AppIntents
 
 // --- API CONFIGURATION ---
 // IMPORTANT: Make sure this matches the API URL in NetworkManager.swift!
-private let widgetApiURLString = "https://script.google.com/macros/s/REPLACE_WITH_YOUR_WEB_APP_ID/exec"
+private let widgetApiURLString = "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
 
 // --- INTERACTIVE APP INTENTS (iOS 17+) ---
 struct ToggleHabitIntent: AppIntent {
