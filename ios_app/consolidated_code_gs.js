@@ -350,13 +350,19 @@ function doGet(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var healthSheet = ss.getSheetByName("health_metrics");
     var habitsSheet = ss.getSheetByName("Habits");
+    var workoutSheet = ss.getSheetByName("workout_logs");
+    var costcoSheet = ss.getSheetByName("Costco_MealPlan");
     
     var response = {
       date: activeDateStr,
       biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data" },
-      habits: { wakeUpOnTime: false, gymWorkout: false, journaling: false }
+      habits: { wakeUpOnTime: false, gymWorkout: false, journaling: false },
+      habitHistory: [],
+      recentWorkouts: [],
+      costcoItems: []
     };
     
+    // 1. Fetch Today's Biometrics
     if (healthSheet) {
       var hData = healthSheet.getDataRange().getValues();
       var hHeaders = hData[0];
@@ -382,6 +388,7 @@ function doGet(e) {
       }
     }
     
+    // 2. Fetch Today's Habits & 7-day History
     if (habitsSheet) {
       var habData = habitsSheet.getDataRange().getValues();
       var habHeaders = habData[0];
@@ -390,6 +397,7 @@ function doGet(e) {
       var gymHabCol = habHeaders.indexOf("Gym Workout");
       var journHabCol = habHeaders.indexOf("Journaling");
       
+      // Get Today's Status
       for (var j = habData.length - 1; j > 0; j--) {
         var rowDate = formatDateString(habData[j][habDateCol]);
         if (rowDate === activeDateStr) {
@@ -397,6 +405,77 @@ function doGet(e) {
           if (gymHabCol !== -1) response.habits.gymWorkout = parseBool(habData[j][gymHabCol]);
           if (journHabCol !== -1) response.habits.journaling = parseBool(habData[j][journHabCol]);
           break;
+        }
+      }
+      
+      // Get 7-day History (last 7 rows)
+      var startRow = Math.max(1, habData.length - 7);
+      for (var k = habData.length - 1; k >= startRow; k--) {
+        var rDate = formatDateString(habData[k][habDateCol]);
+        if (rDate) {
+          response.habitHistory.push({
+            date: rDate,
+            wakeUpOnTime: wakeHabCol !== -1 ? parseBool(habData[k][wakeHabCol]) : false,
+            gymWorkout: gymHabCol !== -1 ? parseBool(habData[k][gymHabCol]) : false,
+            journaling: journHabCol !== -1 ? parseBool(habData[k][journHabCol]) : false
+          });
+        }
+      }
+    }
+    
+    // 3. Fetch Recent Workout Logs (last 20 rows)
+    if (workoutSheet) {
+      var wData = workoutSheet.getDataRange().getValues();
+      if (wData.length > 1) {
+        var wHeaders = wData[0];
+        var wDateCol = wHeaders.indexOf("Date");
+        var wExeCol = wHeaders.indexOf("Exercise");
+        var wSetCol = wHeaders.indexOf("Set Number");
+        var wWeightCol = wHeaders.indexOf("Weight (lbs)");
+        var wRepsCol = wHeaders.indexOf("Reps");
+        var wDurCol = wHeaders.indexOf("Duration (Mins)");
+        var wDistCol = wHeaders.indexOf("Distance (km)");
+        
+        var wStartRow = Math.max(1, wData.length - 20);
+        for (var w = wData.length - 1; w >= wStartRow; w--) {
+          var wDate = formatDateString(wData[w][wDateCol]);
+          if (wDate) {
+            response.recentWorkouts.push({
+              date: wDate,
+              exercise: wExeCol !== -1 ? String(wData[w][wExeCol]).trim() : "",
+              setNumber: wSetCol !== -1 ? parseInt(wData[w][wSetCol], 10) || 1 : 1,
+              weight: wWeightCol !== -1 ? parseFloat(wData[w][wWeightCol]) || 0.0 : 0.0,
+              reps: wRepsCol !== -1 ? parseInt(wData[w][wRepsCol], 10) || 0 : 0,
+              duration: wDurCol !== -1 ? parseFloat(wData[w][wDurCol]) || 0.0 : 0.0,
+              distance: wDistCol !== -1 ? parseFloat(wData[w][wDistCol]) || 0.0 : 0.0
+            });
+          }
+        }
+      }
+    }
+    
+    // 4. Fetch Costco Meal Plan Items
+    if (costcoSheet) {
+      var cData = costcoSheet.getDataRange().getValues();
+      if (cData.length > 1) {
+        var cHeaders = cData[0];
+        var tripCol = cHeaders.indexOf("Phase/Trip");
+        var deptCol = cHeaders.indexOf("Department");
+        var nameCol = cHeaders.indexOf("Item Name");
+        var sizeCol = cHeaders.indexOf("Target Scale/Size");
+        var assignCol = cHeaders.indexOf("Meal Prep Target Assignment");
+        
+        for (var cIdx = 1; cIdx < cData.length; cIdx++) {
+          var name = nameCol !== -1 ? String(cData[cIdx][nameCol]).trim() : "";
+          if (name) {
+            response.costcoItems.push({
+              trip: tripCol !== -1 ? String(cData[cIdx][tripCol]).trim() : "",
+              department: deptCol !== -1 ? String(cData[cIdx][deptCol]).trim() : "",
+              name: name,
+              size: sizeCol !== -1 ? String(cData[cIdx][sizeCol]).trim() : "",
+              assignment: assignCol !== -1 ? String(cData[cIdx][assignCol]).trim() : ""
+            });
+          }
         }
       }
     }
@@ -552,7 +631,109 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
     
-    return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action or parameters. Received: " + JSON.stringify(params) }))
+    // --- 3. HANDLE LOG WORKOUT SET ---
+    if (action === "log_workout") {
+      var workoutSheet = ss.getSheetByName("workout_logs");
+      if (!workoutSheet) {
+        return ContentService.createTextOutput(JSON.stringify({ error: "workout_logs sheet not found" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      var wHeaders = workoutSheet.getDataRange().getValues()[0];
+      var wDateCol = wHeaders.indexOf("Date");
+      var wSplitCol = wHeaders.indexOf("Split Day");
+      var wExeCol = wHeaders.indexOf("Exercise");
+      var wSetCol = wHeaders.indexOf("Set Number");
+      var wWeightCol = wHeaders.indexOf("Weight (lbs)");
+      var wRepsCol = wHeaders.indexOf("Reps");
+      var w1rmCol = wHeaders.indexOf("Estimated 1RM");
+      var wTimeCol = wHeaders.indexOf("Timestamp");
+      var wDurCol = wHeaders.indexOf("Duration (Mins)");
+      var wDistCol = wHeaders.indexOf("Distance (km)");
+      
+      var exercise = String(params.exercise).trim();
+      var weight = parseFloat(params.weight) || 0.0;
+      var reps = parseInt(params.reps, 10) || 0;
+      var duration = parseFloat(params.duration) || 0.0;
+      var distance = parseFloat(params.distance) || 0.0;
+      
+      // Auto-convert distance from miles to km if Treadmill
+      if (exercise.toLowerCase().indexOf("treadmill") !== -1 && distance > 0) {
+        distance = Math.round(distance * 1.60934 * 100) / 100;
+      }
+      
+      var splitDay = params.splitDay ? String(params.splitDay).trim() : "iOS App";
+      
+      // Calculate Set Number: count sets today for this exercise + 1
+      var wData = workoutSheet.getDataRange().getValues();
+      var setNum = 1;
+      for (var r = 1; r < wData.length; r++) {
+        var rDate = formatDateString(wData[r][wDateCol]);
+        var rExe = String(wData[r][wExeCol]).trim();
+        if (rDate === activeDateStr && rExe.toLowerCase() === exercise.toLowerCase()) {
+          setNum++;
+        }
+      }
+      
+      // Calculate Estimated 1RM
+      var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
+      
+      // Get current timestamp HH:MM:SS
+      var timestamp = Utilities.formatDate(now, "America/Toronto", "HH:mm:ss");
+      
+      // Append row
+      var newRow = [];
+      for (var c = 0; c < wHeaders.length; c++) {
+        if (c === wDateCol) newRow.push(activeDateStr);
+        else if (c === wSplitCol) newRow.push(splitDay);
+        else if (c === wExeCol) newRow.push(exercise);
+        else if (c === wSetCol) newRow.push(setNum);
+        else if (c === wWeightCol) newRow.push(weight);
+        else if (c === wRepsCol) newRow.push(reps);
+        else if (c === w1rmCol) newRow.push(est1rm);
+        else if (c === wTimeCol) newRow.push(timestamp);
+        else if (c === wDurCol) newRow.push(duration);
+        else if (c === wDistCol) newRow.push(distance);
+        else newRow.push("");
+      }
+      
+      workoutSheet.appendRow(newRow);
+      
+      // Auto check off "Gym Workout" habit for today
+      var habitsSheet = ss.getSheetByName("Habits");
+      if (habitsSheet) {
+        var habData = habitsSheet.getDataRange().getValues();
+        var habHeaders = habData[0];
+        var habDateCol = habHeaders.indexOf("Date");
+        var gymHabCol = habHeaders.indexOf("Gym Workout");
+        if (habDateCol !== -1 && gymHabCol !== -1) {
+          var targetRow = -1;
+          for (var j = 1; j < habData.length; j++) {
+            var rowDate = formatDateString(habData[j][habDateCol]);
+            if (rowDate === activeDateStr) {
+              targetRow = j + 1;
+              break;
+            }
+          }
+          if (targetRow !== -1) {
+            habitsSheet.getRange(targetRow, gymHabCol + 1).setValue(true);
+          } else {
+            var newHabRow = [];
+            for (var c = 0; c < habHeaders.length; c++) {
+              if (c === habDateCol) newHabRow.push(activeDateStr);
+              else if (c === gymHabCol) newHabRow.push(true);
+              else newHabRow.push(false);
+            }
+            habitsSheet.appendRow(newHabRow);
+          }
+        }
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({ success: true, date: activeDateStr, setNumber: setNum }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action or parameters." }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
