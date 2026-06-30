@@ -30,7 +30,7 @@ struct ContentView: View {
             // --- TAB 1: CENTRAL OS HUB ---
             OSHubView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor)
                 .tabItem {
-                    Image(systemName: "gauge.shared.on.reset")
+                    Image(systemName: "gauge")
                     Text("OS Hub")
                 }
                 .tag(0)
