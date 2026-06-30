@@ -173,13 +173,13 @@ struct OSHubView: View {
                         .textCase(.uppercase)
                     
                     VStack(spacing: 12) {
-                        HabitRow(title: "Wake Up On Time", icon: "⏰", isCompleted: networkManager.habits.wakeUpOnTime, color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
+                        HabitRow(title: "Wake Up On Time", icon: "⏰", isCompleted: networkManager.habits.wakeUpOnTime, color: lavenderColor, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Wake Up On Time", completed: !networkManager.habits.wakeUpOnTime)
                         })
-                        HabitRow(title: "Gym Workout", icon: "💪", isCompleted: networkManager.habits.gymWorkout, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
+                        HabitRow(title: "Gym Workout", icon: "💪", isCompleted: networkManager.habits.gymWorkout, color: neonGreen, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Gym Workout", completed: !networkManager.habits.gymWorkout)
                         })
-                        HabitRow(title: "Journaling", icon: "✍️", isCompleted: networkManager.habits.journaling, color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
+                        HabitRow(title: "Journaling", icon: "✍️", isCompleted: networkManager.habits.journaling, color: cyanColor, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Journaling", completed: !networkManager.habits.journaling)
                         })
                     }
@@ -269,7 +269,7 @@ struct WorkoutLoggerView: View {
                                 Text("Duration (Mins)")
                                     .font(.system(size: 13, weight: .semibold)).foregroundColor(.gray)
                                 Spacer()
-                                Stepper("\(String(format: "%.1f", duration))m", value: $duration, in: 1...180, step: 0.5)
+                                Stepper("\(String(format: "%.1f", duration))m", value: $duration, in: 1.0...180.0, step: 0.5)
                                     .foregroundColor(.white)
                                     .frame(width: 140)
                             }
@@ -278,7 +278,7 @@ struct WorkoutLoggerView: View {
                                 Text("Distance (Miles)")
                                     .font(.system(size: 13, weight: .semibold)).foregroundColor(.gray)
                                 Spacer()
-                                Stepper("\(String(format: "%.2f", distance)) mi", value: $distance, in: 0...26, step: 0.1)
+                                Stepper("\(String(format: "%.2f", distance)) mi", value: $distance, in: 0.0...26.0, step: 0.1)
                                     .foregroundColor(.white)
                                     .frame(width: 140)
                             }
@@ -288,7 +288,7 @@ struct WorkoutLoggerView: View {
                                 Text("Working Weight (lbs)")
                                     .font(.system(size: 13, weight: .semibold)).foregroundColor(.gray)
                                 Spacer()
-                                Stepper("\(Int(weight)) lbs", value: $weight, in: 0...600, step: 5.0)
+                                Stepper("\(Int(weight)) lbs", value: $weight, in: 0.0...600.0, step: 5.0)
                                     .foregroundColor(.white)
                                     .frame(width: 140)
                             }
@@ -365,7 +365,7 @@ struct WorkoutLoggerView: View {
                             .padding(.horizontal)
                     } else {
                         VStack(spacing: 8) {
-                            ForEach(networkManager.recentWorkouts.prefix(15)) { setRow in
+                            ForEach(Array(networkManager.recentWorkouts.prefix(15))) { setRow in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(setRow.exercise)
@@ -493,7 +493,7 @@ struct HabitsHistoryView: View {
                             .padding(.horizontal)
                     } else {
                         VStack(spacing: 8) {
-                            ForEach(networkManager.habitHistory.prefix(7)) { day in
+                            ForEach(Array(networkManager.habitHistory.prefix(7))) { day in
                                 HStack {
                                     Text(formatDateLabel(day.date))
                                         .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -570,6 +570,17 @@ struct MealPrepView: View {
     // Store checklist items completed states on device
     @AppStorage("completed_costco_items") private var completedItemsData: String = ""
     
+    // Computed property for Costco checklist filtering
+    var filteredCostcoItems: [CostcoItem] {
+        let filter = selectedTripIdx == 0 ? "trip 1" : "trip 2"
+        return networkManager.costcoItems.filter { $0.trip.lowercased().contains(filter) }
+    }
+    
+    // Computed property for Costco checklist department grouping
+    var groupedCostcoItems: [String: [CostcoItem]] {
+        Dictionary(grouping: filteredCostcoItems, by: { $0.department })
+    }
+    
     var completedItems: Set<String> {
         get {
             let list = completedItemsData.components(separatedBy: ",")
@@ -578,6 +589,33 @@ struct MealPrepView: View {
         set {
             completedItemsData = Array(newValue).joined(separator: ",")
         }
+    }
+    
+    // Computed properties for Weekly Menu Blueprint
+    var smoothieFruit: String {
+        activeWeek % 2 == 1 ? "Frozen Mango Chunks" : "Frozen Three Berry Blend"
+    }
+    
+    var lunchTitle: String {
+        activeWeek <= 2 ? "Beef, Egg, & Fresh Spinach Burritos" : "Zero-Prep Pulled Chicken & Spinach Wraps"
+    }
+    
+    var lunchGuide: String {
+        activeWeek <= 2 ?
+            "Warm up seasoned ground beef, scramble fresh eggs, and roll tightly into 2 wraps packed with raw fresh spinach." :
+            "Layer 2 wraps with fresh spinach and stuff with cold rotisserie chicken. Add hot sauce, wrap, and pack."
+    }
+    
+    var dinnerProt: String {
+        activeWeek == 1 ? "Seasoned Chicken Breasts" : (activeWeek == 2 ? "Kirkland Frozen Salmon Fillets" : (activeWeek == 3 ? "Seasoned Chicken Breasts" : "Thawed Tail-Off Shrimp"))
+    }
+    
+    var dinnerVeg: String {
+        activeWeek <= 2 ? "Frozen Broccoli & Corn" : "Frozen Stir-Fry Veg Blend"
+    }
+    
+    var airfryTime: String {
+        activeWeek == 4 ? "6 minutes at 400°F" : "15-18 minutes at 400°F"
     }
     
     var body: some View {
@@ -607,12 +645,7 @@ struct MealPrepView: View {
                         .textCase(.uppercase)
                         .padding(.horizontal)
                     
-                    let filteredList = networkManager.costcoItems.filter { item in
-                        let filter = selectedTripIdx == 0 ? "trip 1" : "trip 2"
-                        return item.trip.lowercased().contains(filter)
-                    }
-                    
-                    if filteredList.isEmpty {
+                    if filteredCostcoItems.isEmpty {
                         Text("No grocery items loaded. Pull down to refresh.")
                             .font(.system(size: 13))
                             .foregroundColor(.gray)
@@ -622,11 +655,8 @@ struct MealPrepView: View {
                             .cornerRadius(12)
                             .padding(.horizontal)
                     } else {
-                        // Group by department
-                        let grouped = Dictionary(grouping: filteredList, by: { $0.department })
-                        
                         VStack(alignment: .leading, spacing: 12) {
-                            ForEach(Array(grouped.keys.sorted()), id: \.self) { dept in
+                            ForEach(Array(groupedCostcoItems.keys.sorted()), id: \.self) { dept in
                                 VStack(alignment: .leading, spacing: 6) {
                                     // Department Header
                                     Text(dept.uppercased())
@@ -635,7 +665,7 @@ struct MealPrepView: View {
                                         .padding(.top, 4)
                                     
                                     // Items Checklist
-                                    ForEach(grouped[dept] ?? []) { item in
+                                    ForEach(groupedCostcoItems[dept] ?? []) { item in
                                         let isChecked = completedItems.contains(item.id)
                                         Button(action: {
                                             var temp = completedItems
@@ -695,17 +725,6 @@ struct MealPrepView: View {
                     }
                     .pickerStyle(SegmentedPickerStyle())
                     .padding(.horizontal)
-                    
-                    // Menu card renderers
-                    let smoothieFruit = activeWeek % 2 == 1 ? "Frozen Mango Chunks" : "Frozen Three Berry Blend"
-                    let lunchTitle = activeWeek <= 2 ? "Beef, Egg, & Fresh Spinach Burritos" : "Zero-Prep Pulled Chicken & Spinach Wraps"
-                    let lunchGuide = activeWeek <= 2 ?
-                        "Warm up seasoned ground beef, scramble fresh eggs, and roll tightly into 2 wraps packed with raw fresh spinach." :
-                        "Layer 2 wraps with fresh spinach and stuff with cold rotisserie chicken. Add hot sauce, wrap, and pack."
-                    
-                    let dinnerProt = activeWeek == 1 ? "Seasoned Chicken Breasts" : (activeWeek == 2 ? "Kirkland Frozen Salmon Fillets" : (activeWeek == 3 ? "Seasoned Chicken Breasts" : "Thawed Tail-Off Shrimp"))
-                    let dinnerVeg = activeWeek <= 2 ? "Frozen Broccoli & Corn" : "Frozen Stir-Fry Veg Blend"
-                    let airfryTime = activeWeek == 4 ? "6 minutes at 400°F" : "15-18 minutes at 400°F"
                     
                     VStack(spacing: 12) {
                         MealCard(title: "🌅 Breakfast (Blender)", name: "High-Protein Smoothie", workflow: "1.5 cups Milk, 1 cup Vanilla Yogurt, 1 cup \(smoothieFruit), 1 tbsp Chia Seeds, 3 tbsp Hemp Hearts. Swap yogurt with cottage cheese for extra thickness!")
