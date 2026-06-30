@@ -114,6 +114,94 @@ def render_bodyweight_tracker(key_prefix):
     st.markdown(f"##### ⚖️ Current Weight: **{latest_bw} lbs** (Synced from Health App)")
 
 
+def generate_weekly_digest(df_logs, df_bio):
+    # Today's date and 7 days ago date
+    today = datetime.date.today()
+    seven_days_ago = today - datetime.timedelta(days=7)
+    
+    # Filter logs from the past 7 days
+    df_logs_filtered = pd.DataFrame()
+    if not df_logs.empty and "Date" in df_logs.columns:
+        df_logs_copy = df_logs.copy()
+        df_logs_copy["Date"] = pd.to_datetime(df_logs_copy["Date"]).dt.date
+        df_logs_filtered = df_logs_copy[(df_logs_copy["Date"] >= seven_days_ago) & (df_logs_copy["Date"] <= today)]
+        df_logs_filtered = df_logs_filtered.sort_values(by=["Date", "Exercise", "Set Number"])
+        
+    # Filter biometrics from the past 7 days
+    df_bio_filtered = pd.DataFrame()
+    if not df_bio.empty and "Date" in df_bio.columns:
+        df_bio_copy = df_bio.copy()
+        df_bio_copy["Date"] = pd.to_datetime(df_bio_copy["Date"]).dt.date
+        df_bio_filtered = df_bio_copy[(df_bio_copy["Date"] >= seven_days_ago) & (df_bio_copy["Date"] <= today)]
+        df_bio_filtered = df_bio_filtered.sort_values(by="Date", ascending=False)
+
+    digest = []
+    digest.append("=== WEEKLY TRAINING & HEALTH DIGEST FOR GEMINI ===")
+    digest.append(f"Generated on: {today}")
+    digest.append(f"Period: {seven_days_ago} to {today}\n")
+    
+    # 1. ADD WORKOUTS SUMMARY
+    digest.append("--- WORKOUT LOGS ---")
+    if df_logs_filtered.empty:
+        digest.append("No workouts logged in the past 7 days.")
+    else:
+        # Group by Date
+        grouped_by_date = df_logs_filtered.groupby("Date")
+        for date_val, group in grouped_by_date:
+            digest.append(f"\n📅 Date: {date_val}")
+            # Group by Exercise
+            grouped_by_exe = group.groupby("Exercise")
+            for exe, exe_group in grouped_by_exe:
+                split_day = exe_group["Split Day"].iloc[0] if "Split Day" in exe_group.columns else "N/A"
+                digest.append(f"  🏋️ Exercise: {exe} (Split: {split_day})")
+                for _, row in exe_group.iterrows():
+                    set_num = row["Set Number"]
+                    weight = row["Weight (lbs)"]
+                    reps = row["Reps"]
+                    dur = row.get("Duration (Mins)", 0.0)
+                    dist = row.get("Distance (km)", 0.0)
+                    
+                    is_treadmill = "treadmill" in str(exe).lower()
+                    if is_treadmill:
+                        digest.append(f"    - Set {set_num}: {dur} mins | {dist} km")
+                    else:
+                        digest.append(f"    - Set {set_num}: {weight} lbs x {reps} reps")
+    
+    # 2. ADD BIOMETRICS SUMMARY
+    digest.append("\n--- BIO & RECOVERY METRICS ---")
+    if df_bio_filtered.empty:
+        digest.append("No biometric data logged in the past 7 days.")
+    else:
+        for _, row in df_bio_filtered.iterrows():
+            date_val = row["Date"]
+            steps = row.get("Steps", 0)
+            sleep = row.get("Sleep Duration", 0.0)
+            hrv = row.get("HRV", 0)
+            rhr = row.get("RHR", 0)
+            weight = row.get("Bodyweight", 0.0)
+            wake = row.get("Wake Time", "N/A")
+            
+            digest.append(f"📅 Date: {date_val}")
+            digest.append(f"  - Steps: {steps}")
+            digest.append(f"  - Sleep: {sleep} hours")
+            digest.append(f"  - HRV: {hrv} ms | RHR: {rhr} bpm")
+            digest.append(f"  - Weight: {weight} lbs")
+            digest.append(f"  - Wake Time: {wake}")
+            digest.append("")
+
+    # 3. ADD COCHING INSTRUCTIONS / PROMPT FOR GEMINI
+    digest.append("\n--- PROMPT TEMPLATE FOR GEMINI ---")
+    digest.append("Copy the text above and paste it together with this prompt into Gemini:")
+    digest.append("\"\"\"")
+    digest.append("You are an elite strength & conditioning coach and bio-hacker. Please analyze my training and health data from the past week (above):")
+    digest.append("1. Progressive Overload: Identify if I increased weight, reps, or volume on repeat exercises compared to previous sessions.")
+    digest.append("2. Muscle Group Gaps: Map out which muscles were hit. What muscles did I miss this week, and what exercises should I add to address them?")
+    digest.append("3. Cardio & Recovery Analysis: Look at my cardio (treadmill durations/distances) and map them against my sleep, HRV, and RHR. How is my cardiovascular conditioning affecting my recovery curves?")
+    digest.append("4. Next Week's Blueprint: Give me concrete target weights/reps/durations for my next sessions to guarantee progression.\"\"\"")
+    
+    return "\n".join(digest)
+
+
 # --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
     "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
@@ -189,6 +277,13 @@ with tab_guide:
 with tab_analytics:
     st.markdown("### 📊 Hevy & LifeApp Unified Analytics Engine")
     render_bodyweight_tracker("tab2")
+    
+    st.markdown("### 🤖 Gemini Auto-Digest Exporter")
+    with st.expander("📥 Export Weekly Training Digest for Gemini", expanded=False):
+        st.markdown("Generate a copyable digest of your workouts, steps, and recovery metrics to paste into Gemini for an AI coaching analysis.")
+        digest_text = generate_weekly_digest(df_logs, df_bio)
+        st.text_area("Copy this digest:", value=digest_text, height=350)
+        
     st.markdown("---")
     if df_logs.empty:
         st.info("Ingest training sessions using the uploader tab to build visual aggregates.")
