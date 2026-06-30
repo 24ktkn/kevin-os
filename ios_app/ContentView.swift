@@ -173,13 +173,13 @@ struct OSHubView: View {
                         .textCase(.uppercase)
                     
                     VStack(spacing: 12) {
-                        HabitRow(title: "Wake Up On Time", icon: "⏰", isCompleted: networkManager.habits.wakeUpOnTime, color: lavenderColor, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
+                        HabitRow(title: "Wake Up On Time", icon: "⏰", isCompleted: networkManager.habits.wakeUpOnTime, color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Wake Up On Time", completed: !networkManager.habits.wakeUpOnTime)
                         })
-                        HabitRow(title: "Gym Workout", icon: "💪", isCompleted: networkManager.habits.gymWorkout, color: neonGreen, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
+                        HabitRow(title: "Gym Workout", icon: "💪", isCompleted: networkManager.habits.gymWorkout, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Gym Workout", completed: !networkManager.habits.gymWorkout)
                         })
-                        HabitRow(title: "Journaling", icon: "✍️", isCompleted: networkManager.habits.journaling, color: cyanColor, cardBg: cardBgColor, cardBorderColor: cardBorderColor, action: {
+                        HabitRow(title: "Journaling", icon: "✍️", isCompleted: networkManager.habits.journaling, color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor, action: {
                             networkManager.toggleHabit(habitName: "Journaling", completed: !networkManager.habits.journaling)
                         })
                     }
