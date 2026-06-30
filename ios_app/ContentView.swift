@@ -184,7 +184,9 @@ struct ContentView: View {
                     networkManager.fetchData()
                 }
             }
+            #if os(iOS)
             .navigationBarHidden(true)
+            #endif
         }
         .onAppear {
             networkManager.fetchData()
