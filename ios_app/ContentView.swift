@@ -672,16 +672,7 @@ struct MealPrepView: View {
         return Set(list.filter { !$0.isEmpty })
     }
     
-    // Bridging completedItems to the subview in a non-mutating way by writing directly to UserDefaults
-    var completedItemsBinding: Binding<Set<String>> {
-        Binding(
-            get: { self.completedItems },
-            set: { newValue in
-                let str = Array(newValue).joined(separator: ",")
-                UserDefaults.standard.set(str, forKey: "completed_costco_items")
-            }
-        )
-    }
+
     
     // Computed properties for Weekly Menu Blueprint
     var smoothieFruit: String {
@@ -760,7 +751,13 @@ struct MealPrepView: View {
                                     ForEach(groupedCostcoItems[dept] ?? []) { item in
                                         CostcoItemRow(
                                             item: item,
-                                            completedItems: completedItemsBinding,
+                                            completedItems: Binding(
+                                                get: { self.completedItems },
+                                                set: { newValue in
+                                                    let str = Array(newValue).joined(separator: ",")
+                                                    UserDefaults.standard.set(str, forKey: "completed_costco_items")
+                                                }
+                                            ),
                                             neonGreen: neonGreen,
                                             cardBgColor: cardBgColor,
                                             cardBorderColor: cardBorderColor
