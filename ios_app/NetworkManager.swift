@@ -11,6 +11,18 @@ struct Biometrics: Codable, Sendable {
     var sleepTime: String?
 }
 
+struct BiometricsHistoryItem: Codable, Identifiable, Sendable {
+    var id: String { date }
+    var date: String
+    var steps: Int
+    var sleep: Double
+    var hrv: Int
+    var rhr: Int
+    var weight: Double
+    var wakeTime: String
+    var sleepTime: String?
+}
+
 struct Habits: Codable, Sendable {
     var wakeUpOnTime: Bool
     var gymWorkout: Bool
@@ -72,6 +84,7 @@ struct MissionControlItem: Codable, Identifiable, Sendable {
 struct DashboardData: Codable, Sendable {
     var date: String
     var biometrics: Biometrics
+    var biometricsHistory: [BiometricsHistoryItem]?
     var habits: Habits
     var habitHistory: [HabitDay]
     var recentWorkouts: [WorkoutSet]
@@ -82,6 +95,7 @@ struct DashboardData: Codable, Sendable {
 class NetworkManager: ObservableObject {
     @Published var dateStr: String = "Loading..."
     @Published var biometrics: Biometrics = Biometrics(steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data")
+    @Published var biometricsHistory: [BiometricsHistoryItem] = []
     @Published var habits: Habits = Habits(wakeUpOnTime: false, gymWorkout: false, journaling: false)
     @Published var habitHistory: [HabitDay] = []
     @Published var recentWorkouts: [WorkoutSet] = []
@@ -132,6 +146,7 @@ class NetworkManager: ObservableObject {
             
             self.dateStr = decodedData.date
             self.biometrics = decodedData.biometrics
+            self.biometricsHistory = decodedData.biometricsHistory ?? []
             self.habits = decodedData.habits
             self.habitHistory = decodedData.habitHistory
             self.recentWorkouts = decodedData.recentWorkouts

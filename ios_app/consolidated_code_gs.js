@@ -363,13 +363,14 @@ function doGet(e) {
     var response = {
       date: activeDateStr,
       biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data" },
+      biometricsHistory: [],
       habits: { wakeUpOnTime: false, gymWorkout: false, journaling: false },
       habitHistory: [],
       recentWorkouts: [],
       costcoItems: []
     };
     
-    // 1. Fetch Today's Biometrics
+    // 1. Fetch Today's Biometrics & History
     if (healthSheet) {
       var hData = healthSheet.getDataRange().getValues();
       var hHeaders = hData[0];
@@ -390,9 +391,29 @@ function doGet(e) {
           if (hrvCol !== -1) response.biometrics.hrv = parseInt(hData[i][hrvCol], 10) || 0;
           if (rhrCol !== -1) response.biometrics.rhr = parseInt(hData[i][rhrCol], 10) || 0;
           if (weightCol !== -1) response.biometrics.weight = parseFloat(hData[i][weightCol]) || 170.0;
-          if (wakeCol !== -1 && hData[i][wakeCol]) response.biometrics.wakeTime = String(hData[i][wakeCol]).trim();
-          if (sleepTimeCol !== -1 && hData[i][sleepTimeCol]) response.biometrics.sleepTime = String(hData[i][sleepTimeCol]).trim();
+          if (wakeCol !== -1) response.biometrics.wakeTime = formatTimeValue(hData[i][wakeCol]) || "No data";
+          if (sleepTimeCol !== -1) response.biometrics.sleepTime = formatTimeValue(hData[i][sleepTimeCol]) || "No data";
           break;
+        }
+      }
+      
+      // Populate biometrics history (last 30 rows)
+      if (hData.length > 1) {
+        var startHRow = Math.max(1, hData.length - 30);
+        for (var h = hData.length - 1; h >= startHRow; h--) {
+          var hDate = formatDateString(hData[h][hDateCol]);
+          if (hDate) {
+            response.biometricsHistory.push({
+              date: hDate,
+              steps: stepsCol !== -1 ? parseInt(hData[h][stepsCol], 10) || 0 : 0,
+              sleep: sleepCol !== -1 ? parseSleepDurationHours(hData[h][sleepCol]) : 0.0,
+              hrv: hrvCol !== -1 ? parseInt(hData[h][hrvCol], 10) || 0 : 0,
+              rhr: rhrCol !== -1 ? parseInt(hData[h][rhrCol], 10) || 0 : 0,
+              weight: weightCol !== -1 ? parseFloat(hData[h][weightCol]) || 0.0 : 0.0,
+              wakeTime: wakeCol !== -1 ? formatTimeValue(hData[h][wakeCol]) : "",
+              sleepTime: sleepTimeCol !== -1 ? formatTimeValue(hData[h][sleepTimeCol]) : ""
+            });
+          }
         }
       }
     }
@@ -1492,4 +1513,26 @@ function logDebugRequest(action, params) {
     debugSheet.appendRow([new Date(), action, JSON.stringify(params)]);
   } catch (e) {}
 }
+
+function formatTimeValue(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, "America/Toronto", "h:mm a");
+  }
+  var str = String(val).trim();
+  if (str === "" || str.toLowerCase() === "no data") return "";
+  
+  // If it's a serialized Date string, try parsing it
+  if (str.indexOf("1899") !== -1 || str.indexOf("GMT") !== -1) {
+    try {
+      var d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return Utilities.formatDate(d, "America/Toronto", "h:mm a");
+      }
+    } catch(e) {}
+  }
+  
+  return str;
+}
+
 

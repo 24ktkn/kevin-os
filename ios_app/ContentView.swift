@@ -169,6 +169,25 @@ struct OSHubView: View {
         networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data"
     }
     
+    func formatBiometricTime(_ timeStr: String?) -> String {
+        guard let str = timeStr, !str.isEmpty, str != "No data" else { return "No data" }
+        if str.contains("1899") || str.contains("GMT") {
+            let parts = str.components(separatedBy: " ")
+            if parts.count >= 5 {
+                let timePart = parts[4]
+                let timeComponents = timePart.components(separatedBy: ":")
+                if timeComponents.count >= 2 {
+                    if let hour = Int(timeComponents[0]), let min = Int(timeComponents[1]) {
+                        let ampm = hour >= 12 ? "PM" : "AM"
+                        let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
+                        return String(format: "%d:%02d %@", displayHour, min, ampm)
+                    }
+                }
+            }
+        }
+        return str
+    }
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -247,8 +266,8 @@ struct OSHubView: View {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         BiometricCard(title: "HRV (Variability)", val: hrvString, color: cyanColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Sleep Duration", val: sleepString, color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
-                        BiometricCard(title: "Fell Asleep", val: networkManager.biometrics.sleepTime ?? "No data", color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
-                        BiometricCard(title: "Wake Up Time", val: networkManager.biometrics.wakeTime, color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Fell Asleep", val: formatBiometricTime(networkManager.biometrics.sleepTime), color: yellowColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Wake Up Time", val: formatBiometricTime(networkManager.biometrics.wakeTime), color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Resting Heart Rate", val: rhrString, color: redColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Bodyweight", val: weightString, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor)
                     }
@@ -307,6 +326,92 @@ struct MuscleRecovery: Identifiable {
     let recoveryColor: Color
 }
 
+struct BiometricTrendChart: View {
+    let data: [BiometricsHistoryItem]
+    let metric: String // "HRV", "Sleep Duration", "RHR", "Steps"
+    let accentColor: Color
+    let cardBgColor: Color
+    let cardBorderColor: Color
+    
+    var values: [Double] {
+        data.map { item in
+            switch metric {
+            case "HRV": return Double(item.hrv)
+            case "Sleep Duration": return item.sleep
+            case "RHR": return Double(item.rhr)
+            case "Steps": return Double(item.steps)
+            default: return 0.0
+            }
+        }
+    }
+    
+    var labels: [String] {
+        data.map { item in
+            let parts = item.date.components(separatedBy: "-")
+            if parts.count >= 3 {
+                return "\(parts[1])/\(parts[2])"
+            }
+            return item.date
+        }
+    }
+    
+    var body: some View {
+        let chartValues = Array(values.prefix(7).reversed())
+        let chartLabels = Array(labels.prefix(7).reversed())
+        let maxVal = chartValues.max() ?? 1.0
+        
+        VStack(alignment: .leading, spacing: 12) {
+            Text("All-Time Trajectory Trend Lines: \(metric)")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.gray)
+                .textCase(.uppercase)
+            
+            HStack(alignment: .bottom, spacing: 10) {
+                if chartValues.isEmpty || chartValues.allSatisfy({ $0 == 0 }) {
+                    Text("No biometrics history found.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 40)
+                } else {
+                    ForEach(Array(zip(chartValues.indices, chartValues)), id: \.0) { index, val in
+                        let label = chartLabels[safe: index] ?? ""
+                        VStack(spacing: 8) {
+                            ZStack(alignment: .bottom) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.white.opacity(0.04))
+                                    .frame(height: 100)
+                                
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(accentColor)
+                                    .frame(height: maxVal > 0 ? CGFloat((val / maxVal)) * 100.0 : 0)
+                            }
+                            
+                            Text(label)
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(.gray)
+                            
+                            Text(metric == "Sleep Duration" ? String(format: "%.1fh", val) : (metric == "Steps" ? "\(Int(val/1000))k" : "\(Int(val))"))
+                                .font(.system(size: 8, weight: .black, design: .rounded))
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+            }
+            .padding()
+            .background(cardBgColor)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+        }
+    }
+}
+
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
+
 struct WorkoutWebView: View {
     @ObservedObject var networkManager: NetworkManager
     let bgColor: Color
@@ -319,6 +424,53 @@ struct WorkoutWebView: View {
     let lavenderColor: Color
     
     @State private var selectedSubview = 0 // 0: Analytics, 1: Recovery & Readiness
+    @State private var selectedMetricIndex = 0 // 0: HRV, 1: Sleep, 2: RHR, 3: Steps
+    
+    let metrics = ["HRV", "Sleep Duration", "RHR", "Steps"]
+    
+    var selectedMetricColor: Color {
+        switch selectedMetricIndex {
+        case 0: return cyanColor
+        case 1: return yellowColor
+        case 2: return redColor
+        default: return neonGreen
+        }
+    }
+    
+    func formatSleepDuration(_ hours: Double) -> String {
+        if hours <= 0 { return "No data" }
+        let h = Int(hours)
+        let m = Int(round((hours - Double(h)) * 60.0))
+        if m == 60 {
+            return "\(h + 1)h 0m"
+        }
+        return "\(h)h \(m)m"
+    }
+    
+    func formatNumber(_ num: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: num)) ?? "\(num)"
+    }
+    
+    func formatBiometricTime(_ timeStr: String?) -> String {
+        guard let str = timeStr, !str.isEmpty, str != "No data" else { return "No data" }
+        if str.contains("1899") || str.contains("GMT") {
+            let parts = str.components(separatedBy: " ")
+            if parts.count >= 5 {
+                let timePart = parts[4]
+                let timeComponents = timePart.components(separatedBy: ":")
+                if timeComponents.count >= 2 {
+                    if let hour = Int(timeComponents[0]), let min = Int(timeComponents[1]) {
+                        let ampm = hour >= 12 ? "PM" : "AM"
+                        let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
+                        return String(format: "%d:%02d %@", displayHour, min, ampm)
+                    }
+                }
+            }
+        }
+        return str
+    }
     
     // NATIVE CALCULATIONS
     var totalWorkoutsLogged: Int {
@@ -714,9 +866,6 @@ struct WorkoutWebView: View {
                             }
                         }
                         
-                    } else {
-                        // --- SUBSCENE 2: RECOVERY & READINESS ---
-                        
                         // Muscle Recovery Matrix
                         VStack(alignment: .leading, spacing: 10) {
                             Text("🧬 Premium Muscle Recovery Matrix")
@@ -765,6 +914,101 @@ struct WorkoutWebView: View {
                             }
                         }
                         
+                    } else {
+                        // --- SUBSCENE 2: RECOVERY & READINESS ---
+                        
+                        // All-Time Baseline Recovery Metrics Grid (Latest Day metrics)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            // Latest HRV
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(networkManager.biometrics.hrv > 0 ? "\(networkManager.biometrics.hrv) ms" : "No data")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(cyanColor)
+                                Text("Latest HRV")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Latest Sleep
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(formatSleepDuration(networkManager.biometrics.sleep))
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(yellowColor)
+                                Text("Latest Sleep")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Latest RHR
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(networkManager.biometrics.rhr > 0 ? "\(networkManager.biometrics.rhr) bpm" : "No data")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundColor(redColor)
+                                Text("Latest RHR")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                            
+                            // Latest Steps
+                            VStack(alignment: .center, spacing: 6) {
+                                Text(networkManager.biometrics.steps > 0 ? "\(formatNumber(networkManager.biometrics.steps))" : "No data")
+                                    .font(.system(size: 24, weight: .black, design: .rounded))
+                                    .foregroundColor(neonGreen)
+                                Text("Latest Steps")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.gray)
+                                    .textCase(.uppercase)
+                            }
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(cardBgColor)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(cardBorderColor, lineWidth: 1))
+                        }
+                        
+                        // Trajectory Trend Selector
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Select Core Biometric Overlay")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.gray)
+                                .textCase(.uppercase)
+                            
+                            Picker("Metric Selection", selection: $selectedMetricIndex) {
+                                Text("HRV").tag(0)
+                                Text("Sleep").tag(1)
+                                Text("RHR").tag(2)
+                                Text("Steps").tag(3)
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                        }
+                        .padding(.vertical, 8)
+                        
+                        // Biometric Trend Chart
+                        BiometricTrendChart(
+                            data: networkManager.biometricsHistory,
+                            metric: metrics[selectedMetricIndex],
+                            accentColor: selectedMetricColor,
+                            cardBgColor: cardBgColor,
+                            cardBorderColor: cardBorderColor
+                        )
                     }
                 }
                 .padding(.horizontal)
