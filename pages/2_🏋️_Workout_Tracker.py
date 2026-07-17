@@ -268,7 +268,7 @@ def generate_weekly_digest(df_logs, df_bio):
 
 # --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
-    "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
+    "Push (Chest/Shoulders/Triceps)": ["Bench Press (Smith Machine)", "Incline Bench Press (Dumbbell)", "Cable Fly Crossovers", "Lateral Raise (Cable)", "Cross-Body Cable Triceps Extension", "Treadmill"],
     "Pull (Back/Biceps)": ["Bent Over Row (Barbell)", "Face Pull", "Pull Up", "Straight Arm Lat Pulldown (Cable)", "Spider Zottman Curl", "Shrug (Cable)", "Treadmill"],
     "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Romanian Deadlift (Barbell)", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
     "Cardio (Treadmill)": ["Treadmill Steady State", "Treadmill Intervals"]
