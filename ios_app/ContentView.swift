@@ -666,7 +666,7 @@ struct WorkoutWebView: View {
         if ["bench", "fly", "pushup", "chest", "pec"].contains(where: { exe.contains($0) }) { return "Chest" }
         if ["lateral raise", "overhead press", "shoulder", "delt", "face pull", "military"].contains(where: { exe.contains($0) }) { return "Shoulders" }
         if exe.contains("tricep") || exe.contains("kickback") || exe.contains("pushdown") { return "Triceps" }
-        if ["pull-up", "row", "lat", "chin-up", "back", "deadlift"].contains(where: { exe.contains($0) }) { return "Back" }
+        if ["pull-up", "row", "lat", "chin-up", "back", "deadlift", "shrug"].contains(where: { exe.contains($0) }) { return "Back" }
         if exe.contains("bicep") || exe.contains("curl") || exe.contains("hammer") { return "Biceps" }
         if ["treadmill", "run", "walk", "bike", "cardio"].contains(where: { exe.contains($0) }) { return "Cardio" }
         

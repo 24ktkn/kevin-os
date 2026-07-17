@@ -269,7 +269,7 @@ def generate_weekly_digest(df_logs, df_bio):
 # --- MASTER EXERCISE DICTIONARY ---
 exercises_dict = {
     "Push (Chest/Shoulders/Triceps)": ["Bench Press (Dumbbell)", "Bench Press (Barbell)", "Lateral Raise (Cable)", "Overhead Press (Dumbbell)", "Triceps Extension (Cable)"],
-    "Pull (Back/Biceps)": ["Pull Up", "Bent Over Row (Barbell)", "Face Pull", "Seated Incline Curl (Dumbbell)", "Dumbbell Pinwheel Curl (Cross-Body Hammer Curl)"],
+    "Pull (Back/Biceps)": ["Bent Over Row (Barbell)", "Face Pull", "Pull Up", "Straight Arm Lat Pulldown (Cable)", "Spider Zottman Curl", "Shrug (Cable)", "Treadmill"],
     "Legs & Abs (Thigh/Calf Focus)": ["Squat (Barbell)", "Bulgarian Split Squat", "Romanian Deadlift (Barbell)", "Standing Calf Raise (Dumbbell)", "Hanging Knee Raise", "Cable Twist (Up to down)"],
     "Cardio (Treadmill)": ["Treadmill Steady State", "Treadmill Intervals"]
 }
@@ -408,7 +408,7 @@ with tab_analytics:
             if any(x in exe for x in ["bench", "fly", "pushup", "chest", "pec"]): return "Chest"
             if any(x in exe for x in ["lateral raise", "overhead press", "shoulder", "delt", "face pull", "military"]): return "Shoulders"
             if "tricep" in exe or "kickback" in exe or "pushdown" in exe: return "Triceps"
-            if any(x in exe for x in ["pull-up", "row", "lat", "chin-up", "back", "deadlift"]): return "Back"
+            if any(x in exe for x in ["pull-up", "row", "lat", "chin-up", "back", "deadlift", "shrug"]): return "Back"
             if "bicep" in exe or "curl" in exe or "hammer" in exe: return "Biceps"
             if any(x in exe for x in ["treadmill", "run", "walk", "bike", "cardio"]): return "Cardio"
             
