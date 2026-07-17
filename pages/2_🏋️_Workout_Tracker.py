@@ -101,7 +101,17 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- ENGINE 1: WORKOUT LOGS LOCAL MEMORY CACHE ---
 if "master_workout_df" not in st.session_state:
-    raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs", ttl=0)
+    try:
+        raw_df = conn.read(spreadsheet=st.secrets.connections.gsheets.workout_tracker_sheet, worksheet="workout_logs", ttl=0)
+    except Exception as e:
+        st.error("🔒 **Google Sheets Connection Error**")
+        st.info(
+            "Could not retrieve your workout logs. Please check that:\n"
+            "1. Your Streamlit Secrets are correctly configured with your Google Service Account credentials.\n"
+            "2. The Service Account email (`client_email`) has been shared with your spreadsheet as an **Editor**.\n"
+            "3. You are not being rate-limited by Google (try refreshing in a few seconds)."
+        )
+        st.stop()
     required_cols = ["Date", "Split Day", "Exercise", "Set Number", "Weight (lbs)", "Reps", "Estimated 1RM", "Timestamp", "Duration (Mins)", "Gym Duration (Mins)", "Distance (km)"]
     for col in required_cols:
         if col not in raw_df.columns: raw_df[col] = ""

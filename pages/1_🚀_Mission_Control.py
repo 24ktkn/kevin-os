@@ -307,7 +307,17 @@ def sweep_past_events(dataframe, connection, service_tasks):
 
 # --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+try:
+    df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+except Exception as e:
+    st.error("🔒 **Google Sheets Connection Error**")
+    st.info(
+        "Could not retrieve your schedule. Please check that:\n"
+        "1. Your Streamlit Secrets are correctly configured with your Google Service Account credentials.\n"
+        "2. The Service Account email (`client_email`) has been shared with your spreadsheet as an **Editor**.\n"
+        "3. You are not being rate-limited by Google (try refreshing in a few seconds)."
+    )
+    st.stop()
 
 required_cols = ["Status", "Scheduled?", "Type", "Date", "Location", "Timeblock ID"]
 for col in required_cols:
