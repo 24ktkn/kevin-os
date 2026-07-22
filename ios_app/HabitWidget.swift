@@ -247,6 +247,7 @@ struct HabitWidgetEntryView : View {
 }
 
 // --- WIDGET TARGET DEFINITION ---
+@main
 struct HabitWidget: Widget {
     let kind: String = "HabitWidget"
 
