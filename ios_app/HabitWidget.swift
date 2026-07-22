@@ -57,7 +57,7 @@ struct ToggleHabitIntent: AppIntent {
 }
 
 // --- WIDGET DATA TYPES ---
-struct WidgetHabits: Codable, Sendable {
+nonisolated struct WidgetHabits: Codable, Sendable {
     var wakeUpOnTime: Bool?
     var gymWorkout: Bool?
     var journaling: Bool?
@@ -67,7 +67,7 @@ struct WidgetHabits: Codable, Sendable {
     var isJournaling: Bool { journaling ?? false }
 }
 
-struct WidgetBiometrics: Codable, Sendable {
+nonisolated struct WidgetBiometrics: Codable, Sendable {
     var steps: Int?
     
     enum CodingKeys: String, CodingKey {
@@ -92,13 +92,13 @@ struct WidgetBiometrics: Codable, Sendable {
     }
 }
 
-struct WidgetResponse: Codable, Sendable {
+nonisolated struct WidgetResponse: Codable, Sendable {
     var date: String?
     var biometrics: WidgetBiometrics?
     var habits: WidgetHabits?
 }
 
-struct HabitEntry: TimelineEntry, Sendable {
+nonisolated struct HabitEntry: TimelineEntry, Sendable {
     let date: Date
     let displayDate: String
     let steps: Int
@@ -106,7 +106,7 @@ struct HabitEntry: TimelineEntry, Sendable {
 }
 
 // --- TIMELINE PROVIDER ---
-struct Provider: TimelineProvider {
+nonisolated struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> HabitEntry {
         HabitEntry(date: Date(), displayDate: "Today", steps: 3420, habits: WidgetHabits(wakeUpOnTime: false, gymWorkout: true, journaling: false))
     }
