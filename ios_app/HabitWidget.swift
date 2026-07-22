@@ -24,6 +24,10 @@ struct ToggleHabitIntent: AppIntent {
     }
     
     func perform() async throws -> some IntentResult {
+        // 1. Optimistic Update (Instant Checkmark)
+        UserDefaults.standard.set(targetCompleted, forKey: "opt_\(habitName)")
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "opt_time_\(habitName)")
+        
         guard let url = URL(string: widgetApiURLString) else {
             return .result()
         }
@@ -37,19 +41,20 @@ struct ToggleHabitIntent: AppIntent {
             "completed": targetCompleted
         ]
         
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        // 2. Guaranteed Background Upload (No waiting, no spinner)
+        if let body = try? JSONSerialization.data(withJSONObject: payload, options: []) {
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent(UUID().uuidString)
+            try? body.write(to: fileURL)
             
-            // Perform asynchronous call
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                print("Widget successfully toggled \(habitName) to \(targetCompleted)")
-            }
-        } catch {
-            print("Widget failed to toggle habit: \(error.localizedDescription)")
+            let config = URLSessionConfiguration.background(withIdentifier: "com.kevinos.bg.\(UUID().uuidString)")
+            let session = URLSession(configuration: config)
+            
+            let task = session.uploadTask(with: request, fromFile: fileURL)
+            task.resume()
         }
         
-        // Force reload the widget timeline to show the updated checked state immediately on the home screen
+        // 3. Immediately tell WidgetKit to reload the UI using the optimistic cache
         WidgetCenter.shared.reloadAllTimelines()
         
         return .result()
@@ -147,6 +152,23 @@ nonisolated struct Provider: TimelineProvider {
                     print("Widget decoding error: \(error)")
                 }
             }
+            
+            // --- OPTIMISTIC UI MERGE OVERRIDE ---
+            // If the user tapped the widget in the last 60 seconds, trust the local optimistic cache over the server response
+            let now = Date().timeIntervalSince1970
+            
+            if let wakeOptTime = UserDefaults.standard.object(forKey: "opt_time_Wake Up On Time") as? Double, (now - wakeOptTime) < 60 {
+                habits.wakeUpOnTime = UserDefaults.standard.bool(forKey: "opt_Wake Up On Time")
+            }
+            
+            if let gymOptTime = UserDefaults.standard.object(forKey: "opt_time_Gym Workout") as? Double, (now - gymOptTime) < 60 {
+                habits.gymWorkout = UserDefaults.standard.bool(forKey: "opt_Gym Workout")
+            }
+            
+            if let journalOptTime = UserDefaults.standard.object(forKey: "opt_time_Journaling") as? Double, (now - journalOptTime) < 60 {
+                habits.journaling = UserDefaults.standard.bool(forKey: "opt_Journaling")
+            }
+            // ------------------------------------
             
             let entry = HabitEntry(date: Date(), displayDate: dateStr, steps: steps, habits: habits)
             
