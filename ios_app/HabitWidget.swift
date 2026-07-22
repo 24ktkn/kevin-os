@@ -123,10 +123,13 @@ struct Provider: TimelineProvider {
             return
         }
         
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 5.0)
+        request.httpMethod = "GET"
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
             var habits = WidgetHabits(wakeUpOnTime: false, gymWorkout: false, journaling: false)
             var steps = 0
-            var dateStr = "No connection"
+            var dateStr = "Today"
             
             if let data = data {
                 do {
@@ -236,6 +239,7 @@ struct HabitWidgetEntryView : View {
                 .cornerRadius(6)
             }
         }
+        .unredacted()
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(bgColor)
@@ -250,9 +254,11 @@ struct HabitWidget: Widget {
         StaticConfiguration(kind: kind, provider: Provider()) { entry in
             if #available(iOS 17.0, *) {
                 HabitWidgetEntryView(entry: entry)
+                    .unredacted()
                     .containerBackground(Color(red: 0.06, green: 0.06, blue: 0.07), for: .widget)
             } else {
                 HabitWidgetEntryView(entry: entry)
+                    .unredacted()
                     .padding()
                     .background(Color(red: 0.06, green: 0.06, blue: 0.07))
             }
