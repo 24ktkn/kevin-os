@@ -225,15 +225,19 @@ function syncWakeUpHabit(dailyData) {
   for (var dateStr in dailyData) {
     var metrics = dailyData[dateStr];
     if (metrics.wakeTime) {
-      var timeParts = metrics.wakeTime.split(" ");
+      var timeParts = metrics.wakeTime.trim().split(" ");
       var hm = timeParts[0].split(":");
       var hour = parseInt(hm[0], 10);
       var minute = parseInt(hm[1], 10);
-      var isAm = timeParts[1].toLowerCase() === "am";
       
       var hour24 = hour;
-      if (!isAm && hour < 12) hour24 += 12;
-      if (isAm && hour === 12) hour24 = 0;
+      if (timeParts.length > 1 && timeParts[1]) {
+        var amPmStr = timeParts[1].toLowerCase();
+        var isAm = (amPmStr === "am" || amPmStr === "a.m.");
+        var isPm = (amPmStr === "pm" || amPmStr === "p.m.");
+        if (isPm && hour < 12) hour24 += 12;
+        if (isAm && hour === 12) hour24 = 0;
+      }
       
       var wakeMinutes = hour24 * 60 + minute;
       var targetMinutes = 8 * 60; // 8:00 AM target
