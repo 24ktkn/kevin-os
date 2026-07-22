@@ -4,7 +4,7 @@ import AppIntents
 
 // --- API CONFIGURATION ---
 // IMPORTANT: Make sure this matches the API URL in NetworkManager.swift!
-private let widgetApiURLString = "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
+private nonisolated let widgetApiURLString = "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
 
 // --- INTERACTIVE APP INTENTS (iOS 17+) ---
 struct ToggleHabitIntent: AppIntent {
@@ -57,7 +57,7 @@ struct ToggleHabitIntent: AppIntent {
 }
 
 // --- WIDGET DATA TYPES ---
-struct WidgetHabits: Codable {
+struct WidgetHabits: Codable, Sendable {
     var wakeUpOnTime: Bool?
     var gymWorkout: Bool?
     var journaling: Bool?
@@ -67,7 +67,7 @@ struct WidgetHabits: Codable {
     var isJournaling: Bool { journaling ?? false }
 }
 
-struct WidgetBiometrics: Codable {
+struct WidgetBiometrics: Codable, Sendable {
     var steps: Int?
     
     enum CodingKeys: String, CodingKey {
@@ -92,13 +92,13 @@ struct WidgetBiometrics: Codable {
     }
 }
 
-struct WidgetResponse: Codable {
+struct WidgetResponse: Codable, Sendable {
     var date: String?
     var biometrics: WidgetBiometrics?
     var habits: WidgetHabits?
 }
 
-struct HabitEntry: TimelineEntry {
+struct HabitEntry: TimelineEntry, Sendable {
     let date: Date
     let displayDate: String
     let steps: Int
