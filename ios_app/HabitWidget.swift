@@ -58,19 +58,44 @@ struct ToggleHabitIntent: AppIntent {
 
 // --- WIDGET DATA TYPES ---
 struct WidgetHabits: Codable {
-    var wakeUpOnTime: Bool
-    var gymWorkout: Bool
-    var journaling: Bool
+    var wakeUpOnTime: Bool?
+    var gymWorkout: Bool?
+    var journaling: Bool?
+    
+    var isWakeUpOnTime: Bool { wakeUpOnTime ?? false }
+    var isGymWorkout: Bool { gymWorkout ?? false }
+    var isJournaling: Bool { journaling ?? false }
 }
 
 struct WidgetBiometrics: Codable {
-    var steps: Int
+    var steps: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case steps
+    }
+    
+    init(steps: Int?) {
+        self.steps = steps
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let intVal = try? container.decode(Int.self, forKey: .steps) {
+            self.steps = intVal
+        } else if let doubleVal = try? container.decode(Double.self, forKey: .steps) {
+            self.steps = Int(doubleVal)
+        } else if let strVal = try? container.decode(String.self, forKey: .steps), let parsed = Int(strVal) {
+            self.steps = parsed
+        } else {
+            self.steps = 0
+        }
+    }
 }
 
 struct WidgetResponse: Codable {
-    var date: String
-    var biometrics: WidgetBiometrics
-    var habits: WidgetHabits
+    var date: String?
+    var biometrics: WidgetBiometrics?
+    var habits: WidgetHabits?
 }
 
 struct HabitEntry: TimelineEntry {
@@ -106,9 +131,15 @@ struct Provider: TimelineProvider {
             if let data = data {
                 do {
                     let decoded = try JSONDecoder().decode(WidgetResponse.self, from: data)
-                    habits = decoded.habits
-                    steps = decoded.biometrics.steps
-                    dateStr = decoded.date
+                    if let decodedHabits = decoded.habits {
+                        habits = decodedHabits
+                    }
+                    if let decodedSteps = decoded.biometrics?.steps {
+                        steps = decodedSteps
+                    }
+                    if let decodedDate = decoded.date {
+                        dateStr = decodedDate
+                    }
                 } catch {
                     print("Widget decoding error: \(error)")
                 }
@@ -156,10 +187,10 @@ struct HabitWidgetEntryView : View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.gray)
                     Spacer()
-                    Button(intent: ToggleHabitIntent(habitName: "Wake Up On Time", targetCompleted: !entry.habits.wakeUpOnTime)) {
-                        Image(systemName: entry.habits.wakeUpOnTime ? "checkmark.circle.fill" : "circle")
+                    Button(intent: ToggleHabitIntent(habitName: "Wake Up On Time", targetCompleted: !entry.habits.isWakeUpOnTime)) {
+                        Image(systemName: entry.habits.isWakeUpOnTime ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 16))
-                            .foregroundColor(entry.habits.wakeUpOnTime ? lavenderColor : .white.opacity(0.3))
+                            .foregroundColor(entry.habits.isWakeUpOnTime ? lavenderColor : .white.opacity(0.3))
                     }
                     .buttonStyle(.plain)
                 }
@@ -174,10 +205,10 @@ struct HabitWidgetEntryView : View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.gray)
                     Spacer()
-                    Button(intent: ToggleHabitIntent(habitName: "Gym Workout", targetCompleted: !entry.habits.gymWorkout)) {
-                        Image(systemName: entry.habits.gymWorkout ? "checkmark.circle.fill" : "circle")
+                    Button(intent: ToggleHabitIntent(habitName: "Gym Workout", targetCompleted: !entry.habits.isGymWorkout)) {
+                        Image(systemName: entry.habits.isGymWorkout ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 16))
-                            .foregroundColor(entry.habits.gymWorkout ? neonGreen : .white.opacity(0.3))
+                            .foregroundColor(entry.habits.isGymWorkout ? neonGreen : .white.opacity(0.3))
                     }
                     .buttonStyle(.plain)
                 }
@@ -192,10 +223,10 @@ struct HabitWidgetEntryView : View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.gray)
                     Spacer()
-                    Button(intent: ToggleHabitIntent(habitName: "Journaling", targetCompleted: !entry.habits.journaling)) {
-                        Image(systemName: entry.habits.journaling ? "checkmark.circle.fill" : "circle")
+                    Button(intent: ToggleHabitIntent(habitName: "Journaling", targetCompleted: !entry.habits.isJournaling)) {
+                        Image(systemName: entry.habits.isJournaling ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 16))
-                            .foregroundColor(entry.habits.journaling ? cyanColor : .white.opacity(0.3))
+                            .foregroundColor(entry.habits.isJournaling ? cyanColor : .white.opacity(0.3))
                     }
                     .buttonStyle(.plain)
                 }
