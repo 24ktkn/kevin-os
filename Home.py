@@ -353,7 +353,8 @@ st.markdown("### ⚡ Habits Command Center")
 try:
     df_habits = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits", ttl=0)
     if df_habits is None or df_habits.empty or "Date" not in df_habits.columns:
-        df_habits = pd.DataFrame(columns=["Date"] + HABITS_LIST)
+        st.error("⚠️ Critical Error: The 'Habits' sheet is empty or missing the 'Date' header. To prevent data loss, automatic syncing has been paused. Please check Google Sheets.")
+        st.stop()
         
     df_habits["Date"] = df_habits["Date"].astype(str)
     for h in HABITS_LIST:
@@ -366,6 +367,8 @@ try:
     if today_str not in df_habits["Date"].values:
         new_day = {col: (today_str if col == "Date" else False) for col in df_habits.columns}
         df_habits = pd.concat([df_habits, pd.DataFrame([new_day])], ignore_index=True)
+        # Sort to ensure chronological order before writing back
+        df_habits = df_habits.sort_values(by="Date", ascending=True).reset_index(drop=True)
         conn.update(data=df_habits, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits")
         
     today_idx = df_habits[df_habits["Date"] == today_str].index[0]

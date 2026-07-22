@@ -65,9 +65,11 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 try:
     df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, worksheet="Habits", ttl=0)
     if df is None or df.empty or "Date" not in df.columns:
-        df = pd.DataFrame(columns=["Date"] + HABITS_LIST)
-except Exception:
-    df = pd.DataFrame(columns=["Date"] + HABITS_LIST)
+        st.error("⚠️ Critical Error: The 'Habits' sheet is empty or missing the 'Date' header. To prevent data loss, automatic syncing has been paused. Please check Google Sheets.")
+        st.stop()
+except Exception as e:
+    st.error(f"⚠️ Critical Error loading Habits sheet: {e}")
+    st.stop()
 
 # Normalize data formatting rules
 df["Date"] = df["Date"].astype(str)
