@@ -77,7 +77,7 @@ function syncGoogleFitData() {
   for (var d = 0; d < 7; d++) {
     var date = new Date(now.getTime() - (d * 24 * 60 * 60 * 1000));
     var dateStr = formatDate(date);
-    dailyData[dateStr] = { steps: 0, weight: lastKnownWeight, sleep: 0.0, rhr: 0, hrv: 0, wakeTime: "" };
+    dailyData[dateStr] = { steps: 0, weight: 0.0, sleep: 0.0, rhr: 0, hrv: 0, wakeTime: "" };
   }
   
   // 1. Process Steps
@@ -159,8 +159,12 @@ function syncGoogleFitData() {
       if (stepsColIdx !== -1 && (metrics.steps > 0 || !existingRowValues[stepsColIdx])) {
         sheet.getRange(rowNum, stepsColIdx + 1).setValue(metrics.steps);
       }
-      if (weightColIdx !== -1 && (metrics.weight > 0 || !existingRowValues[weightColIdx])) {
-        sheet.getRange(rowNum, weightColIdx + 1).setValue(metrics.weight);
+      if (weightColIdx !== -1) {
+        if (metrics.weight > 0) {
+          sheet.getRange(rowNum, weightColIdx + 1).setValue(metrics.weight);
+        } else if (!existingRowValues[weightColIdx] || existingRowValues[weightColIdx] === "") {
+          sheet.getRange(rowNum, weightColIdx + 1).setValue(lastKnownWeight);
+        }
       }
       if (sleepColIdx !== -1 && (metrics.sleep > 0 || !existingRowValues[sleepColIdx])) {
         sheet.getRange(rowNum, sleepColIdx + 1).setValue(metrics.sleep);
