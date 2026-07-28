@@ -627,7 +627,15 @@ function doPost(e) {
       var wakeCol = hHeaders.indexOf("Wake Time");
       var sleepTimeCol = hHeaders.indexOf("Sleep Time");
       
-      // Find row for today
+      var passedDate = getParam(params, ["date"]);
+      if (passedDate) {
+        var parsedPassedDate = formatDateString(passedDate);
+        if (parsedPassedDate) {
+          activeDateStr = parsedPassedDate;
+        }
+      }
+      
+      // Find row for target date
       var targetRow = -1;
       for (var i = 1; i < hData.length; i++) {
         var rowDate = formatDateString(hData[i][hDateCol]);
