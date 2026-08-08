@@ -26,7 +26,17 @@ st.title("🤖 AI Task Auto-Scheduler")
 st.markdown("Paste your unstructured tasks below. Gemini will evaluate the time required and safely slot them into today's free blocks between 8:00 AM and 10:00 PM. You can specify a calendar in your task list (e.g. 'Do laundry (Family, 30m)') and Gemini will perfectly label it!")
 
 # --- API SETUP ---
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+if "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+else:
+    try:
+        # Fallback in case they pasted it at the bottom of the TOML file under the gsheets section
+        api_key = st.secrets["connections"]["gsheets"]["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+    except Exception:
+        st.error("🔑 **Gemini API Key Not Found!**")
+        st.markdown("Please open your app settings in the bottom right corner, click **Secrets**, and ensure you have `GEMINI_API_KEY = \"YOUR_KEY\"` exactly as formatted.")
+        st.stop()
 
 CALENDAR_MAP = {
     "Kevin Nguyen": "24ktkn@gmail.com",
