@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
-import plotly.express as px
 
 st.set_page_config(page_title="Daily Time Atlas", layout="wide")
 
@@ -221,6 +220,34 @@ with col_main:
                 st.success("Journal saved successfully!")
                 st.cache_data.clear()
                 st.rerun()
+                
+    # 4. PHOTO GALLERY & UPLOADER
+    st.markdown("---")
+    st.markdown("### 📸 Daily Photos")
+    
+    import os
+    photos_dir = os.path.join("data", "photos", selected_date_str)
+    os.makedirs(photos_dir, exist_ok=True)
+    
+    # Upload new photos
+    uploaded_files = st.file_uploader("Upload photos from this day", accept_multiple_files=True, type=["png", "jpg", "jpeg", "heic"])
+    if uploaded_files:
+        for uf in uploaded_files:
+            file_path = os.path.join(photos_dir, uf.name)
+            with open(file_path, "wb") as f:
+                f.write(uf.getbuffer())
+        st.success(f"Successfully uploaded {len(uploaded_files)} photos!")
+        st.rerun()
+        
+    # Display existing photos
+    photo_files = [f for f in os.listdir(photos_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.heic'))]
+    if photo_files:
+        cols = st.columns(3)
+        for i, photo in enumerate(photo_files):
+            with cols[i % 3]:
+                st.image(os.path.join(photos_dir, photo), use_container_width=True)
+    else:
+        st.info("No photos uploaded for this day yet.")
 
 with col_side:
     st.markdown("### ⏱️ Timeline")
