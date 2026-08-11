@@ -3,6 +3,8 @@ import WebKit
 
 struct ContentView: View {
     @StateObject private var networkManager = NetworkManager()
+    @StateObject private var locationManager = LocationManager()
+    @StateObject private var healthManager = HealthManager()
     @State private var selectedTab = 0
     @State private var showingImportAlert = false
     @State private var importAlertTitle = ""
@@ -74,6 +76,17 @@ struct ContentView: View {
         .accentColor(neonGreen)
         .onAppear {
             networkManager.fetchData()
+            
+            locationManager.requestPermissions()
+            locationManager.startMonitoring()
+            
+            healthManager.requestPermissions { success in
+                if success {
+                    healthManager.setupBackgroundObservers()
+                    // Perform an initial sync on launch
+                    healthManager.syncTodayHealthData()
+                }
+            }
         }
         .onOpenURL { url in
             // Accessing security-scoped resource is optional depending on the origin of the URL.

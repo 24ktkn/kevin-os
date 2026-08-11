@@ -1377,6 +1377,27 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
     
+    // --- 8. LOG LOCATION FROM IOS NATIVE APP ---
+    if (action === "log_location") {
+      var locationSheet = ss.getSheetByName("location_log");
+      if (!locationSheet) {
+        locationSheet = ss.insertSheet("location_log");
+        locationSheet.appendRow(["Timestamp", "Latitude", "Longitude", "Location Name"]);
+      }
+      
+      var lat = parseFloat(params.latitude) || 0.0;
+      var lng = parseFloat(params.longitude) || 0.0;
+      var locName = params.locationName || "";
+      var timestamp = params.timestamp || Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd HH:mm:ss");
+      
+      if (lat !== 0.0 || lng !== 0.0) {
+        locationSheet.appendRow([timestamp, lat, lng, locName]);
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action or parameters." }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
