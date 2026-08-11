@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import Combine
 
 class HealthManager: ObservableObject {
     let healthStore = HKHealthStore()
@@ -46,7 +47,7 @@ class HealthManager: ObservableObject {
         setupObserver(for: sleepType)
     }
     
-    private func setupObserver(for type: HKObjectType) {
+    private func setupObserver(for type: HKSampleType) {
         // We use HKObserverQuery to get notified when new data is added (even in background)
         let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] query, completionHandler, error in
             if let error = error {
