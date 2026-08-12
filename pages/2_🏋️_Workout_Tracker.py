@@ -475,7 +475,7 @@ with tab_analytics:
             st.markdown("#### 🧬 Premium Muscle Recovery Matrix")
             st.caption("Tracks fatigue windows for individual muscle types (48-hour localized muscular cell optimization windows).")
             
-            right_now = datetime.datetime.now(ZoneInfo("America/Toronto"))
+            right_now = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
             muscle_targets = ["Chest", "Shoulders", "Triceps", "Back", "Biceps", "Quads", "Hamstrings & Glutes", "Calves", "Abs/Core"]
             
             for muscle in muscle_targets:
@@ -485,7 +485,7 @@ with tab_analytics:
                     last_trained_str = "No record found"
                 else:
                     latest_entry_date = matching_logs["Date"].max()
-                    time_delta = right_now - latest_entry_date.replace(tzinfo=ZoneInfo("America/Toronto"))
+                    time_delta = right_now - latest_entry_date.replace(tzinfo=ZoneInfo("America/Los_Angeles"))
                     hours_since = max(0, int(time_delta.total_seconds() / 3600))
                     last_trained_str = f"Last hit: {latest_entry_date.strftime('%a, %b %d')}"
                 

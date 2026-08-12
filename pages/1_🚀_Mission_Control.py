@@ -396,9 +396,9 @@ with tab1:
                 event_body = {'summary': item_name, 'description': notes, 'location': location_input, 'start': {'date': target_date.strftime('%Y-%m-%d')}, 'end': {'date': (target_date + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}, 'reminders': reminders_payload}
                 time_str, duration_val = "", 0
             else:
-                start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-04:00"
+                start_dt = f"{target_date}T{start_time.strftime('%H:%M:%S')}-07:00"
                 end_dt_obj = pd.Timestamp.combine(target_date, start_time) + pd.Timedelta(minutes=int(duration))
-                event_body = {'summary': item_name, 'description': notes, 'location': location_input, 'start': {'dateTime': start_dt, 'timeZone': 'America/Toronto'}, 'end': {'dateTime': f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-04:00", 'timeZone': 'America/Toronto'}, 'reminders': reminders_payload}
+                event_body = {'summary': item_name, 'description': notes, 'location': location_input, 'start': {'dateTime': start_dt, 'timeZone': 'America/Los_Angeles'}, 'end': {'dateTime': f"{end_dt_obj.strftime('%Y-%m-%dT%H:%M:%S')}-07:00", 'timeZone': 'America/Los_Angeles'}, 'reminders': reminders_payload}
                 time_str, duration_val = str(start_time), int(duration)
 
             if repeat_option != "None":
@@ -591,7 +591,7 @@ with tab2:
                                             if edit_all_day:
                                                 tb_body['start'], tb_body['end'] = {'date': final_date_str}, {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
                                             else:
-                                                tb_body['start'], tb_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                                tb_body['start'], tb_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Los_Angeles'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Los_Angeles'}
                                             try: cal_service.events().patch(calendarId=c_id, eventId=tb_id, body=tb_body).execute()
                                             except Exception: pass
                                             
@@ -601,7 +601,7 @@ with tab2:
                                         if edit_all_day:
                                             event_patch_body['start'], event_patch_body['end'] = {'date': final_date_str}, {'date': (pd.to_datetime(final_date_str) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')}
                                         else:
-                                            event_patch_body['start'], event_patch_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Toronto'}
+                                            event_patch_body['start'], event_patch_body['end'] = {'dateTime': parsed_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Los_Angeles'}, {'dateTime': (parsed_dt + pd.Timedelta(minutes=final_dur)).strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/Los_Angeles'}
                                         try: cal_service.events().patch(calendarId=c_id, eventId=g_id, body=event_patch_body).execute()
                                         except Exception: pass
                                 

@@ -17,7 +17,7 @@ function syncGoogleFitData() {
   }
   
   var now = new Date();
-  var torontoStr = Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd'T'00:00:00XXX");
+  var torontoStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd'T'00:00:00XXX");
   var midnightToday = new Date(torontoStr);
   var startTime = midnightToday.getTime() - (7 * 24 * 60 * 60 * 1000); // 7 days sync window
   var endTime = now.getTime();
@@ -108,7 +108,7 @@ function syncGoogleFitData() {
     
     var wakeDate = new Date(endMs);
     var wakeDateStr = formatDate(wakeDate);
-    var wakeTimeStr = Utilities.formatDate(wakeDate, "America/Toronto", "hh:mm a");
+    var wakeTimeStr = Utilities.formatDate(wakeDate, "America/Los_Angeles", "hh:mm a");
     
     if (dailyData[wakeDateStr]) {
       dailyData[wakeDateStr].sleep += durationHours;
@@ -352,14 +352,14 @@ function getLastKnownWeight(sheet, weightColIdx) {
 function doGet(e) {
   try {
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/Toronto", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, "America/Los_Angeles", "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
     if (localHour < 2) {
       var yesterday = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-      activeDateStr = Utilities.formatDate(yesterday, "America/Toronto", "yyyy-MM-dd");
+      activeDateStr = Utilities.formatDate(yesterday, "America/Los_Angeles", "yyyy-MM-dd");
     }
     
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -557,7 +557,7 @@ function doGet(e) {
             var timeFormatted = "";
             if (timeRaw) {
               if (timeRaw instanceof Date) {
-                timeFormatted = Utilities.formatDate(timeRaw, "America/Toronto", "HH:mm:ss");
+                timeFormatted = Utilities.formatDate(timeRaw, "America/Los_Angeles", "HH:mm:ss");
               } else {
                 var rawStr = String(timeRaw).trim();
                 var match = rawStr.match(/(\d{2}:\d{2}:\d{2})/);
@@ -611,14 +611,14 @@ function doPost(e) {
     logDebugRequest(action, params);
     
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/Toronto", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, "America/Los_Angeles", "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
     if (localHour < 2) {
       var yesterday = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-      activeDateStr = Utilities.formatDate(yesterday, "America/Toronto", "yyyy-MM-dd");
+      activeDateStr = Utilities.formatDate(yesterday, "America/Los_Angeles", "yyyy-MM-dd");
     }
     
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -716,7 +716,7 @@ function doPost(e) {
       
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
-        if (sleepStr !== null && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
+        if (sleepStr !== null && sleep > 0 && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
         if (hrv !== null && hrv !== 0 && hrvCol !== -1) healthSheet.getRange(targetRow, hrvCol + 1).setValue(hrv);
         if (rhr !== null && rhr !== 0 && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
         if (weight !== null && weight !== 0 && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
@@ -890,7 +890,7 @@ function doPost(e) {
       var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
       
       // Get current timestamp HH:MM:SS
-      var timestamp = Utilities.formatDate(now, "America/Toronto", "HH:mm:ss");
+      var timestamp = Utilities.formatDate(now, "America/Los_Angeles", "HH:mm:ss");
       
       // Append row
       var newRow = [];
@@ -1176,7 +1176,7 @@ function doPost(e) {
         var timestamp = "12:00:00";
         var parsedDate = new Date(rawDate.trim());
         if (!isNaN(parsedDate.getTime())) {
-          timestamp = Utilities.formatDate(parsedDate, "America/Toronto", "HH:mm:ss");
+          timestamp = Utilities.formatDate(parsedDate, "America/Los_Angeles", "HH:mm:ss");
         }
         
         var newRow = [];
@@ -1466,7 +1466,7 @@ function doPost(e) {
       var lat = parseFloat(params.latitude) || 0.0;
       var lng = parseFloat(params.longitude) || 0.0;
       var locName = params.locationName || "";
-      var timestamp = params.timestamp || Utilities.formatDate(now, "America/Toronto", "yyyy-MM-dd HH:mm:ss");
+      var timestamp = params.timestamp || Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd HH:mm:ss");
       
       if (lat !== 0.0 || lng !== 0.0) {
         locationSheet.appendRow([timestamp, lat, lng, locName]);
@@ -1488,7 +1488,7 @@ function doPost(e) {
 function formatDateString(val) {
   if (!val) return "";
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/Toronto", "yyyy-MM-dd");
+    return Utilities.formatDate(val, "America/Los_Angeles", "yyyy-MM-dd");
   }
   var str = String(val).trim();
   // If already yyyy-MM-dd, return as-is to avoid timezone shifts
@@ -1497,7 +1497,7 @@ function formatDateString(val) {
   }
   var parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
-    return Utilities.formatDate(parsed, "America/Toronto", "yyyy-MM-dd");
+    return Utilities.formatDate(parsed, "America/Los_Angeles", "yyyy-MM-dd");
   }
   return str.split("T")[0].trim();
 }
@@ -1632,7 +1632,7 @@ function logDebugRequest(action, params) {
 function formatTimeValue(val) {
   if (!val) return "";
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/Toronto", "h:mm a");
+    return Utilities.formatDate(val, "America/Los_Angeles", "h:mm a");
   }
   var str = String(val).trim();
   if (str === "" || str.toLowerCase() === "no data") return "";
@@ -1642,7 +1642,7 @@ function formatTimeValue(val) {
     try {
       var d = new Date(str);
       if (!isNaN(d.getTime())) {
-        return Utilities.formatDate(d, "America/Toronto", "h:mm a");
+        return Utilities.formatDate(d, "America/Los_Angeles", "h:mm a");
       }
     } catch(e) {}
   }

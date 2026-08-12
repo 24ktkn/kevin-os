@@ -49,7 +49,7 @@ HABITS_LIST = ["Wake Up On Time", "Gym Workout", "Journaling"]
 
 # --- ⏳ TIMEZONE & NIGHT OWL ROLLOVER ENGINE ---
 # Force evaluation in local Eastern Time (London, Ontario)
-now_local = datetime.datetime.now(ZoneInfo("America/Toronto"))
+now_local = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
 
 # 2:00 AM Rollover Rule: If it's between 12:00 AM and 1:59 AM, hold the previous date track
 if now_local.hour < 2:

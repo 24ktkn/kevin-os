@@ -84,8 +84,8 @@ def get_schedule_for_date(target_date):
     start_of_day = datetime(target_date.year, target_date.month, target_date.day, 8, 0, 0)
     end_of_day = datetime(target_date.year, target_date.month, target_date.day, 22, 0, 0)
     
-    time_min = start_of_day.isoformat() + "-04:00" # EST
-    time_max = end_of_day.isoformat() + "-04:00"
+    time_min = start_of_day.isoformat() + "-07:00" # EST
+    time_max = end_of_day.isoformat() + "-07:00"
     
     events_list = []
     
@@ -212,14 +212,14 @@ with col1:
                             start_dt = datetime(target_date.year, target_date.month, target_date.day, hour, minute)
                             end_dt = start_dt + timedelta(minutes=duration)
                             
-                            start_iso = start_dt.isoformat() + "-04:00"
-                            end_iso = end_dt.isoformat() + "-04:00"
+                            start_iso = start_dt.isoformat() + "-07:00"
+                            end_iso = end_dt.isoformat() + "-07:00"
                             
                             # 1. Create Calendar Timeblock
                             timeblock_body = {
                                 'summary': f"☑️ [Task] {item_name}",
-                                'start': {'dateTime': start_iso, 'timeZone': 'America/Toronto'},
-                                'end': {'dateTime': end_iso, 'timeZone': 'America/Toronto'},
+                                'start': {'dateTime': start_iso, 'timeZone': 'America/Los_Angeles'},
+                                'end': {'dateTime': end_iso, 'timeZone': 'America/Los_Angeles'},
                                 'reminders': {'useDefault': True}
                             }
                             

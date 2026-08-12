@@ -195,8 +195,13 @@ class HealthManager: ObservableObject {
                 return
             }
             
-            // Filter for inBed or asleep
-            let validSamples = sleepSamples.filter { $0.value == HKCategoryValueSleepAnalysis.asleep.rawValue || $0.value == HKCategoryValueSleepAnalysis.inBed.rawValue }
+            // Filter for actual sleep stages (Core, Deep, REM, Unspecified) to calculate duration accurately on iOS 16+
+            let validSamples = sleepSamples.filter { 
+                $0.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue ||
+                $0.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue ||
+                $0.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
+                $0.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+            }
             
             let totalSeconds = validSamples.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
             

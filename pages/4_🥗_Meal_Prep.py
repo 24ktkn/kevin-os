@@ -62,7 +62,7 @@ st.markdown("""
 st.title("🥗 Meal Prep & Provisioning")
 
 # --- ⏳ REVISED SATURDAY/SUNDAY TIMELINE LOGIC ---
-now_local = datetime.datetime.now(ZoneInfo("America/Toronto"))
+now_local = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
 current_month = now_local.month
 current_day = now_local.day
 current_year = now_local.year
