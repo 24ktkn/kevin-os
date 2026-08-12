@@ -48,44 +48,44 @@ struct ContentView: View {
                     Text("Workouts")
                 }
                 .tag(1)
-            
-            // --- TAB 3: HABITS CHECKLIST ---
-            HabitsHistoryView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, lavenderColor: lavenderColor)
-                .tabItem {
-                    Image(systemName: "bolt.fill")
-                    Text("Habits")
-                }
-                .tag(2)
-            
-            // --- TAB 4: MEAL PREP & COSTCO ---
-            MealPrepView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, yellowColor: yellowColor, cyanColor: cyanColor, neonGreen: neonGreen)
-                .tabItem {
-                    Image(systemName: "basket.fill")
-                    Text("Meal Prep")
-                }
-                .tag(3)
-            
-            // --- TAB 5: MISSION CONTROL ---
+                
+            // --- TAB 3: MISSION CONTROL ---
             MissionControlView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor)
                 .tabItem {
                     Image(systemName: "calendar")
                     Text("Mission")
                 }
-                .tag(4)
+                .tag(2)
                 
-            // --- TAB 6: AI SCHEDULER ---
+            // --- TAB 4: DAILY JOURNAL ---
+            DailyJournalView(networkManager: networkManager, locationManager: locationManager)
+                .tabItem {
+                    Image(systemName: "book.fill")
+                    Text("Journal")
+                }
+                .tag(3)
+                
+            // --- TAB 5: AI SCHEDULER ---
             AISchedulerView()
                 .tabItem {
                     Image(systemName: "clock.badge.checkmark")
                     Text("AI Plan")
                 }
-                .tag(5)
-                
-            // --- TAB 7: DAILY JOURNAL ---
-            DailyJournalView(networkManager: networkManager, locationManager: locationManager)
+                .tag(4)
+            
+            // --- TAB 6: HABITS CHECKLIST ---
+            HabitsHistoryView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, lavenderColor: lavenderColor)
                 .tabItem {
-                    Image(systemName: "book.fill")
-                    Text("Journal")
+                    Image(systemName: "bolt.fill")
+                    Text("Habits")
+                }
+                .tag(5)
+            
+            // --- TAB 7: MEAL PREP & COSTCO ---
+            MealPrepView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, yellowColor: yellowColor, cyanColor: cyanColor, neonGreen: neonGreen)
+                .tabItem {
+                    Image(systemName: "basket.fill")
+                    Text("Meal Prep")
                 }
                 .tag(6)
         }
