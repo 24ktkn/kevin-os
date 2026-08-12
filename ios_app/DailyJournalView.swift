@@ -170,7 +170,7 @@ struct DailyJournalView: View {
                                     }
                                     
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(set.timestamp.isEmpty ? "Workout" : set.timestamp)
+                                        Text("Set \(set.setNumber)")
                                             .font(.system(size: 12, weight: .bold))
                                             .foregroundColor(.orange)
                                         
