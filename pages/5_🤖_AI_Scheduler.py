@@ -115,6 +115,22 @@ def get_schedule_for_date(target_date):
 # --- UI ---
 st.markdown("### 📝 Unstructured Tasks")
 
+st.markdown("#### Current Tasks (@default)")
+try:
+    results = tasks_service.tasks().list(tasklist="@default", showCompleted=False).execute()
+    items = results.get('items', [])
+    current_tasks = [item.get('title', 'Untitled') for item in items]
+    if current_tasks:
+        for t in current_tasks:
+            st.markdown(f"- 🔵 {t}")
+    else:
+        st.markdown("No active tasks found in your default list.")
+except Exception as e:
+    st.error(f"Failed to fetch current tasks: {e}")
+    
+st.markdown("---")
+
+
 col_date, _ = st.columns([1, 2])
 with col_date:
     target_date = st.date_input("Select Target Date", value=datetime.now())
