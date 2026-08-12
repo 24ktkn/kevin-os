@@ -630,6 +630,8 @@ function doPost(e) {
       var weightCol = hHeaders.indexOf("Bodyweight");
       var wakeCol = hHeaders.indexOf("Wake Time");
       var sleepTimeCol = hHeaders.indexOf("Sleep Time");
+      var wCalCol = hHeaders.indexOf("Workout Calories");
+      var wDurCol = hHeaders.indexOf("Workout Duration");
       
       var passedDate = getParam(params, ["date"]);
       if (passedDate) {
@@ -683,6 +685,24 @@ function doPost(e) {
       var sleepTimeVal = getParam(params, ["sleepTime", "sleep_time", "sleep_start", "sleepstart"]);
       var sleepTime = sleepTimeVal !== undefined && sleepTimeVal !== null ? String(sleepTimeVal).trim() : null;
       
+      var wCalVal = getParam(params, ["workoutCalories"]);
+      var wCal = wCalVal !== undefined && wCalVal !== null ? parseFloat(wCalVal) : null;
+      
+      var wDurVal = getParam(params, ["workoutDuration"]);
+      var wDur = wDurVal !== undefined && wDurVal !== null ? parseFloat(wDurVal) : null;
+      
+      // Auto-append workout columns if they don't exist yet
+      if (wCalCol === -1 && wCal !== null) {
+          healthSheet.getRange(1, hHeaders.length + 1).setValue("Workout Calories");
+          wCalCol = hHeaders.length;
+          hHeaders.push("Workout Calories");
+      }
+      if (wDurCol === -1 && wDur !== null) {
+          healthSheet.getRange(1, hHeaders.length + 1).setValue("Workout Duration");
+          wDurCol = hHeaders.length;
+          hHeaders.push("Workout Duration");
+      }
+      
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
         if (sleepStr !== null && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
@@ -691,6 +711,8 @@ function doPost(e) {
         if (weight !== null && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
         if (wakeTime !== null && wakeCol !== -1) healthSheet.getRange(targetRow, wakeCol + 1).setValue(wakeTime);
         if (sleepTime !== null && sleepTimeCol !== -1) healthSheet.getRange(targetRow, sleepTimeCol + 1).setValue(sleepTime);
+        if (wCal !== null && wCalCol !== -1) healthSheet.getRange(targetRow, wCalCol + 1).setValue(wCal);
+        if (wDur !== null && wDurCol !== -1) healthSheet.getRange(targetRow, wDurCol + 1).setValue(wDur);
       } else {
         var newRow = [];
         for (var c = 0; c < hHeaders.length; c++) {
@@ -702,9 +724,54 @@ function doPost(e) {
           else if (c === weightCol && weight !== null) newRow.push(weight);
           else if (c === wakeCol && wakeTime !== null) newRow.push(wakeTime);
           else if (c === sleepTimeCol && sleepTime !== null) newRow.push(sleepTime);
+          else if (c === wCalCol && wCal !== null) newRow.push(wCal);
+          else if (c === wDurCol && wDur !== null) newRow.push(wDur);
           else newRow.push("");
         }
         healthSheet.appendRow(newRow);
+      }
+      
+      // OPTION C: Auto-complete Mission Control Gym Task if workout detected
+      if (wCal !== null || wDur !== null) {
+          var missionSheet = ss.getSheetByName("Master Task Tracker");
+          if (missionSheet) {
+              var mData = missionSheet.getDataRange().getValues();
+              var mHeaders = mData[0];
+              var mDateCol = mHeaders.indexOf("Date");
+              var mItemNameCol = mHeaders.indexOf("Item Name");
+              var mStatusCol = mHeaders.indexOf("Status");
+              
+              if (mDateCol !== -1 && mItemNameCol !== -1 && mStatusCol !== -1) {
+                  for (var m = mData.length - 1; m > 0; m--) {
+                      var rowDate = formatDateString(mData[m][mDateCol]);
+                      if (rowDate === activeDateStr) {
+                          var itemName = String(mData[m][mItemNameCol]).toLowerCase();
+                          if (itemName.indexOf("gym") !== -1 || itemName.indexOf("workout") !== -1 || itemName.indexOf("lift") !== -1) {
+                              missionSheet.getRange(m + 1, mStatusCol + 1).setValue(true);
+                          }
+                      }
+                  }
+              }
+          }
+          
+          // Also auto-complete the "Gym Workout" Habit if it exists
+          var habitsSheet = ss.getSheetByName("Habits");
+          if (habitsSheet) {
+              var habData = habitsSheet.getDataRange().getValues();
+              var habHeaders = habData[0];
+              var habDateCol = habHeaders.indexOf("Date");
+              var gymHabCol = habHeaders.indexOf("Gym Workout");
+              
+              if (habDateCol !== -1 && gymHabCol !== -1) {
+                  for (var k = habData.length - 1; k > 0; k--) {
+                      var habDate = formatDateString(habData[k][habDateCol]);
+                      if (habDate === activeDateStr) {
+                          habitsSheet.getRange(k + 1, gymHabCol + 1).setValue(true);
+                          break;
+                      }
+                  }
+              }
+          }
       }
       
       // Auto-trigger Wake Up On Time check if wakeTime was uploaded

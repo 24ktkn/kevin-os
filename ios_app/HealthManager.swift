@@ -15,6 +15,7 @@ class HealthManager: ObservableObject {
     let hrvType = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!
     let weightType = HKObjectType.quantityType(forIdentifier: .bodyMass)!
     let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+    let workoutType = HKObjectType.workoutType()
     
     func requestPermissions(completion: @escaping (Bool) -> Void) {
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -28,7 +29,8 @@ class HealthManager: ObservableObject {
             restingHeartRateType,
             hrvType,
             weightType,
-            sleepType
+            sleepType,
+            workoutType
         ]
         
         healthStore.requestAuthorization(toShare: nil, read: typesToRead) { success, error in
@@ -42,9 +44,10 @@ class HealthManager: ObservableObject {
     // MARK: - Background Observer Queries
     
     func setupBackgroundObservers() {
-        // Observe steps and sleep, which are the most common metrics to change throughout the day/night
+        // Observe steps, sleep, and workouts
         setupObserver(for: stepCountType)
         setupObserver(for: sleepType)
+        setupObserver(for: workoutType)
     }
     
     private func setupObserver(for type: HKSampleType) {
@@ -82,6 +85,8 @@ class HealthManager: ObservableObject {
         var avgHRV = 0
         var latestWeight = 0.0
         var sleepDurationHours = 0.0
+        var workoutCalories = 0.0
+        var workoutDuration = 0.0
         
         // 1. Fetch Steps
         dispatchGroup.enter()
@@ -118,9 +123,25 @@ class HealthManager: ObservableObject {
             dispatchGroup.leave()
         }
         
+        // 6. Fetch Workouts
+        dispatchGroup.enter()
+        fetchTodayWorkouts { calories, duration in
+            workoutCalories = calories
+            workoutDuration = duration
+            dispatchGroup.leave()
+        }
+        
         // When all fetches are complete, send to Apps Script
         dispatchGroup.notify(queue: .main) {
-            self.postBiometricsToBackend(steps: totalSteps, sleepHours: sleepDurationHours, hrv: avgHRV, rhr: avgRHR, weight: latestWeight)
+            self.pushMetricsToBackend(
+                steps: totalSteps,
+                rhr: avgRHR,
+                hrv: avgHRV,
+                weight: latestWeight,
+                sleep: sleepDurationHours,
+                workoutCalories: workoutCalories,
+                workoutDuration: workoutDuration
+            )
             completion?()
         }
     }
@@ -187,7 +208,38 @@ class HealthManager: ObservableObject {
         healthStore.execute(query)
     }
     
-    private func postBiometricsToBackend(steps: Int, sleepHours: Double, hrv: Int, rhr: Int, weight: Double) {
+    // MARK: - Workouts
+    private func fetchTodayWorkouts(completion: @escaping (Double, Double) -> Void) {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfDay = calendar.startOfDay(for: now)
+        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: now, options: .strictStartDate)
+        
+        let query = HKSampleQuery(sampleType: workoutType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+            guard let workouts = samples as? [HKWorkout], error == nil else {
+                completion(0.0, 0.0)
+                return
+            }
+            
+            var totalCalories = 0.0
+            var totalDurationMinutes = 0.0
+            
+            for workout in workouts {
+                totalDurationMinutes += workout.duration / 60.0
+                if let energy = workout.totalEnergyBurned {
+                    totalCalories += energy.doubleValue(for: HKUnit.kilocalorie())
+                }
+            }
+            
+            completion(totalCalories, totalDurationMinutes)
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    // MARK: - Backend Push
+    
+    private func pushMetricsToBackend(steps: Int, rhr: Int, hrv: Int, weight: Double, sleep: Double, workoutCalories: Double, workoutDuration: Double) {
         guard let url = URL(string: apiURLString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -196,11 +248,12 @@ class HealthManager: ObservableObject {
         let payload: [String: Any] = [
             "action": "upload_biometrics",
             "steps": steps,
-            "sleep": sleepHours,
-            "hrv": hrv,
             "rhr": rhr,
-            "weight": weight
-            // Note: Add wakeTime and sleepTime here if you want HealthKit to overwrite them
+            "hrv": hrv,
+            "weight": weight,
+            "sleep": sleep,
+            "workoutCalories": workoutCalories,
+            "workoutDuration": workoutDuration
         ]
         
         do {
