@@ -94,7 +94,7 @@ struct DailyJournalView: View {
                         .frame(height: 200)
                         .cornerRadius(12)
                         .onAppear {
-                            if let loc = locationManager.lastLocation {
+                            if let loc = locationManager.location {
                                 region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
                             }
                         }
