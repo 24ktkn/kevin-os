@@ -11,6 +11,11 @@ struct AISchedulerView: View {
     @State private var generatedSchedule: String = ""
     @State private var isGenerating = false
     
+    @State private var newTaskTitle: String = ""
+    @State private var newTaskDate: Date = Date()
+    @State private var taskListId: String? = nil
+    @State private var isCreatingTask = false
+    
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -30,6 +35,54 @@ struct AISchedulerView: View {
             
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    
+                    // Create Task Section
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add New Task")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
+                        
+                        VStack(spacing: 12) {
+                            TextField("Task title", text: $newTaskTitle)
+                                .padding()
+                                .background(Color(red: 0.12, green: 0.12, blue: 0.16))
+                                .cornerRadius(8)
+                                .foregroundColor(.white)
+                            
+                            HStack {
+                                Text("Due Date")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 14, weight: .medium))
+                                Spacer()
+                                DatePicker("", selection: $newTaskDate, displayedComponents: .date)
+                                    .labelsHidden()
+                                    .colorInvert()
+                                    .colorMultiply(cyanColor)
+                            }
+                            
+                            Button(action: createTask) {
+                                HStack {
+                                    if isCreatingTask {
+                                        ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                    }
+                                    Text("Create & Schedule Task")
+                                        .font(.system(size: 14, weight: .bold))
+                                }
+                                .foregroundColor(.black)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(newTaskTitle.isEmpty || taskListId == nil ? Color.gray : cyanColor)
+                                .cornerRadius(8)
+                            }
+                            .disabled(newTaskTitle.isEmpty || isCreatingTask || taskListId == nil)
+                        }
+                        .padding()
+                        .background(cardBgColor)
+                        .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                    }
+                    .padding(.horizontal)
                     
                     // Task List
                     VStack(alignment: .leading, spacing: 8) {
@@ -140,6 +193,7 @@ struct AISchedulerView: View {
                     
                     let fetchedTasks = taskItems.compactMap { $0["title"] as? String }
                     DispatchQueue.main.async {
+                        self.taskListId = firstListId
                         self.tasks = fetchedTasks
                     }
                 }.resume()
@@ -150,10 +204,50 @@ struct AISchedulerView: View {
     private func generateSchedule() {
         isGenerating = true
         GeminiManager.shared.generateSchedule(tasks: tasks, events: []) { schedule in
-            self.isGenerating = false
-            if let schedule = schedule {
-                self.generatedSchedule = schedule
+            DispatchQueue.main.async {
+                self.isGenerating = false
+                if let schedule = schedule {
+                    self.generatedSchedule = schedule
+                }
             }
+        }
+    }
+    
+    private func createTask() {
+        guard let listId = taskListId, !newTaskTitle.isEmpty else { return }
+        isCreatingTask = true
+        GoogleAuthManager.shared.getValidAccessToken { token in
+            guard let token = token else {
+                DispatchQueue.main.async { self.isCreatingTask = false }
+                return
+            }
+            
+            let url = URL(string: "https://tasks.googleapis.com/tasks/v1/lists/\(listId)/tasks")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            let dueString = formatter.string(from: newTaskDate)
+            
+            let body: [String: Any] = [
+                "title": newTaskTitle,
+                "due": dueString
+            ]
+            
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                DispatchQueue.main.async {
+                    self.isCreatingTask = false
+                    if let _ = data, error == nil {
+                        self.newTaskTitle = ""
+                        self.fetchTasks() // Refresh list to show new task
+                    }
+                }
+            }.resume()
         }
     }
 }
