@@ -221,33 +221,122 @@ with col_main:
                 st.cache_data.clear()
                 st.rerun()
                 
-    # 4. PHOTO GALLERY & UPLOADER
+    # 4. GOOGLE PHOTOS & AI HIGHLIGHTS
     st.markdown("---")
-    st.markdown("### 📸 Daily Photos")
+    st.markdown("### 📸 Daily Photos (Google Photos Sync)")
     
-    import os
-    photos_dir = os.path.join("data", "photos", selected_date_str)
-    os.makedirs(photos_dir, exist_ok=True)
+    import requests
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    import base64
+    import json
+    import google.generativeai as genai
     
-    # Upload new photos
-    uploaded_files = st.file_uploader("Upload photos from this day", accept_multiple_files=True, type=["png", "jpg", "jpeg", "heic"])
-    if uploaded_files:
-        for uf in uploaded_files:
-            file_path = os.path.join(photos_dir, uf.name)
-            with open(file_path, "wb") as f:
-                f.write(uf.getbuffer())
-        st.success(f"Successfully uploaded {len(uploaded_files)} photos!")
-        st.rerun()
-        
-    # Display existing photos
-    photo_files = [f for f in os.listdir(photos_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.heic'))]
-    if photo_files:
-        cols = st.columns(3)
-        for i, photo in enumerate(photo_files):
-            with cols[i % 3]:
-                st.image(os.path.join(photos_dir, photo), use_container_width=True)
-    else:
-        st.info("No photos uploaded for this day yet.")
+    @st.cache_data(ttl=3600)
+    def fetch_google_photos(year, month, day):
+        try:
+            creds_info = st.secrets["tasks_api"]
+            creds = Credentials(
+                token=None,
+                refresh_token=creds_info["refresh_token"],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=creds_info["client_id"],
+                client_secret=creds_info["client_secret"]
+            )
+            creds.refresh(Request())
+            access_token = creds.token
+            
+            url = "https://photoslibrary.googleapis.com/v1/mediaItems:search"
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "filters": {
+                    "dateFilter": {
+                        "dates": [{"year": year, "month": month, "day": day}]
+                    },
+                    "mediaTypeFilter": {
+                        "mediaTypes": ["PHOTO"]
+                    }
+                },
+                "pageSize": 50
+            }
+            
+            resp = requests.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                return resp.json().get("mediaItems", [])
+            else:
+                st.error(f"Google Photos API Error: {resp.text}")
+                return []
+        except Exception as e:
+            st.error(f"Failed to fetch photos: {e}")
+            return []
+            
+    if st.button("✨ Sync & Highlight Best Photos with Gemini", use_container_width=True):
+        with st.spinner("Fetching photos from Google Cloud..."):
+            media_items = fetch_google_photos(selected_date.year, selected_date.month, selected_date.day)
+            
+            if not media_items:
+                st.info("No photos found in your Google Photos for this day.")
+            else:
+                st.write(f"Found {len(media_items)} photos. Gemini is picking the best ones...")
+                
+                # Fetch thumbnails and prepare for Gemini
+                images_for_gemini = []
+                image_urls = []
+                
+                for item in media_items[:30]: # Cap at 30 to save API limits
+                    img_url = item["baseUrl"] + "=w400-h400-c"
+                    image_urls.append(img_url)
+                    
+                    try:
+                        img_bytes = requests.get(img_url).content
+                        images_for_gemini.append({
+                            "mime_type": "image/jpeg",
+                            "data": img_bytes # Gemini SDK handles bytes directly
+                        })
+                    except:
+                        pass
+                
+                # Setup Gemini
+                api_key = st.secrets.get("GEMINI_API_KEY")
+                if not api_key:
+                    api_key = st.secrets.get("connections", {}).get("gsheets", {}).get("GEMINI_API_KEY")
+                
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    
+                    prompt = f"Here are {len(images_for_gemini)} photos from a user's day. Select up to 4 that are the most visually beautiful or meaningful to highlight the day. Ignore receipts, screenshots, blur, and text. Return ONLY a JSON list of the integer indices of the chosen photos, starting from 0 (e.g. [0, 5, 12])."
+                    
+                    try:
+                        response = model.generate_content([prompt] + images_for_gemini)
+                        # Parse JSON array
+                        json_str = response.text.replace('```json', '').replace('```', '').strip()
+                        best_indices = json.loads(json_str)
+                        
+                        st.markdown("#### ✨ AI Highlights")
+                        cols = st.columns(len(best_indices) if best_indices else 1)
+                        
+                        for i, idx in enumerate(best_indices):
+                            if idx < len(image_urls):
+                                with cols[i]:
+                                    st.image(image_urls[idx], use_container_width=True)
+                                    
+                        st.markdown("#### All Photos")
+                        all_cols = st.columns(4)
+                        for i, url in enumerate(image_urls):
+                            with all_cols[i % 4]:
+                                st.image(url, use_container_width=True)
+                                
+                    except Exception as e:
+                        st.error(f"Gemini failed to select photos: {e}")
+                        st.markdown("#### All Photos")
+                        all_cols = st.columns(4)
+                        for i, url in enumerate(image_urls):
+                            with all_cols[i % 4]:
+                                st.image(url, use_container_width=True)
 
 with col_side:
     st.markdown("### ⏱️ Timeline")
