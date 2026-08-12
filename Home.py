@@ -248,7 +248,8 @@ try:
             # Find the most recent non-zero bodyweight from history
             weight = 0.0
             if "Bodyweight" in df_bio_clean.columns:
-                valid_weights = df_bio_clean[df_bio_clean["Bodyweight"] > 0]
+                bw_numeric = pd.to_numeric(df_bio_clean["Bodyweight"], errors='coerce')
+                valid_weights = df_bio_clean[bw_numeric > 0]
                 if not valid_weights.empty:
                     weight = float(valid_weights.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
             if weight == 0:
