@@ -254,8 +254,19 @@ try:
             if weight == 0:
                 weight = 170.0 # absolute fallback
                 
-            w_cal = float(latest_day["Workout Calories"]) if "Workout Calories" in latest_day and pd.notna(latest_day["Workout Calories"]) else 0
-            w_dur = float(latest_day["Workout Duration"]) if "Workout Duration" in latest_day and pd.notna(latest_day["Workout Duration"]) else 0
+            w_cal = 0
+            try:
+                if "Workout Calories" in latest_day and pd.notna(latest_day["Workout Calories"]) and str(latest_day["Workout Calories"]).strip() != "":
+                    w_cal = float(latest_day["Workout Calories"])
+            except Exception:
+                pass
+                
+            w_dur = 0
+            try:
+                if "Workout Duration" in latest_day and pd.notna(latest_day["Workout Duration"]) and str(latest_day["Workout Duration"]).strip() != "":
+                    w_dur = float(latest_day["Workout Duration"])
+            except Exception:
+                pass
 
             # Render Daily Steps
             step_goal = 10000
@@ -363,8 +374,8 @@ try:
                     <div class="status-val" style="color: #3B82F6; font-size: 1.6rem;">{wdur_str}</div>
                 </div>
                 """, unsafe_allow_html=True)
-except Exception:
-    # Fail silently to avoid breaking the Home page if the sheet connection fails
+except Exception as e:
+    st.error(f"Error loading biometrics: {e}")
     pass
 
 # --- HABITS COMMAND CENTER ---
