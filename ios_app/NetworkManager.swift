@@ -9,6 +9,8 @@ struct Biometrics: Codable, Sendable {
     var weight: Double
     var wakeTime: String
     var sleepTime: String?
+    var workoutCalories: Double?
+    var workoutDuration: Double?
 }
 
 struct BiometricsHistoryItem: Codable, Identifiable, Sendable {
@@ -21,6 +23,8 @@ struct BiometricsHistoryItem: Codable, Identifiable, Sendable {
     var weight: Double
     var wakeTime: String
     var sleepTime: String?
+    var workoutCalories: Double?
+    var workoutDuration: Double?
 }
 
 struct Habits: Codable, Sendable {

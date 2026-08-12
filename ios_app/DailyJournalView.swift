@@ -108,15 +108,46 @@ struct DailyJournalView: View {
                 
                 // Today's Workout
                 let todaysWorkouts = networkManager.recentWorkouts.filter { $0.date == networkManager.dateStr }
-                if !todaysWorkouts.isEmpty {
+                let wCal = networkManager.biometrics.workoutCalories ?? 0.0
+                let wDur = networkManager.biometrics.workoutDuration ?? 0.0
+                
+                if !todaysWorkouts.isEmpty || wCal > 0 || wDur > 0 {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Today's Workout")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.gray)
                             .textCase(.uppercase)
                         
-                        VStack(spacing: 0) {
-                            ForEach(todaysWorkouts) { set in
+                        if wCal > 0 || wDur > 0 {
+                            HStack {
+                                Spacer()
+                                VStack {
+                                    Image(systemName: "flame.fill").foregroundColor(.orange)
+                                        .font(.system(size: 18))
+                                    Text("\(Int(wCal)) kcal")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+                                }
+                                Spacer()
+                                VStack {
+                                    Image(systemName: "timer").foregroundColor(neonGreen)
+                                        .font(.system(size: 18))
+                                    Text("\(Int(wDur)) min")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
+                            .background(cardBgColor)
+                            .cornerRadius(12)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                            .padding(.bottom, 4)
+                        }
+                        
+                        if !todaysWorkouts.isEmpty {
+                            VStack(spacing: 0) {
+                                ForEach(todaysWorkouts) { set in
                                 HStack {
                                     Text("\(set.setNumber)")
                                         .font(.system(size: 12, weight: .bold))
@@ -147,10 +178,11 @@ struct DailyJournalView: View {
                                     Divider().background(cardBorderColor)
                                 }
                             }
+                            }
+                            .background(cardBgColor)
+                            .cornerRadius(12)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
                         }
-                        .background(cardBgColor)
-                        .cornerRadius(12)
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
                     }
                     .padding(.horizontal)
                 }

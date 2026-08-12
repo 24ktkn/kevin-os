@@ -153,7 +153,12 @@ with col_main:
     # 1. BIOMETRICS SUMMARY BAR
     if day_health is not None:
         st.markdown("### 📊 Daily Summary")
-        m1, m2, m3, m4 = st.columns(4)
+        w_cal = day_health.get("Workout Calories", 0)
+        w_cal = 0 if pd.isna(w_cal) else int(w_cal)
+        w_dur = day_health.get("Workout Duration", 0)
+        w_dur = 0 if pd.isna(w_dur) else int(w_dur)
+        
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
         with m1:
             st.markdown(f'<div class="metric-card"><div class="metric-value">{day_health.get("Steps", 0)}</div><div class="metric-label">Steps</div></div>', unsafe_allow_html=True)
         with m2:
@@ -162,6 +167,10 @@ with col_main:
             st.markdown(f'<div class="metric-card"><div class="metric-value">{day_health.get("HRV", 0)}</div><div class="metric-label">HRV</div></div>', unsafe_allow_html=True)
         with m4:
             st.markdown(f'<div class="metric-card"><div class="metric-value">{day_health.get("RHR", 0)}</div><div class="metric-label">RHR</div></div>', unsafe_allow_html=True)
+        with m5:
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_cal}</div><div class="metric-label">W. Kcal</div></div>', unsafe_allow_html=True)
+        with m6:
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_dur}m</div><div class="metric-label">W. Min</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
     
     # 2. MAP TRAJECTORY

@@ -370,7 +370,7 @@ function doGet(e) {
     
     var response = {
       date: activeDateStr,
-      biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data" },
+      biometrics: { steps: 0, sleep: 0.0, hrv: 0, rhr: 0, weight: 170.0, wakeTime: "No data", sleepTime: "No data", workoutCalories: 0.0, workoutDuration: 0.0 },
       biometricsHistory: [],
       habits: { wakeUpOnTime: false, gymWorkout: false, journaling: false },
       habitHistory: [],
@@ -390,6 +390,8 @@ function doGet(e) {
       var weightCol = hHeaders.indexOf("Bodyweight");
       var wakeCol = hHeaders.indexOf("Wake Time");
       var sleepTimeCol = hHeaders.indexOf("Sleep Time");
+      var wCalCol = hHeaders.indexOf("Workout Calories");
+      var wDurCol = hHeaders.indexOf("Workout Duration");
       
       for (var i = hData.length - 1; i > 0; i--) {
         var rowDate = formatDateString(hData[i][hDateCol]);
@@ -401,6 +403,8 @@ function doGet(e) {
           if (weightCol !== -1) response.biometrics.weight = parseFloat(hData[i][weightCol]) || 170.0;
           if (wakeCol !== -1) response.biometrics.wakeTime = formatTimeValue(hData[i][wakeCol]) || "No data";
           if (sleepTimeCol !== -1) response.biometrics.sleepTime = formatTimeValue(hData[i][sleepTimeCol]) || "No data";
+          if (wCalCol !== -1) response.biometrics.workoutCalories = parseFloat(hData[i][wCalCol]) || 0.0;
+          if (wDurCol !== -1) response.biometrics.workoutDuration = parseFloat(hData[i][wDurCol]) || 0.0;
           break;
         }
       }
@@ -419,7 +423,9 @@ function doGet(e) {
               rhr: rhrCol !== -1 ? parseInt(hData[h][rhrCol], 10) || 0 : 0,
               weight: weightCol !== -1 ? parseFloat(hData[h][weightCol]) || 0.0 : 0.0,
               wakeTime: wakeCol !== -1 ? formatTimeValue(hData[h][wakeCol]) : "",
-              sleepTime: sleepTimeCol !== -1 ? formatTimeValue(hData[h][sleepTimeCol]) : ""
+              sleepTime: sleepTimeCol !== -1 ? formatTimeValue(hData[h][sleepTimeCol]) : "",
+              workoutCalories: wCalCol !== -1 ? parseFloat(hData[h][wCalCol]) || 0.0 : 0.0,
+              workoutDuration: wDurCol !== -1 ? parseFloat(hData[h][wDurCol]) || 0.0 : 0.0
             });
           }
         }
