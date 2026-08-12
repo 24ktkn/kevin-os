@@ -168,9 +168,9 @@ with col_main:
         with m4:
             st.markdown(f'<div class="metric-card"><div class="metric-value">{day_health.get("RHR", 0)}</div><div class="metric-label">RHR</div></div>', unsafe_allow_html=True)
         with m5:
-            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_cal}</div><div class="metric-label">W. Kcal</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_cal}</div><div class="metric-label">Workout Calories</div></div>', unsafe_allow_html=True)
         with m6:
-            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_dur}m</div><div class="metric-label">W. Min</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{w_dur}m</div><div class="metric-label">Workout Minutes</div></div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
     
     # 2. MAP TRAJECTORY

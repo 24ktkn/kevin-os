@@ -47,33 +47,53 @@ struct DailyJournalView: View {
                         .foregroundColor(.gray)
                         .textCase(.uppercase)
                     
-                    HStack {
-                        VStack {
-                            Text("\(networkManager.biometrics.steps)")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(neonGreen)
-                            Text("Steps").font(.system(size: 10)).foregroundColor(.gray)
+                    let wCal = networkManager.biometrics.workoutCalories ?? 0.0
+                    let wDur = networkManager.biometrics.workoutDuration ?? 0.0
+                    
+                    VStack(spacing: 16) {
+                        HStack {
+                            VStack {
+                                Text("\(networkManager.biometrics.steps)")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(neonGreen)
+                                Text("Steps").font(.system(size: 10)).foregroundColor(.gray)
+                            }
+                            Spacer()
+                            VStack {
+                                Text(String(format: "%.1fh", networkManager.biometrics.sleep))
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("Sleep").font(.system(size: 10)).foregroundColor(.gray)
+                            }
+                            Spacer()
+                            VStack {
+                                Text("\(networkManager.biometrics.hrv)")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("HRV").font(.system(size: 10)).foregroundColor(.gray)
+                            }
                         }
-                        Spacer()
-                        VStack {
-                            Text(String(format: "%.1fh", networkManager.biometrics.sleep))
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(.white)
-                            Text("Sleep").font(.system(size: 10)).foregroundColor(.gray)
-                        }
-                        Spacer()
-                        VStack {
-                            Text("\(networkManager.biometrics.hrv)")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(.white)
-                            Text("HRV").font(.system(size: 10)).foregroundColor(.gray)
-                        }
-                        Spacer()
-                        VStack {
-                            Text("\(networkManager.biometrics.rhr)")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(.white)
-                            Text("RHR").font(.system(size: 10)).foregroundColor(.gray)
+                        HStack {
+                            VStack {
+                                Text("\(networkManager.biometrics.rhr)")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("RHR").font(.system(size: 10)).foregroundColor(.gray)
+                            }
+                            Spacer()
+                            VStack {
+                                Text("\(Int(wCal))")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.orange)
+                                Text("Workout Kcal").font(.system(size: 10)).foregroundColor(.gray)
+                            }
+                            Spacer()
+                            VStack {
+                                Text("\(Int(wDur))m")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.blue)
+                                Text("Workout Min").font(.system(size: 10)).foregroundColor(.gray)
+                            }
                         }
                     }
                     .padding()
@@ -90,102 +110,96 @@ struct DailyJournalView: View {
                         .foregroundColor(.gray)
                         .textCase(.uppercase)
                     
-                    Map(coordinateRegion: $region, showsUserLocation: true)
-                        .frame(height: 200)
-                        .cornerRadius(12)
-                        .onAppear {
-                            if let loc = locationManager.location {
-                                region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+                    if #available(iOS 14.0, *) {
+                        Map(coordinateRegion: $region, interactionModes: .all, showsUserLocation: true, userTrackingMode: .constant(.follow))
+                            .frame(height: 200)
+                            .cornerRadius(12)
+                    } else {
+                        Map(coordinateRegion: $region, showsUserLocation: true)
+                            .frame(height: 200)
+                            .cornerRadius(12)
+                            .onAppear {
+                                if let loc = locationManager.location {
+                                    region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+                                }
                             }
-                        }
-                        .onChange(of: locationManager.location) { newLocation in
-                            if let loc = newLocation {
-                                region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+                            .onChange(of: locationManager.location) { newLocation in
+                                if let loc = newLocation {
+                                    region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+                                }
                             }
-                        }
+                    }
                 }
                 .padding(.horizontal)
                 
-                // Today's Workout
+                // Timeline / Activities
                 let todaysWorkouts = networkManager.recentWorkouts.filter { $0.date == networkManager.dateStr }
-                let wCal = networkManager.biometrics.workoutCalories ?? 0.0
-                let wDur = networkManager.biometrics.workoutDuration ?? 0.0
                 
-                if !todaysWorkouts.isEmpty || wCal > 0 || wDur > 0 {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Today's Workout")
-                            .font(.system(size: 11, weight: .bold))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Today's Timeline")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.gray)
+                        .textCase(.uppercase)
+                    
+                    if todaysWorkouts.isEmpty {
+                        Text("No activities recorded yet today.")
+                            .font(.system(size: 14))
                             .foregroundColor(.gray)
-                            .textCase(.uppercase)
-                        
-                        if wCal > 0 || wDur > 0 {
-                            HStack {
-                                Spacer()
-                                VStack {
-                                    Image(systemName: "flame.fill").foregroundColor(.orange)
-                                        .font(.system(size: 18))
-                                    Text("\(Int(wCal)) kcal")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                }
-                                Spacer()
-                                VStack {
-                                    Image(systemName: "timer").foregroundColor(neonGreen)
-                                        .font(.system(size: 18))
-                                    Text("\(Int(wDur)) min")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                }
-                                Spacer()
-                            }
-                            .padding(.vertical, 12)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .background(cardBgColor)
                             .cornerRadius(12)
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
-                            .padding(.bottom, 4)
-                        }
-                        
-                        if !todaysWorkouts.isEmpty {
-                            VStack(spacing: 0) {
-                                ForEach(todaysWorkouts) { set in
-                                HStack {
-                                    Text("\(set.setNumber)")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundColor(neonGreen)
-                                        .frame(width: 20)
-                                    
-                                    Text(set.exercise)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.white)
-                                        .lineLimit(1)
-                                    
-                                    Spacer()
-                                    
-                                    if set.weight > 0 {
-                                        Text("\(Int(set.weight)) lbs x \(set.reps)")
-                                            .font(.system(size: 14, weight: .medium))
-                                            .foregroundColor(.gray)
-                                    } else if set.duration > 0 {
-                                        Text("\(Int(set.duration))m")
-                                            .font(.system(size: 14, weight: .medium))
-                                            .foregroundColor(.gray)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(todaysWorkouts) { set in
+                                HStack(alignment: .top, spacing: 12) {
+                                    // Timeline dot
+                                    VStack(spacing: 0) {
+                                        Circle()
+                                            .fill(Color.orange)
+                                            .frame(width: 10, height: 10)
+                                            .padding(.top, 4)
+                                        
+                                        if set.id != todaysWorkouts.last?.id {
+                                            Rectangle()
+                                                .fill(Color.gray.opacity(0.3))
+                                                .frame(width: 2)
+                                                .padding(.vertical, 2)
+                                        }
                                     }
+                                    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(set.timestamp.isEmpty ? "Workout" : set.timestamp)
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.orange)
+                                        
+                                        Text(set.exercise)
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(.white)
+                                        
+                                        if set.weight > 0 {
+                                            Text("\(Int(set.weight)) lbs x \(set.reps) reps")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.gray)
+                                        } else if set.duration > 0 {
+                                            Text("\(Int(set.duration)) minutes")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.gray)
+                                        }
+                                    }
+                                    Spacer()
                                 }
                                 .padding(.vertical, 8)
-                                .padding(.horizontal, 12)
-                                
-                                if set.id != todaysWorkouts.last?.id {
-                                    Divider().background(cardBorderColor)
-                                }
                             }
-                            }
-                            .background(cardBgColor)
-                            .cornerRadius(12)
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
                         }
+                        .padding(12)
+                        .background(cardBgColor)
+                        .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
                     }
-                    .padding(.horizontal)
                 }
+                .padding(.horizontal)
                 
                 // Manual Journal
                 VStack(alignment: .leading, spacing: 8) {
