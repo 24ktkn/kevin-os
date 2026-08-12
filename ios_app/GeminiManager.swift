@@ -1,4 +1,6 @@
 import Foundation
+import Combine
+import SwiftUI
 
 class GeminiManager: ObservableObject {
     static let shared = GeminiManager()
