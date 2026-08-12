@@ -72,6 +72,22 @@ struct ContentView: View {
                     Text("Mission")
                 }
                 .tag(4)
+                
+            // --- TAB 6: AI SCHEDULER ---
+            AISchedulerView()
+                .tabItem {
+                    Image(systemName: "clock.badge.checkmark")
+                    Text("AI Plan")
+                }
+                .tag(5)
+                
+            // --- TAB 7: DAILY JOURNAL ---
+            DailyJournalView(networkManager: networkManager, locationManager: locationManager)
+                .tabItem {
+                    Image(systemName: "book.fill")
+                    Text("Journal")
+                }
+                .tag(6)
         }
         .accentColor(neonGreen)
         .onAppear {
