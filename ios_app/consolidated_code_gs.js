@@ -400,7 +400,12 @@ function doGet(e) {
           if (sleepCol !== -1) response.biometrics.sleep = parseSleepDurationHours(hData[i][sleepCol]);
           if (hrvCol !== -1) response.biometrics.hrv = parseInt(hData[i][hrvCol], 10) || 0;
           if (rhrCol !== -1) response.biometrics.rhr = parseInt(hData[i][rhrCol], 10) || 0;
-          if (weightCol !== -1) response.biometrics.weight = parseFloat(hData[i][weightCol]) || 170.0;
+          if (weightCol !== -1) {
+            var w = parseFloat(hData[i][weightCol]);
+            response.biometrics.weight = (w > 0) ? w : getLastKnownWeight(healthSheet, weightCol);
+          } else {
+            response.biometrics.weight = 170.0;
+          }
           if (wakeCol !== -1) response.biometrics.wakeTime = formatTimeValue(hData[i][wakeCol]) || "No data";
           if (sleepTimeCol !== -1) response.biometrics.sleepTime = formatTimeValue(hData[i][sleepTimeCol]) || "No data";
           if (wCalCol !== -1) response.biometrics.workoutCalories = parseFloat(hData[i][wCalCol]) || 0.0;
@@ -712,9 +717,9 @@ function doPost(e) {
       if (targetRow !== -1) {
         if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
         if (sleepStr !== null && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
-        if (hrv !== null && hrvCol !== -1) healthSheet.getRange(targetRow, hrvCol + 1).setValue(hrv);
-        if (rhr !== null && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
-        if (weight !== null && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
+        if (hrv !== null && hrv !== 0 && hrvCol !== -1) healthSheet.getRange(targetRow, hrvCol + 1).setValue(hrv);
+        if (rhr !== null && rhr !== 0 && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
+        if (weight !== null && weight !== 0 && weightCol !== -1) healthSheet.getRange(targetRow, weightCol + 1).setValue(weight);
         if (wakeTime !== null && wakeCol !== -1) healthSheet.getRange(targetRow, wakeCol + 1).setValue(wakeTime);
         if (sleepTime !== null && sleepTimeCol !== -1) healthSheet.getRange(targetRow, sleepTimeCol + 1).setValue(sleepTime);
         if (wCal !== null && wCalCol !== -1) healthSheet.getRange(targetRow, wCalCol + 1).setValue(wCal);
