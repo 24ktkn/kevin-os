@@ -253,6 +253,9 @@ try:
                     weight = float(valid_weights.sort_values(by="Date", ascending=False).iloc[0]["Bodyweight"])
             if weight == 0:
                 weight = 170.0 # absolute fallback
+                
+            w_cal = float(latest_day["Workout Calories"]) if "Workout Calories" in latest_day and pd.notna(latest_day["Workout Calories"]) else 0
+            w_dur = float(latest_day["Workout Duration"]) if "Workout Duration" in latest_day and pd.notna(latest_day["Workout Duration"]) else 0
 
             # Render Daily Steps
             step_goal = 10000
@@ -279,7 +282,7 @@ try:
             st.write("<div style='height:12px;'></div>", unsafe_allow_html=True)
             
             # Render secondary metrics in columns
-            m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
+            m_col1, m_col2, m_col3, m_col4, m_col5, m_col6, m_col7, m_col8 = st.columns(8)
             
             with m_col1:
                 hrv_str = f"{int(hrv)} ms" if hrv > 0 else "No data"
@@ -340,6 +343,24 @@ try:
                 <div class="status-card" style="text-align:center;">
                     <div class="status-lbl">Bodyweight</div>
                     <div class="status-val" style="color: #00FF66; font-size: 1.6rem;">{weight_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with m_col7:
+                wcal_str = f"{int(w_cal)} kcal" if w_cal > 0 else "No data"
+                st.markdown(f"""
+                <div class="status-card" style="text-align:center;">
+                    <div class="status-lbl">Workout Calories</div>
+                    <div class="status-val" style="color: #FF8C00; font-size: 1.6rem;">{wcal_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            with m_col8:
+                wdur_str = f"{int(w_dur)} min" if w_dur > 0 else "No data"
+                st.markdown(f"""
+                <div class="status-card" style="text-align:center;">
+                    <div class="status-lbl">Workout Duration</div>
+                    <div class="status-val" style="color: #3B82F6; font-size: 1.6rem;">{wdur_str}</div>
                 </div>
                 """, unsafe_allow_html=True)
 except Exception:
