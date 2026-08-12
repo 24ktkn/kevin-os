@@ -152,8 +152,19 @@ class NetworkManager: ObservableObject {
             self.recentWorkouts = decodedData.recentWorkouts
             self.costcoItems = decodedData.costcoItems
             self.missionControlItems = decodedData.missionControlItems ?? []
+        } catch let DecodingError.dataCorrupted(context) {
+            print("Data corrupted: \(context)")
+        } catch let DecodingError.keyNotFound(key, context) {
+            print("Key '\(key.stringValue)' not found: \(context.debugDescription)")
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.valueNotFound(value, context) {
+            print("Value '\(value)' not found: \(context.debugDescription)")
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.typeMismatch(type, context)  {
+            print("Type '\(type)' mismatch: \(context.debugDescription)")
+            print("codingPath:", context.codingPath)
         } catch {
-            print("JSON Decoding error: \(error)")
+            print("Unknown decoding error: \(error)")
         }
     }
     

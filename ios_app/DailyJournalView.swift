@@ -98,8 +98,62 @@ struct DailyJournalView: View {
                                 region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
                             }
                         }
+                        .onChange(of: locationManager.location) { newLocation in
+                            if let loc = newLocation {
+                                region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
+                            }
+                        }
                 }
                 .padding(.horizontal)
+                
+                // Today's Workout
+                let todaysWorkouts = networkManager.recentWorkouts.filter { $0.date == networkManager.dateStr }
+                if !todaysWorkouts.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Today's Workout")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.gray)
+                            .textCase(.uppercase)
+                        
+                        VStack(spacing: 0) {
+                            ForEach(todaysWorkouts) { set in
+                                HStack {
+                                    Text("\(set.setNumber)")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(neonGreen)
+                                        .frame(width: 20)
+                                    
+                                    Text(set.exercise)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    
+                                    Spacer()
+                                    
+                                    if set.weight > 0 {
+                                        Text("\(Int(set.weight)) lbs x \(set.reps)")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundColor(.gray)
+                                    } else if set.duration > 0 {
+                                        Text("\(Int(set.duration))m")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                
+                                if set.id != todaysWorkouts.last?.id {
+                                    Divider().background(cardBorderColor)
+                                }
+                            }
+                        }
+                        .background(cardBgColor)
+                        .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorderColor, lineWidth: 1))
+                    }
+                    .padding(.horizontal)
+                }
                 
                 // Manual Journal
                 VStack(alignment: .leading, spacing: 8) {
