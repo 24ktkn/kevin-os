@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import calendar
 
 # --- ⏳ TIMEZONE & NIGHT OWL ROLLOVER ENGINE ---
-now_local = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
+now_local = datetime.datetime.now(ZoneInfo("America/New_York"))
 if now_local.hour < 2:
     productivity_date = now_local - datetime.timedelta(days=1)
 else:

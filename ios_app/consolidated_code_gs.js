@@ -17,7 +17,7 @@ function syncGoogleFitData() {
   }
   
   var now = new Date();
-  var torontoStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd'T'00:00:00XXX");
+  var torontoStr = Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd'T'00:00:00XXX");
   var midnightToday = new Date(torontoStr);
   var startTime = midnightToday.getTime() - (7 * 24 * 60 * 60 * 1000); // 7 days sync window
   var endTime = now.getTime();
@@ -108,7 +108,7 @@ function syncGoogleFitData() {
     
     var wakeDate = new Date(endMs);
     var wakeDateStr = formatDate(wakeDate);
-    var wakeTimeStr = Utilities.formatDate(wakeDate, "America/Los_Angeles", "hh:mm a");
+    var wakeTimeStr = Utilities.formatDate(wakeDate, "America/New_York", "hh:mm a");
     
     if (dailyData[wakeDateStr]) {
       dailyData[wakeDateStr].sleep += durationHours;
@@ -350,8 +350,8 @@ function getLastKnownWeight(sheet, weightColIdx) {
 function doGet(e) {
   try {
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/Los_Angeles", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, "America/New_York", "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
@@ -551,7 +551,7 @@ function doGet(e) {
             var timeFormatted = "";
             if (timeRaw) {
               if (timeRaw instanceof Date) {
-                timeFormatted = Utilities.formatDate(timeRaw, "America/Los_Angeles", "HH:mm:ss");
+                timeFormatted = Utilities.formatDate(timeRaw, "America/New_York", "HH:mm:ss");
               } else {
                 var rawStr = String(timeRaw).trim();
                 var match = rawStr.match(/(\d{2}:\d{2}:\d{2})/);
@@ -605,8 +605,8 @@ function doPost(e) {
     logDebugRequest(action, params);
     
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/Los_Angeles", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, "America/New_York", "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
@@ -885,7 +885,7 @@ function doPost(e) {
       var est1rm = reps > 1 ? Math.round(weight * (1 + (reps / 30.0)) * 10) / 10 : weight;
       
       // Get current timestamp HH:MM:SS
-      var timestamp = Utilities.formatDate(now, "America/Los_Angeles", "HH:mm:ss");
+      var timestamp = Utilities.formatDate(now, "America/New_York", "HH:mm:ss");
       
       // Append row
       var newRow = [];
@@ -1171,7 +1171,7 @@ function doPost(e) {
         var timestamp = "12:00:00";
         var parsedDate = new Date(rawDate.trim());
         if (!isNaN(parsedDate.getTime())) {
-          timestamp = Utilities.formatDate(parsedDate, "America/Los_Angeles", "HH:mm:ss");
+          timestamp = Utilities.formatDate(parsedDate, "America/New_York", "HH:mm:ss");
         }
         
         var newRow = [];
@@ -1461,7 +1461,7 @@ function doPost(e) {
       var lat = parseFloat(params.latitude) || 0.0;
       var lng = parseFloat(params.longitude) || 0.0;
       var locName = params.locationName || "";
-      var timestamp = params.timestamp || Utilities.formatDate(now, "America/Los_Angeles", "yyyy-MM-dd HH:mm:ss");
+      var timestamp = params.timestamp || Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd HH:mm:ss");
       
       if (lat !== 0.0 || lng !== 0.0) {
         locationSheet.appendRow([timestamp, lat, lng, locName]);
@@ -1483,7 +1483,7 @@ function doPost(e) {
 function formatDateString(val) {
   if (!val) return "";
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/Los_Angeles", "yyyy-MM-dd");
+    return Utilities.formatDate(val, "America/New_York", "yyyy-MM-dd");
   }
   var str = String(val).trim();
   // If already yyyy-MM-dd, return as-is to avoid timezone shifts
@@ -1492,7 +1492,7 @@ function formatDateString(val) {
   }
   var parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
-    return Utilities.formatDate(parsed, "America/Los_Angeles", "yyyy-MM-dd");
+    return Utilities.formatDate(parsed, "America/New_York", "yyyy-MM-dd");
   }
   return str.split("T")[0].trim();
 }
@@ -1627,7 +1627,7 @@ function logDebugRequest(action, params) {
 function formatTimeValue(val) {
   if (!val) return "";
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/Los_Angeles", "h:mm a");
+    return Utilities.formatDate(val, "America/New_York", "h:mm a");
   }
   var str = String(val).trim();
   if (str === "" || str.toLowerCase() === "no data") return "";
@@ -1638,7 +1638,7 @@ function formatTimeValue(val) {
     if (!isNaN(d.getTime())) {
       // Don't format raw durations, only valid dates containing T, GMT, or 1899
       if (str.indexOf("T") !== -1 || str.indexOf("1899") !== -1 || str.indexOf("GMT") !== -1 || str.indexOf("Z") !== -1) {
-        return Utilities.formatDate(d, "America/Los_Angeles", "h:mm a");
+        return Utilities.formatDate(d, "America/New_York", "h:mm a");
       }
     }
   } catch(e) {}
