@@ -1627,21 +1627,26 @@ function logDebugRequest(action, params) {
   } catch (e) {}
 }
 
-function formatTimeValue(val) {
+function formatTimeValue(val, tz) {
   if (!val) return "";
+  
+  // Fallback if tz not provided
+  var targetTz = tz || SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || "America/New_York";
+  
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/New_York", "h:mm a");
+    // If it's a Date object returned from the Sheet, format it exactly as it appeared in the Sheet's timezone
+    var sheetTz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || "America/New_York";
+    return Utilities.formatDate(val, sheetTz, "h:mm a");
   }
   var str = String(val).trim();
   if (str === "" || str.toLowerCase() === "no data") return "";
   
-  // If it's a serialized Date string, try parsing it
+  // If it's a serialized Date string (like ISO string), parse it and format it in the provided targetTz
   try {
     var d = new Date(str);
     if (!isNaN(d.getTime())) {
-      // Don't format raw durations, only valid dates containing T, GMT, or 1899
       if (str.indexOf("T") !== -1 || str.indexOf("1899") !== -1 || str.indexOf("GMT") !== -1 || str.indexOf("Z") !== -1) {
-        return Utilities.formatDate(d, "America/New_York", "h:mm a");
+        return Utilities.formatDate(d, targetTz, "h:mm a");
       }
     }
   } catch(e) {}
