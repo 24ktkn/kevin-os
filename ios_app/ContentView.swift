@@ -19,6 +19,8 @@ struct ContentView: View {
     let yellowColor = Color(red: 1.0, green: 0.72, blue: 0.01) // #FFB703
     let redColor = Color(red: 1.0, green: 0.2, blue: 0.2) // #FF3333
     let lavenderColor = Color(red: 0.66, green: 0.33, blue: 0.97) // #A855F7
+    let orangeColor = Color(red: 1.0, green: 0.55, blue: 0.0) // #FF8C00
+    let blueColor = Color(red: 0.23, green: 0.51, blue: 0.96) // #3B82F6
     
     init() {
         // Dark theme TabBar custom styling
@@ -34,7 +36,7 @@ struct ContentView: View {
         TabView(selection: $selectedTab) {
             
             // --- TAB 1: CENTRAL OS HUB ---
-            OSHubView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor)
+            OSHubView(networkManager: networkManager, bgColor: bgColor, cardBgColor: cardBgColor, cardBorderColor: cardBorderColor, neonGreen: neonGreen, cyanColor: cyanColor, yellowColor: yellowColor, redColor: redColor, lavenderColor: lavenderColor, orangeColor: orangeColor, blueColor: blueColor)
                 .tabItem {
                     Image(systemName: "gauge")
                     Text("OS Hub")
@@ -170,6 +172,8 @@ struct OSHubView: View {
     let yellowColor: Color
     let redColor: Color
     let lavenderColor: Color
+    let orangeColor: Color
+    let blueColor: Color
     
     // Isolated computed properties to speed up Swift compiler type-checking
     var hrvString: String {
