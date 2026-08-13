@@ -357,10 +357,6 @@ function doGet(e) {
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
-    if (localHour < 2) {
-      var yesterday = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-      activeDateStr = Utilities.formatDate(yesterday, "America/Los_Angeles", "yyyy-MM-dd");
-    }
     
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var healthSheet = ss.getSheetByName("health_metrics");
@@ -616,10 +612,6 @@ function doPost(e) {
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
-    if (localHour < 2) {
-      var yesterday = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-      activeDateStr = Utilities.formatDate(yesterday, "America/Los_Angeles", "yyyy-MM-dd");
-    }
     
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     
