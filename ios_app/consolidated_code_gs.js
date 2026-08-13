@@ -154,41 +154,39 @@ function syncGoogleFitData() {
     var rowNum = dateRowMap[dateStr];
     
     if (rowNum) {
-      var existingRowValues = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
-      
-      if (stepsColIdx !== -1 && (metrics.steps > 0 || !existingRowValues[stepsColIdx])) {
+      if (stepsColIdx !== -1 && metrics.steps > 0) {
         sheet.getRange(rowNum, stepsColIdx + 1).setValue(metrics.steps);
       }
       if (weightColIdx !== -1) {
         if (metrics.weight > 0) {
           sheet.getRange(rowNum, weightColIdx + 1).setValue(metrics.weight);
-        } else if (!existingRowValues[weightColIdx] || existingRowValues[weightColIdx] === "") {
+        } else if (lastKnownWeight > 0) {
           sheet.getRange(rowNum, weightColIdx + 1).setValue(lastKnownWeight);
         }
       }
-      if (sleepColIdx !== -1 && (metrics.sleep > 0 || !existingRowValues[sleepColIdx])) {
+      if (sleepColIdx !== -1 && metrics.sleep > 0) {
         sheet.getRange(rowNum, sleepColIdx + 1).setValue(metrics.sleep);
       }
-      if (rhrColIdx !== -1 && (metrics.rhr > 0 || !existingRowValues[rhrColIdx])) {
+      if (rhrColIdx !== -1 && metrics.rhr > 0) {
         sheet.getRange(rowNum, rhrColIdx + 1).setValue(metrics.rhr);
       }
-      if (hrvColIdx !== -1 && (metrics.hrv > 0 || !existingRowValues[hrvColIdx])) {
+      if (hrvColIdx !== -1 && metrics.hrv > 0) {
         sheet.getRange(rowNum, hrvColIdx + 1).setValue(metrics.hrv);
       }
-      if (wakeTimeColIdx !== -1 && (metrics.wakeTime !== "" || !existingRowValues[wakeTimeColIdx])) {
+      if (wakeTimeColIdx !== -1 && metrics.wakeTime !== "") {
         sheet.getRange(rowNum, wakeTimeColIdx + 1).setValue(metrics.wakeTime);
       }
     } else {
       var newRow = [];
       for (var c = 0; c < headers.length; c++) {
         if (c === dateColIdx) newRow.push(dateStr);
-        else if (c === stepsColIdx) newRow.push(metrics.steps);
-        else if (c === weightColIdx) newRow.push(metrics.weight);
-        else if (c === sleepColIdx) newRow.push(metrics.sleep);
-        else if (c === rhrColIdx) newRow.push(metrics.rhr);
-        else if (c === hrvColIdx) newRow.push(metrics.hrv);
-        else if (c === wakeTimeColIdx) newRow.push(metrics.wakeTime);
-        else newRow.push(0);
+        else if (c === stepsColIdx) newRow.push(metrics.steps > 0 ? metrics.steps : "");
+        else if (c === weightColIdx) newRow.push(metrics.weight > 0 ? metrics.weight : (lastKnownWeight > 0 ? lastKnownWeight : ""));
+        else if (c === sleepColIdx) newRow.push(metrics.sleep > 0 ? metrics.sleep : "");
+        else if (c === rhrColIdx) newRow.push(metrics.rhr > 0 ? metrics.rhr : "");
+        else if (c === hrvColIdx) newRow.push(metrics.hrv > 0 ? metrics.hrv : "");
+        else if (c === wakeTimeColIdx) newRow.push(metrics.wakeTime !== "" ? metrics.wakeTime : "");
+        else newRow.push("");
       }
       sheet.appendRow(newRow);
       dateRowMap[dateStr] = sheet.getLastRow();
