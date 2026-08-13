@@ -85,6 +85,8 @@ class HealthManager: ObservableObject {
         var avgHRV = 0
         var latestWeight = 0.0
         var sleepDurationHours = 0.0
+        var wakeTimeStr: String? = nil
+        var sleepTimeStr: String? = nil
         var workoutCalories = 0.0
         var workoutDuration = 0.0
         
@@ -120,6 +122,9 @@ class HealthManager: ObservableObject {
         dispatchGroup.enter()
         fetchSleepLastNight { duration, wakeTime, sleepTime in
             sleepDurationHours = duration
+            let formatter = ISO8601DateFormatter()
+            if let w = wakeTime { wakeTimeStr = formatter.string(from: w) }
+            if let s = sleepTime { sleepTimeStr = formatter.string(from: s) }
             dispatchGroup.leave()
         }
         
@@ -140,7 +145,9 @@ class HealthManager: ObservableObject {
                 weight: latestWeight,
                 sleep: sleepDurationHours,
                 workoutCalories: workoutCalories,
-                workoutDuration: workoutDuration
+                workoutDuration: workoutDuration,
+                wakeTime: wakeTimeStr,
+                sleepTime: sleepTimeStr
             )
             completion?()
         }
@@ -196,11 +203,16 @@ class HealthManager: ObservableObject {
             }
             
             // Filter for actual sleep stages (Core, Deep, REM, Unspecified) to calculate duration accurately on iOS 16+
-            let validSamples = sleepSamples.filter { 
+            var validSamples = sleepSamples.filter { 
                 $0.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue ||
                 $0.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue ||
                 $0.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
                 $0.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+            }
+            
+            // Fallback for users without an Apple Watch who only have .inBed records
+            if validSamples.isEmpty {
+                validSamples = sleepSamples.filter { $0.value == HKCategoryValueSleepAnalysis.inBed.rawValue }
             }
             
             let totalSeconds = validSamples.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
@@ -244,13 +256,13 @@ class HealthManager: ObservableObject {
     
     // MARK: - Backend Push
     
-    private func pushMetricsToBackend(steps: Int, rhr: Int, hrv: Int, weight: Double, sleep: Double, workoutCalories: Double, workoutDuration: Double) {
+    private func pushMetricsToBackend(steps: Int, rhr: Int, hrv: Int, weight: Double, sleep: Double, workoutCalories: Double, workoutDuration: Double, wakeTime: String?, sleepTime: String?) {
         guard let url = URL(string: apiURLString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "action": "upload_biometrics",
             "steps": steps,
             "rhr": rhr,
@@ -260,6 +272,8 @@ class HealthManager: ObservableObject {
             "workoutCalories": workoutCalories,
             "workoutDuration": workoutDuration
         ]
+        if let wt = wakeTime { payload["wakeTime"] = wt }
+        if let st = sleepTime { payload["sleepTime"] = st }
         
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
