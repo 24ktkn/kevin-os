@@ -1641,14 +1641,15 @@ function formatTimeValue(val) {
   if (str === "" || str.toLowerCase() === "no data") return "";
   
   // If it's a serialized Date string, try parsing it
-  if (str.indexOf("1899") !== -1 || str.indexOf("GMT") !== -1) {
-    try {
-      var d = new Date(str);
-      if (!isNaN(d.getTime())) {
+  try {
+    var d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      // Don't format raw durations, only valid dates containing T, GMT, or 1899
+      if (str.indexOf("T") !== -1 || str.indexOf("1899") !== -1 || str.indexOf("GMT") !== -1 || str.indexOf("Z") !== -1) {
         return Utilities.formatDate(d, "America/Los_Angeles", "h:mm a");
       }
-    } catch(e) {}
-  }
+    }
+  } catch(e) {}
   
   return str;
 }
