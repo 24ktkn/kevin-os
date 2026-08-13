@@ -664,9 +664,12 @@ function doPost(e) {
       
       var stepsVal = getParam(params, ["steps"]);
       var steps = stepsVal !== undefined && stepsVal !== null ? parseInt(stepsVal, 10) : null;
+      if (isNaN(steps)) steps = null;
       
       var sleepVal = getParam(params, ["sleep", "sleepDuration"]);
       var sleep = sleepVal !== undefined && sleepVal !== null ? parseFloat(sleepVal) : null;
+      if (isNaN(sleep)) sleep = null;
+      
       var sleepStr = null;
       if (sleep !== null) {
         if (sleep > 24) {
