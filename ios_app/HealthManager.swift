@@ -266,6 +266,7 @@ class HealthManager: ObservableObject {
         
         var payload: [String: Any] = [
             "action": "upload_biometrics",
+            "timezone": TimeZone.current.identifier,
             "steps": steps,
             "rhr": rhr,
             "hrv": hrv,

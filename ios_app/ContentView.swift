@@ -198,6 +198,20 @@ struct OSHubView: View {
         networkManager.biometrics.weight > 0 ? String(format: "%.1f lbs", networkManager.biometrics.weight) : "No data"
     }
     
+    var workoutCaloriesString: String {
+        if let val = networkManager.biometrics.workoutCalories, val > 0 {
+            return "\(Int(val)) kcal"
+        }
+        return "No data"
+    }
+    
+    var workoutDurationString: String {
+        if let val = networkManager.biometrics.workoutDuration, val > 0 {
+            return "\(Int(val)) min"
+        }
+        return "No data"
+    }
+    
     func formatBiometricTime(_ timeStr: String?) -> String {
         guard let str = timeStr, !str.isEmpty, str != "No data" else { return "No data" }
         if str.contains("1899") || str.contains("GMT") {
@@ -299,6 +313,8 @@ struct OSHubView: View {
                         BiometricCard(title: "Wake Up Time", val: formatBiometricTime(networkManager.biometrics.wakeTime), color: lavenderColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Resting Heart Rate", val: rhrString, color: redColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                         BiometricCard(title: "Bodyweight", val: weightString, color: neonGreen, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Workout Calories", val: workoutCaloriesString, color: orangeColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
+                        BiometricCard(title: "Workout Duration", val: workoutDurationString, color: blueColor, cardBg: cardBgColor, cardBorder: cardBorderColor)
                     }
                 }
                 .padding(.horizontal)

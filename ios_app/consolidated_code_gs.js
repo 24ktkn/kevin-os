@@ -683,12 +683,15 @@ function doPost(e) {
       var weightVal = getParam(params, ["weight", "bodyweight"]);
       var weight = weightVal !== undefined && weightVal !== null ? parseFloat(weightVal) : null;
       
+      var tzVal = getParam(params, ["timezone", "tz"]);
+      var tz = tzVal !== undefined && tzVal !== null ? String(tzVal).trim() : "America/New_York";
+      
       var wakeTimeVal = getParam(params, ["wakeTime", "wake_time", "wake", "wakeUpTime", "wake_up_time"]);
-      var wakeTime = wakeTimeVal !== undefined && wakeTimeVal !== null ? formatTimeValue(String(wakeTimeVal).trim()) : null;
+      var wakeTime = wakeTimeVal !== undefined && wakeTimeVal !== null ? formatTimeValue(String(wakeTimeVal).trim(), tz) : null;
       if (wakeTime === "") wakeTime = null;
 
       var sleepTimeVal = getParam(params, ["sleepTime", "sleep_time", "sleep_start", "sleepstart"]);
-      var sleepTime = sleepTimeVal !== undefined && sleepTimeVal !== null ? formatTimeValue(String(sleepTimeVal).trim()) : null;
+      var sleepTime = sleepTimeVal !== undefined && sleepTimeVal !== null ? formatTimeValue(String(sleepTimeVal).trim(), tz) : null;
       if (sleepTime === "") sleepTime = null;
       
       var wCalVal = getParam(params, ["workoutCalories"]);
