@@ -170,8 +170,10 @@ class HealthManager: ObservableObject {
     
     private func fetchLatestQuantity(for type: HKQuantityType, unit: HKUnit, completion: @escaping (Double) -> Void) {
         let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: Date())
-        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: Date(), options: .strictStartDate)
+        let now = Date()
+        // Look back 30 days to find the most recent sample
+        let startDate = calendar.date(byAdding: .day, value: -30, to: now)
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: now, options: .strictStartDate)
         
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
         let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 1, sortDescriptors: [sortDescriptor]) { _, samples, _ in
