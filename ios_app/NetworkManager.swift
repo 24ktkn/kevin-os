@@ -111,7 +111,10 @@ class NetworkManager: ObservableObject {
     var apiURLString = "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
     
     func fetchData() {
-        guard let url = URL(string: apiURLString) else {
+        var urlComponents = URLComponents(string: apiURLString)
+        urlComponents?.queryItems = [URLQueryItem(name: "tz", value: TimeZone.current.identifier)]
+        
+        guard let url = urlComponents?.url else {
             print("Invalid URL")
             return
         }

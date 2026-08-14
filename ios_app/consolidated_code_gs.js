@@ -349,9 +349,14 @@ function getLastKnownWeight(sheet, weightColIdx) {
 
 function doGet(e) {
   try {
+    var tz = "America/New_York";
+    if (e && e.parameter && e.parameter.tz) {
+      tz = e.parameter.tz;
+    }
+    
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/New_York", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, tz, "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
@@ -604,9 +609,16 @@ function doPost(e) {
     var action = params.action;
     logDebugRequest(action, params);
     
+    var tz = "America/New_York";
+    if (params && params.timezone) {
+      tz = params.timezone;
+    } else if (params && params.tz) {
+      tz = params.tz;
+    }
+    
     var now = new Date();
-    var torontoDateStr = Utilities.formatDate(now, "America/New_York", "yyyy-MM-dd");
-    var localHour = parseInt(Utilities.formatDate(now, "America/New_York", "HH"), 10);
+    var torontoDateStr = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+    var localHour = parseInt(Utilities.formatDate(now, tz, "HH"), 10);
     
     // Rollover at 2:00 AM
     var activeDateStr = torontoDateStr;
