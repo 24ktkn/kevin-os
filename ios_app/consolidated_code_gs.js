@@ -1485,8 +1485,9 @@ function doPost(e) {
 // Format helpers
 function formatDateString(val) {
   if (!val) return "";
+  var sheetTz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || "America/New_York";
   if (val instanceof Date) {
-    return Utilities.formatDate(val, "America/New_York", "yyyy-MM-dd");
+    return Utilities.formatDate(val, sheetTz, "yyyy-MM-dd");
   }
   var str = String(val).trim();
   // If already yyyy-MM-dd, return as-is to avoid timezone shifts
@@ -1495,7 +1496,7 @@ function formatDateString(val) {
   }
   var parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
-    return Utilities.formatDate(parsed, "America/New_York", "yyyy-MM-dd");
+    return Utilities.formatDate(parsed, sheetTz, "yyyy-MM-dd");
   }
   return str.split("T")[0].trim();
 }
