@@ -2,6 +2,7 @@ import SwiftUI
 import WebKit
 
 struct ContentView: View {
+    @Environment(\.scenePhase) var scenePhase
     @StateObject private var networkManager = NetworkManager()
     @StateObject private var locationManager = LocationManager()
     @StateObject private var healthManager = HealthManager()
@@ -104,6 +105,13 @@ struct ContentView: View {
                     // Perform an initial sync on launch
                     healthManager.syncTodayHealthData()
                 }
+            }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active {
+                // Fetch latest data and trigger health sync every time the app opens
+                networkManager.fetchData()
+                healthManager.syncTodayHealthData()
             }
         }
         .onOpenURL { url in
