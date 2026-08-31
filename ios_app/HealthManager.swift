@@ -16,6 +16,8 @@ class HealthManager: ObservableObject {
     let weightType = HKObjectType.quantityType(forIdentifier: .bodyMass)!
     let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
     let workoutType = HKObjectType.workoutType()
+    let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!
+    let waterType = HKObjectType.quantityType(forIdentifier: .dietaryWater)!
     
     func requestPermissions(completion: @escaping (Bool) -> Void) {
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -30,7 +32,9 @@ class HealthManager: ObservableObject {
             hrvType,
             weightType,
             sleepType,
-            workoutType
+            workoutType,
+            activeEnergyType,
+            waterType
         ]
         
         healthStore.requestAuthorization(toShare: nil, read: typesToRead) { success, error in

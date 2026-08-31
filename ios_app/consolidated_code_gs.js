@@ -738,11 +738,11 @@ function doPost(e) {
         var newRow = [];
         for (var c = 0; c < hHeaders.length; c++) {
           if (c === hDateCol) newRow.push(activeDateStr);
-          else if (c === stepsCol && steps !== null) newRow.push(steps);
-          else if (c === sleepCol && sleepStr !== null) newRow.push(sleepStr);
-          else if (c === hrvCol && hrv !== null) newRow.push(hrv);
-          else if (c === rhrCol && rhr !== null) newRow.push(rhr);
-          else if (c === weightCol && weight !== null) newRow.push(weight);
+          else if (c === stepsCol && steps !== null && steps !== 0) newRow.push(steps);
+          else if (c === sleepCol && sleepStr !== null && sleep > 0) newRow.push(sleepStr);
+          else if (c === hrvCol && hrv !== null && hrv !== 0) newRow.push(hrv);
+          else if (c === rhrCol && rhr !== null && rhr !== 0) newRow.push(rhr);
+          else if (c === weightCol && weight !== null && weight !== 0) newRow.push(weight);
           else if (c === wakeCol && wakeTime !== null) newRow.push(wakeTime);
           else if (c === sleepTimeCol && sleepTime !== null) newRow.push(sleepTime);
           else if (c === wCalCol && wCal !== null) newRow.push(wCal);
