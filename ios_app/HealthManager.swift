@@ -148,8 +148,9 @@ class HealthManager: ObservableObject {
                 workoutDuration: workoutDuration,
                 wakeTime: wakeTimeStr,
                 sleepTime: sleepTimeStr
-            )
-            completion?()
+            ) { success in
+                completion?()
+            }
         }
     }
     
@@ -258,8 +259,11 @@ class HealthManager: ObservableObject {
     
     // MARK: - Backend Push
     
-    private func pushMetricsToBackend(steps: Int, rhr: Int, hrv: Int, weight: Double, sleep: Double, workoutCalories: Double, workoutDuration: Double, wakeTime: String?, sleepTime: String?) {
-        guard let url = URL(string: apiURLString) else { return }
+    private func pushMetricsToBackend(steps: Int, rhr: Int, hrv: Int, weight: Double, sleep: Double, workoutCalories: Double, workoutDuration: Double, wakeTime: String?, sleepTime: String?, completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: apiURLString) else {
+            completion(false)
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -282,15 +286,18 @@ class HealthManager: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
         } catch {
             print("Payload serialization error: \(error)")
+            completion(false)
             return
         }
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("Error uploading biometrics: \(error.localizedDescription)")
+                completion(false)
                 return
             }
             print("Successfully uploaded background biometrics to Kevin-OS!")
+            completion(true)
         }.resume()
     }
 }

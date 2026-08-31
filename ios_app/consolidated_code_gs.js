@@ -725,7 +725,7 @@ function doPost(e) {
       }
       
       if (targetRow !== -1) {
-        if (steps !== null && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
+        if (steps !== null && steps !== 0 && stepsCol !== -1) healthSheet.getRange(targetRow, stepsCol + 1).setValue(steps);
         if (sleepStr !== null && sleep > 0 && sleepCol !== -1) healthSheet.getRange(targetRow, sleepCol + 1).setValue(sleepStr);
         if (hrv !== null && hrv !== 0 && hrvCol !== -1) healthSheet.getRange(targetRow, hrvCol + 1).setValue(hrv);
         if (rhr !== null && rhr !== 0 && rhrCol !== -1) healthSheet.getRange(targetRow, rhrCol + 1).setValue(rhr);
