@@ -109,9 +109,15 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
-                // Fetch latest data and trigger health sync every time the app opens
+                // Fetch latest data every time the app opens
                 networkManager.fetchData()
-                healthManager.syncTodayHealthData()
+                
+                // Ensure permissions are granted before syncing
+                healthManager.requestPermissions { success in
+                    if success {
+                        healthManager.syncTodayHealthData()
+                    }
+                }
             }
         }
         .onOpenURL { url in
