@@ -79,19 +79,31 @@ except Exception as e:
 
 scheduled_titles = set(df["Item Name"].fillna("").astype(str).tolist())
 
+
 CONFIG_FILE = "data/school_config.json"
+OVERRIDES_FILE = "data/school_overrides.json"
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+        with open(CONFIG_FILE, 'r') as f: return json.load(f)
     return {"ical_url": ""}
 
 def save_config(cfg):
     os.makedirs("data", exist_ok=True)
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(cfg, f)
+    with open(CONFIG_FILE, 'w') as f: json.dump(cfg, f)
+
+def load_overrides():
+    if os.path.exists(OVERRIDES_FILE):
+        with open(OVERRIDES_FILE, 'r') as f: return json.load(f)
+    return {}
+
+def save_overrides(ov):
+    os.makedirs("data", exist_ok=True)
+    with open(OVERRIDES_FILE, 'w') as f: json.dump(ov, f)
 
 config = load_config()
+overrides = load_overrides()
+
 
 def fetch_and_parse_ical(url):
     try:
@@ -158,25 +170,31 @@ if error:
     st.error(error)
     st.stop()
 
+
 modules = []
 assignments = []
 classes = []
 
 for e in events:
+    uid = e.get('UID', e.get('SUMMARY', ''))
     title = e.get('SUMMARY', '')
     title_lower = title.lower()
     
     module_match = re.search(r'\((\d+)\s*mins?\)', title_lower)
     
-    if module_match:
-        e['duration'] = int(module_match.group(1))
+    cat_override = overrides.get(uid)
+    
+    if cat_override == 'module' or (not cat_override and module_match):
+        if module_match: e['duration'] = int(module_match.group(1))
+        else: e['duration'] = 60
         modules.append(e)
-    elif 'assignment' in title_lower or 'due' in title_lower:
+    elif cat_override == 'assignment' or (not cat_override and ('assignment' in title_lower or 'due' in title_lower)):
         e['duration'] = 60
         assignments.append(e)
     else:
         e['duration'] = 60
         classes.append(e)
+
 
 tab1, tab2, tab3 = st.tabs([f"?? Online Modules ({len(modules)})", f"?? Assignments ({len(assignments)})", f"?? Classes ({len(classes)})"])
 
@@ -200,6 +218,7 @@ def render_event_card(e, idx, category):
         </div>
         ''', unsafe_allow_html=True)
         
+
         with st.expander("Schedule & Add to Tasks"):
             col1, col2 = st.columns(2)
             with col1:
@@ -209,7 +228,22 @@ def render_event_card(e, idx, category):
                 duration = st.number_input("Duration (Mins)", min_value=1, max_value=600, value=max(1, default_dur), step=5, key=f"dur_{category}_{idx}")
                 cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
             
+            # --- Category Override UI ---
+            uid = e.get('UID', title)
+            current_cat_val = 'module' if category == 'mod' else 'assignment' if category == 'ass' else 'class'
+            st.markdown("<p style='font-size:0.8em; color:#aaa; margin-bottom:2px;'>Manually override category:</p>", unsafe_allow_html=True)
+            new_cat = st.selectbox("Category Override", ["module", "assignment", "class"], 
+                                   index=["module", "assignment", "class"].index(current_cat_val), 
+                                   key=f"ov_{uid}", label_visibility="collapsed")
+            if new_cat != current_cat_val:
+                overrides[uid] = new_cat
+                save_overrides(overrides)
+                st.rerun()
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
             if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
+
                 with st.spinner("Syncing..."):
                     try:
                         start_dt = datetime.combine(sched_date, sched_time)
