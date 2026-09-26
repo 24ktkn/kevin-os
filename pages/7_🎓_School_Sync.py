@@ -105,6 +105,7 @@ config = load_config()
 overrides = load_overrides()
 
 
+@st.cache_data(ttl=600)
 def fetch_and_parse_ical(url):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
