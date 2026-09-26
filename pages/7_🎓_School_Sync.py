@@ -39,8 +39,8 @@ CALENDAR_MAP = {
 TASKLIST_MAP = {
     "Kevin Nguyen": "@default", 
     "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
-    "School": "RU1ZNEpXZFBUblc3akY4RQ",        
-    "Volunteering": "VndjV2MyUThlT3hKOWJWeA"   
+    "School": "ZGRiT21qM2ZCbVRWOVBlMQ",        
+    "Volunteering": "bUtfd3ZxU0Y3RFUyM2x2dQ"   
 }
 
 @st.cache_resource
