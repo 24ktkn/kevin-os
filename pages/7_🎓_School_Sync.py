@@ -206,7 +206,7 @@ def render_event_card(e, idx, category):
                 sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
                 sched_time = st.time_input("Start Time", value=datetime.strptime('10:00', '%H:%M').time(), key=f"t_{category}_{idx}")
             with col2:
-                duration = st.number_input("Duration (Mins)", min_value=15, max_value=600, value=default_dur, step=15, key=f"dur_{category}_{idx}")
+                duration = st.number_input("Duration (Mins)", min_value=1, max_value=600, value=max(1, default_dur), step=5, key=f"dur_{category}_{idx}")
                 cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
             
             if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
