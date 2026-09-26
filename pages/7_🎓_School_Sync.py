@@ -1,0 +1,250 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+import urllib.request
+import json
+import os
+from streamlit_gsheets import GSheetsConnection
+from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+st.set_page_config(page_title="School Sync", layout="wide")
+
+bgColor = "#0F0F12"
+cardBgColor = "#16161D"
+cardBorderColor = "#23232F"
+neonGreen = "#00FF66"
+cyanColor = "#00F0FF"
+yellowColor = "#FFB703"
+
+st.markdown(f'''
+<style>
+    .stApp {{ background-color: {bgColor}; color: #FFFFFF; font-family: -apple-system, sans-serif; }}
+    .metric-card {{ background-color: {cardBgColor}; border: 1px solid {cardBorderColor}; border-radius: 12px; padding: 20px; }}
+    .stTextInput > div > div > input {{ background-color: {cardBgColor}; color: white; border: 1px solid {cardBorderColor}; }}
+</style>
+''', unsafe_allow_html=True)
+
+st.title("?? School Sync & Timeblocker")
+st.markdown("Import your public school calendar, identify assignments and modules, and schedule them into your personal Mission Control system.")
+
+CALENDAR_MAP = {
+    "Kevin Nguyen": "24ktkn@gmail.com",
+    "Family": "family05668227215423587251@group.calendar.google.com",
+    "School": "0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com",
+    "Volunteering": "57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com"
+}
+TASKLIST_MAP = {
+    "Kevin Nguyen": "@default", 
+    "Family": "Um85a3gwMVZqTXN4X0M3Wg",        
+    "School": "RU1ZNEpXZFBUblc3akY4RQ",        
+    "Volunteering": "VndjV2MyUThlT3hKOWJWeA"   
+}
+
+@st.cache_resource
+def get_calendar_service():
+    creds_info = st.secrets["connections"]["gsheets"]
+    creds = service_account.Credentials.from_service_account_info(
+        creds_info, scopes=['https://www.googleapis.com/auth/calendar']
+    )
+    return build('calendar', 'v3', credentials=creds)
+
+@st.cache_resource
+def get_tasks_service():
+    creds_info = st.secrets["tasks_api"]
+    creds = Credentials(
+        token=None,
+        refresh_token=creds_info["refresh_token"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=creds_info["client_id"],
+        client_secret=creds_info["client_secret"]
+    )
+    return build('tasks', 'v1', credentials=creds)
+
+try:
+    cal_service = get_calendar_service()
+    tasks_service = get_tasks_service()
+except Exception as e:
+    st.error(f"API Error: {e}. If Tasks failed, you may need to re-authenticate.")
+    st.stop()
+
+conn = st.connection("gsheets", type=GSheetsConnection)
+try:
+    df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+except Exception as e:
+    st.error("Could not connect to Mission Control sheet.")
+    st.stop()
+
+CONFIG_FILE = "data/school_config.json"
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    return {"ical_url": ""}
+
+def save_config(cfg):
+    os.makedirs("data", exist_ok=True)
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f)
+
+config = load_config()
+
+def fetch_and_parse_ical(url):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        response = urllib.request.urlopen(req)
+        data = response.read().decode('utf-8')
+    except Exception as e:
+        return None, f"Failed to fetch URL: {e}"
+        
+    events = []
+    current_event = {}
+    in_event = False
+    
+    data = data.replace('\r\n ', '').replace('\n ', '')
+    
+    for line in data.split('\n'):
+        line = line.strip()
+        if not line: continue
+        if line == 'BEGIN:VEVENT':
+            in_event = True
+            current_event = {}
+        elif line == 'END:VEVENT':
+            in_event = False
+            if 'date_obj' in current_event:
+                events.append(current_event)
+        elif in_event:
+            if ':' in line:
+                key, val = line.split(':', 1)
+                key_base = key.split(';')[0]
+                current_event[key_base] = val
+                if key_base == 'DTSTART':
+                    if len(val) == 8:
+                        current_event['is_allday'] = True
+                        current_event['date_obj'] = datetime.strptime(val, '%Y%m%d')
+                    elif len(val) >= 15:
+                        current_event['is_allday'] = False
+                        try:
+                            current_event['date_obj'] = datetime.strptime(val[:15].replace('Z',''), '%Y%m%dT%H%M%S')
+                        except:
+                            current_event['date_obj'] = datetime.now()
+    
+    now = datetime.now()
+    future_events = [e for e in events if e['date_obj'] >= now - timedelta(days=1)]
+    future_events.sort(key=lambda x: x['date_obj'])
+    return future_events, None
+
+with st.expander("?? Configuration", expanded=(not config['ical_url'])):
+    st.markdown("Enter the **Public Address in iCal format** for your school calendar.")
+    ical_input = st.text_input("iCal URL (.ics)", value=config['ical_url'])
+    if st.button("Save URL"):
+        config['ical_url'] = ical_input
+        save_config(config)
+        st.success("Saved!")
+        st.rerun()
+
+if not config['ical_url']:
+    st.info("Please configure your iCal URL above to see your school events.")
+    st.stop()
+
+with st.spinner("Fetching calendar..."):
+    events, error = fetch_and_parse_ical(config['ical_url'])
+
+if error:
+    st.error(error)
+    st.stop()
+
+modules = []
+assignments = []
+classes = []
+
+for e in events:
+    title = e.get('SUMMARY', '').lower()
+    if 'module' in title or 'online module' in title:
+        modules.append(e)
+    elif 'assignment' in title or 'due' in title:
+        assignments.append(e)
+    else:
+        classes.append(e)
+
+tab1, tab2, tab3 = st.tabs([f"?? Online Modules ({len(modules)})", f"?? Assignments ({len(assignments)})", f"?? Classes ({len(classes)})"])
+
+def render_event_card(e, idx, category):
+    title = e.get('SUMMARY', 'Untitled')
+    desc = e.get('DESCRIPTION', '').replace('\\n', ' ')
+    dt = e['date_obj']
+    is_allday = e.get('is_allday', False)
+    
+    with st.container():
+        st.markdown(f'''
+        <div class="metric-card" style="margin-bottom: 15px;">
+            <h4 style="margin: 0; color: {cyanColor};">{title}</h4>
+            <p style="margin: 5px 0; font-size: 0.9em; color: #aaa;">{'All Day' if is_allday else dt.strftime('%I:%M %p')} | {dt.strftime('%b %d, %Y')}</p>
+            <p style="margin: 0; font-size: 0.85em;">{desc[:150] + '...' if len(desc) > 150 else desc}</p>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        with st.expander("Schedule & Add to Tasks"):
+            col1, col2 = st.columns(2)
+            with col1:
+                sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
+                sched_time = st.time_input("Start Time", value=datetime.strptime('10:00', '%H:%M').time(), key=f"t_{category}_{idx}")
+            with col2:
+                duration = st.number_input("Duration (Mins)", min_value=15, max_value=300, value=60, step=15, key=f"dur_{category}_{idx}")
+                cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
+            
+            if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
+                with st.spinner("Syncing..."):
+                    try:
+                        start_dt = datetime.combine(sched_date, sched_time)
+                        end_dt = start_dt + timedelta(minutes=duration)
+                        
+                        target_cal_id = CALENDAR_MAP[cal_cat]
+                        tb_body = {
+                            'summary': f"?? [Task] {title}",
+                            'description': desc,
+                            'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
+                            'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
+                            'reminders': {'useDefault': True}
+                        }
+                        timeblock_id = cal_service.events().insert(calendarId=target_cal_id, body=tb_body).execute().get('id')
+                        
+                        target_tasklist_id = TASKLIST_MAP.get(cal_cat, "@default")
+                        task_body = {
+                            'title': title,
+                            'notes': f"Scheduled: {start_dt.strftime('%I:%M %p')}\\n\\n{desc}",
+                            'due': f"{sched_date}T00:00:00.000Z"
+                        }
+                        new_item_id = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute().get('id')
+                        
+                        global df
+                        new_row = {
+                            "Status": False, 
+                            "Item Name": title, 
+                            "Type": "Task", 
+                            "Calendar": cal_cat, 
+                            "Date": str(sched_date), 
+                            "Time": sched_time.strftime('%H:%M'), 
+                            "Duration (Mins)": duration, 
+                            "Scheduled?": True, 
+                            "Location": "", 
+                            "Notes": desc, 
+                            "Event ID": new_item_id, 
+                            "Timeblock ID": timeblock_id
+                        }
+                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                        conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                        
+                        st.success("Successfully scheduled!")
+                    except Exception as ex:
+                        st.error(f"Failed: {ex}")
+
+with tab1:
+    for i, e in enumerate(modules): render_event_card(e, i, 'mod')
+        
+with tab2:
+    for i, e in enumerate(assignments): render_event_card(e, i, 'ass')
+
+with tab3:
+    for i, e in enumerate(classes): render_event_card(e, i, 'cls')
