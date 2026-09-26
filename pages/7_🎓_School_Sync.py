@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import urllib.request
 import json
 import os
+import re
 from streamlit_gsheets import GSheetsConnection
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
@@ -75,6 +76,8 @@ try:
 except Exception as e:
     st.error("Could not connect to Mission Control sheet.")
     st.stop()
+
+scheduled_titles = set(df["Item Name"].fillna("").astype(str).tolist())
 
 CONFIG_FILE = "data/school_config.json"
 def load_config():
@@ -160,12 +163,19 @@ assignments = []
 classes = []
 
 for e in events:
-    title = e.get('SUMMARY', '').lower()
-    if 'module' in title or 'online module' in title:
+    title = e.get('SUMMARY', '')
+    title_lower = title.lower()
+    
+    module_match = re.search(r'\((\d+)\s*mins?\)', title_lower)
+    
+    if module_match:
+        e['duration'] = int(module_match.group(1))
         modules.append(e)
-    elif 'assignment' in title or 'due' in title:
+    elif 'assignment' in title_lower or 'due' in title_lower:
+        e['duration'] = 60
         assignments.append(e)
     else:
+        e['duration'] = 60
         classes.append(e)
 
 tab1, tab2, tab3 = st.tabs([f"?? Online Modules ({len(modules)})", f"?? Assignments ({len(assignments)})", f"?? Classes ({len(classes)})"])
@@ -175,11 +185,16 @@ def render_event_card(e, idx, category):
     desc = e.get('DESCRIPTION', '').replace('\\n', ' ')
     dt = e['date_obj']
     is_allday = e.get('is_allday', False)
+    default_dur = e.get('duration', 60)
+    
+    is_scheduled = title in scheduled_titles
+    card_border = neonGreen if is_scheduled else cardBorderColor
+    status_badge = f'<span style="background-color: {neonGreen}; color: black; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">Already Scheduled</span>' if is_scheduled else ''
     
     with st.container():
         st.markdown(f'''
-        <div class="metric-card" style="margin-bottom: 15px;">
-            <h4 style="margin: 0; color: {cyanColor};">{title}</h4>
+        <div class="metric-card" style="margin-bottom: 15px; border-color: {card_border};">
+            <h4 style="margin: 0; color: {cyanColor};">{title} {status_badge}</h4>
             <p style="margin: 5px 0; font-size: 0.9em; color: #aaa;">{'All Day' if is_allday else dt.strftime('%I:%M %p')} | {dt.strftime('%b %d, %Y')}</p>
             <p style="margin: 0; font-size: 0.85em;">{desc[:150] + '...' if len(desc) > 150 else desc}</p>
         </div>
@@ -191,7 +206,7 @@ def render_event_card(e, idx, category):
                 sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
                 sched_time = st.time_input("Start Time", value=datetime.strptime('10:00', '%H:%M').time(), key=f"t_{category}_{idx}")
             with col2:
-                duration = st.number_input("Duration (Mins)", min_value=15, max_value=300, value=60, step=15, key=f"dur_{category}_{idx}")
+                duration = st.number_input("Duration (Mins)", min_value=15, max_value=600, value=default_dur, step=15, key=f"dur_{category}_{idx}")
                 cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
             
             if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
@@ -237,6 +252,7 @@ def render_event_card(e, idx, category):
                         conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                         
                         st.success("Successfully scheduled!")
+                        st.rerun()
                     except Exception as ex:
                         st.error(f"Failed: {ex}")
 
