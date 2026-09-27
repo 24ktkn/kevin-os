@@ -71,11 +71,15 @@ except Exception as e:
     st.stop()
 
 conn = st.connection("gsheets", type=GSheetsConnection)
+
 try:
     df = conn.read(spreadsheet=st.secrets.connections.gsheets.mission_control_sheet, ttl=0)
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].replace({"TRUE": True, "FALSE": False, "True": True, "False": False}).fillna(False).astype(bool)
 except Exception as e:
     st.error("Could not connect to Mission Control sheet.")
     st.stop()
+
 
 scheduled_titles = set(df["Item Name"].fillna("").astype(str).tolist())
 
@@ -199,6 +203,7 @@ for e in events:
 
 tab1, tab2, tab3 = st.tabs([f"?? Online Modules ({len(modules)})", f"?? Assignments ({len(assignments)})", f"?? Classes ({len(classes)})"])
 
+
 def render_event_card(e, idx, category):
     title = e.get('SUMMARY', 'Untitled')
     desc = e.get('DESCRIPTION', '').replace('\\n', ' ')
@@ -206,9 +211,23 @@ def render_event_card(e, idx, category):
     is_allday = e.get('is_allday', False)
     default_dur = e.get('duration', 60)
     
-    is_scheduled = title in scheduled_titles
+    global df
+    matching_rows = df[df["Item Name"] == title]
+    is_scheduled = not matching_rows.empty
+    is_completed = False
+    g_id = ""
+    cal_name = "School"
+    if is_scheduled:
+        is_completed = matching_rows.iloc[0]["Status"]
+        g_id = str(matching_rows.iloc[0].get("Event ID", ""))
+        cal_name = str(matching_rows.iloc[0].get("Calendar", "School"))
+        
     card_border = neonGreen if is_scheduled else cardBorderColor
-    status_badge = f'<span style="background-color: {neonGreen}; color: black; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">Already Scheduled</span>' if is_scheduled else ''
+    if is_completed:
+        status_badge = f'<span style="background-color: #555; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">? Completed</span>'
+        card_border = "#555"
+    else:
+        status_badge = f'<span style="background-color: {neonGreen}; color: black; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 10px;">Already Scheduled</span>' if is_scheduled else ''
     
     with st.container():
         st.markdown(f'''
@@ -219,77 +238,98 @@ def render_event_card(e, idx, category):
         </div>
         ''', unsafe_allow_html=True)
         
-
-        with st.expander("Schedule & Add to Tasks"):
-            col1, col2 = st.columns(2)
-            with col1:
-                sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
-                sched_time = st.time_input("Start Time", value=datetime.strptime('10:00', '%H:%M').time(), key=f"t_{category}_{idx}")
-            with col2:
-                duration = st.number_input("Duration (Mins)", min_value=1, max_value=600, value=max(1, default_dur), step=5, key=f"dur_{category}_{idx}")
-                cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
-            
-            # --- Category Override UI ---
-            uid = e.get('UID', title)
-            current_cat_val = 'module' if category == 'mod' else 'assignment' if category == 'ass' else 'class'
-            st.markdown("<p style='font-size:0.8em; color:#aaa; margin-bottom:2px;'>Manually override category:</p>", unsafe_allow_html=True)
-            new_cat = st.selectbox("Category Override", ["module", "assignment", "class"], 
-                                   index=["module", "assignment", "class"].index(current_cat_val), 
-                                   key=f"ov_{uid}", label_visibility="collapsed")
-            if new_cat != current_cat_val:
-                overrides[uid] = new_cat
-                save_overrides(overrides)
-                st.rerun()
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
-
-                with st.spinner("Syncing..."):
+        if is_scheduled and not is_completed:
+            if st.button("? Mark as Complete", key=f"done_{category}_{idx}", use_container_width=True):
+                with st.spinner("Completing..."):
                     try:
-                        start_dt = datetime.combine(sched_date, sched_time)
-                        end_dt = start_dt + timedelta(minutes=duration)
-                        
-                        target_cal_id = CALENDAR_MAP[cal_cat]
-                        tb_body = {
-                            'summary': f"?? [Task] {title}",
-                            'description': desc,
-                            'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
-                            'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
-                            'reminders': {'useDefault': True}
-                        }
-                        timeblock_id = cal_service.events().insert(calendarId=target_cal_id, body=tb_body).execute().get('id')
-                        
-                        target_tasklist_id = TASKLIST_MAP.get(cal_cat, "@default")
-                        task_body = {
-                            'title': title,
-                            'notes': f"Scheduled: {start_dt.strftime('%I:%M %p')}\\n\\n{desc}",
-                            'due': f"{sched_date}T00:00:00.000Z"
-                        }
-                        new_item_id = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute().get('id')
-                        
-                        global df
-                        new_row = {
-                            "Status": False, 
-                            "Item Name": title, 
-                            "Type": "Task", 
-                            "Calendar": cal_cat, 
-                            "Date": str(sched_date), 
-                            "Time": sched_time.strftime('%H:%M'), 
-                            "Duration (Mins)": duration, 
-                            "Scheduled?": True, 
-                            "Location": "", 
-                            "Notes": desc, 
-                            "Event ID": new_item_id, 
-                            "Timeblock ID": timeblock_id
-                        }
-                        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                        # 1. Update Sheet
+                        row_idx = matching_rows.index[0]
+                        df.at[row_idx, "Status"] = True
                         conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
                         
-                        st.success("Successfully scheduled!")
+                        # 2. Update Google Task
+                        if g_id and g_id not in ["None", "", "nan"]:
+                            try:
+                                t_id = TASKLIST_MAP.get(cal_name, "@default")
+                                tasks_service.tasks().patch(tasklist=t_id, task=g_id, body={'status': 'completed'}).execute()
+                            except Exception: pass
+                        
+                        st.cache_data.clear()
+                        st.success("Completed!")
                         st.rerun()
                     except Exception as ex:
                         st.error(f"Failed: {ex}")
+        elif not is_scheduled:
+            with st.expander("Schedule & Add to Tasks"):
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
+                    sched_time = st.time_input("Start Time", value=datetime.strptime('10:00', '%H:%M').time(), key=f"t_{category}_{idx}")
+                with col2:
+                    duration = st.number_input("Duration (Mins)", min_value=1, max_value=600, value=max(1, default_dur), step=5, key=f"dur_{category}_{idx}")
+                    cal_cat = st.selectbox("Assign to Calendar", list(CALENDAR_MAP.keys()), index=2, key=f"cal_{category}_{idx}")
+                
+                # --- Category Override UI ---
+                uid = e.get('UID', title)
+                current_cat_val = 'module' if category == 'mod' else 'assignment' if category == 'ass' else 'class'
+                st.markdown("<p style='font-size:0.8em; color:#aaa; margin-bottom:2px;'>Manually override category:</p>", unsafe_allow_html=True)
+                new_cat = st.selectbox("Category Override", ["module", "assignment", "class"], 
+                                       index=["module", "assignment", "class"].index(current_cat_val), 
+                                       key=f"ov_{uid}", label_visibility="collapsed")
+                if new_cat != current_cat_val:
+                    overrides[uid] = new_cat
+                    save_overrides(overrides)
+                    st.rerun()
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if st.button("Add to Mission Control & Calendar", key=f"add_{category}_{idx}"):
+
+                    with st.spinner("Syncing..."):
+                        try:
+                            start_dt = datetime.combine(sched_date, sched_time)
+                            end_dt = start_dt + timedelta(minutes=duration)
+                            
+                            target_cal_id = CALENDAR_MAP[cal_cat]
+                            tb_body = {
+                                'summary': f"?? [Task] {title}",
+                                'description': desc,
+                                'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
+                                'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'America/New_York'},
+                                'reminders': {'useDefault': True}
+                            }
+                            timeblock_id = cal_service.events().insert(calendarId=target_cal_id, body=tb_body).execute().get('id')
+                            
+                            target_tasklist_id = TASKLIST_MAP.get(cal_cat, "@default")
+                            task_body = {
+                                'title': title,
+                                'notes': f"Scheduled: {start_dt.strftime('%I:%M %p')}\\n\\n{desc}",
+                                'due': f"{sched_date}T00:00:00.000Z"
+                            }
+                            new_item_id = tasks_service.tasks().insert(tasklist=target_tasklist_id, body=task_body).execute().get('id')
+                            
+                            new_row = {
+                                "Status": False, 
+                                "Item Name": title, 
+                                "Type": "Task", 
+                                "Calendar": cal_cat, 
+                                "Date": str(sched_date), 
+                                "Time": sched_time.strftime('%H:%M'), 
+                                "Duration (Mins)": duration, 
+                                "Scheduled?": True, 
+                                "Location": "", 
+                                "Notes": desc, 
+                                "Event ID": new_item_id, 
+                                "Timeblock ID": timeblock_id
+                            }
+                            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                            conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                            
+                            st.success("Successfully scheduled!")
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"Failed: {ex}")
 
 with tab1:
     for i, e in enumerate(modules): render_event_card(e, i, 'mod')
