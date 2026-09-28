@@ -455,13 +455,14 @@ export default function SchoolSyncPage() {
                             <input
                               type="date"
                               value={currentForm.date}
+                              onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                               onChange={(e) =>
                                 setFormState({
                                   ...formState,
                                   [event.uid]: { ...currentForm, date: e.target.value },
                                 })
                               }
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
                             />
                           </div>
 
@@ -470,13 +471,14 @@ export default function SchoolSyncPage() {
                             <input
                               type="time"
                               value={currentForm.time}
+                              onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                               onChange={(e) =>
                                 setFormState({
                                   ...formState,
                                   [event.uid]: { ...currentForm, time: e.target.value },
                                 })
                               }
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
                             />
                           </div>
 
