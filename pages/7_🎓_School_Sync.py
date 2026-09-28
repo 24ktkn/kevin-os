@@ -90,7 +90,7 @@ OVERRIDES_FILE = "data/school_overrides.json"
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f: return json.load(f)
-    return {"ical_url": ""}
+    return {"ical_url": "https://elentra.schulich.uwo.ca/calendars/private-75254bda7546b960cf7cafa6c97f213b/knguy69.ics"}
 
 def save_config(cfg):
     os.makedirs("data", exist_ok=True)
