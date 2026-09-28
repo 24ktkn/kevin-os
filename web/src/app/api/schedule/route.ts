@@ -28,9 +28,18 @@ export async function POST(req: NextRequest) {
     const targetCalId = CALENDAR_MAP[calCat] || CALENDAR_MAP['School'];
     const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['School'];
 
-    // Construct start & end ISO strings
-    // Format: YYYY-MM-DDTHH:MM:SS
-    const startIso = `${date}T${time.length === 5 ? time + ':00' : time}`;
+    // Parse time supporting both "10:00 AM" / "02:30 PM" and 24h formats
+    const cleaned = time.trim().toLowerCase();
+    const isPm = cleaned.includes('pm');
+    const isAm = cleaned.includes('am');
+    const parts = cleaned.replace(/am|pm/g, '').trim().split(':');
+    let hours = parseInt(parts[0], 10) || 0;
+    const minutes = parseInt(parts[1], 10) || 0;
+    if (isPm && hours < 12) hours += 12;
+    if (isAm && hours === 12) hours = 0;
+
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const startIso = `${date}T${pad(hours)}:${pad(minutes)}:00`;
     const startDt = new Date(startIso);
     const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
     const endIso = endDt.toISOString().replace(/\.\d{3}Z$/, '');

@@ -158,7 +158,7 @@ export default function SchoolSyncPage() {
     const defaultEvent = events.find((e) => e.uid === uid);
     const existing = formState[uid] || {
       date: defaultEvent ? new Date(defaultEvent.dateObj).toISOString().split('T')[0] : '',
-      time: '10:00',
+      time: '10:00 AM',
       duration: defaultEvent?.duration || 60,
       calendar: 'School',
     };
@@ -425,7 +425,7 @@ export default function SchoolSyncPage() {
 
               const currentForm = formState[event.uid] || {
                 date: dateObj.toISOString().split('T')[0],
-                time: '10:00',
+                time: '10:00 AM',
                 duration: event.duration,
                 calendar: 'School',
               };
@@ -573,10 +573,10 @@ export default function SchoolSyncPage() {
                           </div>
 
                           <div>
-                            <label className="text-zinc-400 block mb-1">Start Time (HH:MM)</label>
+                            <label className="text-zinc-400 block mb-1">Start Time (e.g. 10:00 AM)</label>
                             <input
                               type="text"
-                              placeholder="10:00"
+                              placeholder="10:00 AM"
                               value={currentForm.time}
                               onChange={(e) =>
                                 setFormState({
