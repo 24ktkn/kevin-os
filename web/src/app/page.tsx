@@ -1,24 +1,69 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import {
-  Rocket,
-  Plus,
+  Activity,
+  Flame,
   CheckCircle2,
   Calendar,
   Clock,
   RefreshCw,
-  Search,
-  Filter,
-  Check,
-  CalendarDays,
   Sparkles,
-  AlertCircle,
-  X,
-  ListTodo,
+  ArrowRight,
+  TrendingUp,
+  Moon,
+  Sun,
+  Heart,
+  Scale,
+  Zap,
+  Timer,
+  Check,
+  Rocket,
+  GraduationCap,
+  Dumbbell,
+  UtensilsCrossed,
+  Bot,
+  BookOpen,
 } from 'lucide-react';
-import { TaskItem, CalendarName } from '@/types/task';
 import { supabase } from '@/lib/supabase';
+import { TaskItem, CalendarName } from '@/types/task';
+
+interface HealthData {
+  date: string;
+  raw_date: string;
+  steps: number;
+  steps_goal: number;
+  steps_percentage: number;
+  hrv: number;
+  sleep_duration: string;
+  sleep_hours: number;
+  sleep_time: string;
+  wake_time: string;
+  rhr: number;
+  bodyweight: number;
+  workout_calories: number;
+  workout_duration: number;
+}
+
+interface HabitDay {
+  dayNumber: number;
+  dateStr: string;
+  completed: boolean;
+  isToday: boolean;
+  isFuture: boolean;
+}
+
+interface HabitItem {
+  name: string;
+  icon: string;
+  streak: number;
+  consistencyRate: number;
+  completedToday: boolean;
+  monthName: string;
+  year: number;
+  days: HabitDay[];
+}
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
   'School': { bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
@@ -27,359 +72,498 @@ const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: 
   'Volunteering': { bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30' },
 };
 
-export default function MissionControlPage() {
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'today' | 'upcoming' | 'backlog' | 'completed'>('today');
-  const [selectedCalendar, setSelectedCalendar] = useState<string>('all');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+export default function HomePage() {
+  const [health, setHealth] = useState<HealthData | null>(null);
+  const [habits, setHabits] = useState<HabitItem[]>([]);
+  const [todayTasks, setTodayTasks] = useState<TaskItem[]>([]);
+  const [loadingHealth, setLoadingHealth] = useState(true);
+  const [loadingHabits, setLoadingHabits] = useState(true);
+  const [loadingTasks, setLoadingTasks] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [togglingHabit, setTogglingHabit] = useState<string | null>(null);
 
-  // New task form state
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskDate, setNewTaskDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [newTaskTime, setNewTaskTime] = useState('10:00 AM');
-  const [newTaskDuration, setNewTaskDuration] = useState(30);
-  const [newTaskCalendar, setNewTaskCalendar] = useState<CalendarName>('Kevin Nguyen');
-  const [newTaskNotes, setNewTaskNotes] = useState('');
-  const [createTimeblock, setCreateTimeblock] = useState(false);
-  const [submittingTask, setSubmittingTask] = useState(false);
-
-  // Fetch tasks from Supabase (with localStorage fallback)
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
+  // Fetch Health Biometrics
+  const fetchHealth = useCallback(async () => {
     try {
-      // 1. Check local storage first
-      const cached = localStorage.getItem('kevin_os_tasks');
-      if (cached) {
-        setTasks(JSON.parse(cached));
-      }
-
-      // 2. Query Supabase
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('due_date', { ascending: true });
-
-        if (!error && data) {
-          setTasks(data as TaskItem[]);
-          localStorage.setItem('kevin_os_tasks', JSON.stringify(data));
-        }
+      const res = await fetch('/api/health');
+      const json = await res.json();
+      if (json.success && json.data) {
+        setHealth(json.data);
       }
     } catch (err) {
-      console.error('Error fetching tasks:', err);
+      console.error('Failed to load health metrics:', err);
     } finally {
-      setLoading(false);
+      setLoadingHealth(false);
     }
   }, []);
 
+  // Fetch Habits
+  const fetchHabits = useCallback(async () => {
+    try {
+      const res = await fetch('/api/habits');
+      const json = await res.json();
+      if (json.success && json.habits) {
+        setHabits(json.habits);
+      }
+    } catch (err) {
+      console.error('Failed to load habits:', err);
+    } finally {
+      setLoadingHabits(false);
+    }
+  }, []);
+
+  // Fetch Today's Tasks & Events from Supabase
+  const fetchTodayTasks = useCallback(async () => {
+    try {
+      if (supabase) {
+        const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('due_date', todayStr)
+          .order('due_time', { ascending: true, nullsFirst: false });
+
+        if (!error && data) {
+          setTodayTasks(data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load today tasks:', err);
+    } finally {
+      setLoadingTasks(false);
+    }
+  }, []);
+
+  // Load all initial data
+  const loadAll = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
+    setRefreshing(false);
+  }, [fetchHealth, fetchHabits, fetchTodayTasks]);
+
   useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+    loadAll();
+  }, [loadAll]);
 
-  // Optimistic Toggle Task Completion
-  const toggleTaskCompletion = async (id: string, currentStatus: boolean) => {
-    const updatedStatus = !currentStatus;
+  // Toggle habit completion with instant optimistic update
+  const toggleHabit = async (habitName: string, currentCompleted: boolean) => {
+    const nextCompleted = !currentCompleted;
+    setTogglingHabit(habitName);
 
-    // Instant local UI update (< 5ms)
-    setTasks((prev) => {
-      const next = prev.map((t) => (t.id === id ? { ...t, is_completed: updatedStatus } : t));
-      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
-      return next;
-    });
+    // Optimistic update
+    setHabits((prev) =>
+      prev.map((h) => {
+        if (h.name === habitName) {
+          const updatedDays = h.days.map((d) => (d.isToday ? { ...d, completed: nextCompleted } : d));
+          const newStreak = nextCompleted ? h.streak + 1 : Math.max(0, h.streak - 1);
+          return {
+            ...h,
+            completedToday: nextCompleted,
+            streak: newStreak,
+            days: updatedDays,
+          };
+        }
+        return h;
+      })
+    );
 
-    // Asynchronous Supabase update
+    try {
+      const res = await fetch('/api/habits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ habit: habitName, completed: nextCompleted }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        // Revert on error
+        fetchHabits();
+      }
+    } catch (err) {
+      console.error('Error toggling habit:', err);
+      fetchHabits();
+    } finally {
+      setTogglingHabit(null);
+    }
+  };
+
+  // Toggle task completion
+  const toggleTask = async (id: string, currentCompleted: boolean) => {
+    const nextCompleted = !currentCompleted;
+    // Optimistic update
+    setTodayTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, is_completed: nextCompleted } : t))
+    );
+
     if (supabase) {
       await supabase
         .from('tasks')
-        .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
+        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
         .eq('id', id);
     }
   };
 
-  // Add New Task
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTaskTitle.trim()) return;
-
-    setSubmittingTask(true);
-    const newId = crypto.randomUUID();
-
-    const taskItem: TaskItem = {
-      id: newId,
-      title: newTaskTitle.trim(),
-      type: createTimeblock ? 'Event' : 'Task',
-      calendar_name: newTaskCalendar,
-      due_date: newTaskDate,
-      due_time: newTaskTime,
-      duration_mins: newTaskDuration,
-      is_completed: false,
-      is_scheduled: createTimeblock,
-      notes: newTaskNotes.trim(),
-      created_at: new Date().toISOString(),
-    };
-
-    // 1. Optimistic local state update
-    setTasks((prev) => {
-      const next = [taskItem, ...prev];
-      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
-      return next;
-    });
-
-    try {
-      // 2. Optional Google Calendar / Tasks sync
-      if (createTimeblock) {
-        await fetch('/api/schedule', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: taskItem.title,
-            description: taskItem.notes,
-            date: taskItem.due_date,
-            time: taskItem.due_time,
-            duration: taskItem.duration_mins,
-            calendar: taskItem.calendar_name,
-          }),
-        });
-      }
-
-      // 3. Supabase persist
-      if (supabase) {
-        await supabase.from('tasks').insert([taskItem]);
-      }
-
-      // Reset form
-      setNewTaskTitle('');
-      setNewTaskNotes('');
-      setIsAddModalOpen(false);
-    } catch (err) {
-      console.error('Failed to create task:', err);
-    } finally {
-      setSubmittingTask(false);
-    }
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
   };
-
-  // Sync Google Tasks & Calendar Sweeper
-  const handleSyncAll = async () => {
-    setSyncing(true);
-    try {
-      await fetch('/api/tasks/sync');
-      await fetchTasks();
-    } catch (err) {
-      console.error('Sync failed:', err);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Filtering & Partitioning
-  const filteredTasks = useMemo(() => {
-    let result = tasks;
-
-    // Calendar filter
-    if (selectedCalendar !== 'all') {
-      result = result.filter((t) => t.calendar_name === selectedCalendar);
-    }
-
-    // Search query filter
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (t) => t.title.toLowerCase().includes(q) || (t.notes && t.notes.toLowerCase().includes(q))
-      );
-    }
-
-    return result;
-  }, [tasks, selectedCalendar, searchQuery]);
-
-  // Section categorizations
-  const { todayTasks, upcomingTasks, backlogTasks, completedTasks } = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    const today: TaskItem[] = [];
-    const upcoming: TaskItem[] = [];
-    const backlog: TaskItem[] = [];
-    const completed: TaskItem[] = [];
-
-    for (const t of filteredTasks) {
-      if (t.is_completed) {
-        completed.push(t);
-      } else if (!t.due_date) {
-        backlog.push(t);
-      } else if (t.due_date <= todayStr) {
-        today.push(t);
-      } else {
-        upcoming.push(t);
-      }
-    }
-
-    return {
-      todayTasks: today,
-      upcomingTasks: upcoming,
-      backlogTasks: backlog,
-      completedTasks: completed,
-    };
-  }, [filteredTasks]);
-
-  const activeTaskList =
-    activeTab === 'today'
-      ? todayTasks
-      : activeTab === 'upcoming'
-      ? upcomingTasks
-      : activeTab === 'backlog'
-      ? backlogTasks
-      : completedTasks;
 
   const todayFormatted = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
   });
 
   return (
-    <div className="min-h-screen bg-[#0A0A0D] text-white">
-      {/* Top Header */}
-      <header className="sticky top-0 z-40 border-b border-zinc-800/80 bg-[#0F0F14]/90 backdrop-blur-md px-4 sm:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="flex-1 overflow-y-auto bg-[#0A0A0D] text-white p-4 sm:p-6 lg:p-8 space-y-8 max-w-7xl mx-auto w-full">
+      {/* Top Header & Greeting */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-6">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              <Rocket className="h-5 w-5 text-cyan-400" /> Mission Control
-            </h1>
-            <span className="text-xs text-zinc-400 font-mono">| {todayFormatted}</span>
-          </div>
-          <p className="text-xs text-zinc-400 mt-0.5">Central task tracker, timeblocks & multi-calendar overview</p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={handleSyncAll}
-            disabled={syncing}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin text-cyan-400' : ''}`} />
-            <span>{syncing ? 'Syncing...' : 'Sync Cloud'}</span>
-          </button>
-
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-md shadow-cyan-500/15 transition"
-          >
-            <Plus className="h-4 w-4" />
-            <span>New Task</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 space-y-6">
-        {/* Metric Cards Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
-            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Today's Focus</span>
-              <AlertCircle className="h-4 w-4 text-cyan-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{todayTasks.length}</div>
-          </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
-            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Upcoming</span>
-              <CalendarDays className="h-4 w-4 text-purple-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{upcomingTasks.length}</div>
-          </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
-            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Unscheduled Backlog</span>
-              <ListTodo className="h-4 w-4 text-amber-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{backlogTasks.length}</div>
-          </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
-            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Completed</span>
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{completedTasks.length}</div>
-          </div>
-        </div>
-
-        {/* Calendar Filter Pills & Search */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          {/* Calendar Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-            <span className="text-xs text-zinc-500 mr-1 flex items-center gap-1">
-              <Filter className="h-3 w-3" /> Filter:
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xl">🧠</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+              Personal Operating System
             </span>
-            {['all', 'School', 'Kevin Nguyen', 'Family', 'Volunteering'].map((cal) => (
-              <button
-                key={cal}
-                onClick={() => setSelectedCalendar(cal)}
-                className={`px-3 py-1 rounded-xl text-xs font-medium whitespace-nowrap transition-all ${
-                  selectedCalendar === cal
-                    ? 'bg-zinc-800 text-white border border-zinc-700 shadow-sm'
-                    : 'bg-[#121218] text-zinc-400 hover:text-zinc-200 border border-zinc-800/60'
-                }`}
-              >
-                {cal === 'all' ? 'All Calendars' : cal}
-              </button>
-            ))}
           </div>
-
-          {/* Search Box */}
-          <div className="relative sm:w-72">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
-            <input
-              type="text"
-              placeholder="Search tasks..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#121218] border border-zinc-800 rounded-xl pl-9 pr-3.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50 transition"
-            />
-          </div>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+            {getGreeting()}, Kevin
+          </h1>
+          <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+            {todayFormatted} • Welcome to your unified command center.
+          </p>
         </div>
 
-        {/* View Tabs */}
-        <div className="flex gap-2 border-b border-zinc-800/80 pb-2">
-          {[
-            { id: 'today', label: `Today's Focus (${todayTasks.length})` },
-            { id: 'upcoming', label: `Upcoming (${upcomingTasks.length})` },
-            { id: 'backlog', label: `Backlog (${backlogTasks.length})` },
-            { id: 'completed', label: `Completed (${completedTasks.length})` },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                activeTab === tab.id
-                  ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 font-semibold shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={loadAll}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs font-medium text-zinc-300 hover:text-white transition shadow-sm"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
+            <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+
+          <Link
+            href="/tasks"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-xs font-semibold text-white transition shadow-lg shadow-cyan-500/20"
+          >
+            <Rocket className="h-3.5 w-3.5" />
+            <span>Mission Control</span>
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+      </div>
+
+      {/* 🧬 Biometrics Command Center */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-emerald-400" />
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              Biometrics Command Center
+            </h2>
+            {health && (
+              <span className="text-[11px] font-mono text-zinc-400 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800">
+                {health.date}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-zinc-400">Apple Health Synced</span>
         </div>
 
-        {/* Task List */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 space-y-3">
-            <RefreshCw className="h-6 w-6 text-cyan-400 animate-spin" />
-            <p className="text-xs text-zinc-400">Loading tasks from Supabase...</p>
+        {loadingHealth ? (
+          <div className="h-32 rounded-2xl bg-zinc-900/50 border border-zinc-800/80 animate-pulse flex items-center justify-center text-xs text-zinc-400">
+            Loading Biometrics...
           </div>
-        ) : activeTaskList.length === 0 ? (
-          <div className="text-center py-20 border border-dashed border-zinc-800/80 rounded-2xl bg-[#121218]/40">
-            <CheckCircle2 className="h-9 w-9 text-zinc-600 mx-auto mb-2" />
-            <p className="text-sm font-medium text-zinc-400">No tasks in this section</p>
-            <p className="text-xs text-zinc-500 mt-1">You are all caught up!</p>
+        ) : health ? (
+          <div className="space-y-3">
+            {/* Daily Steps Tracker Hero Card */}
+            <div className="p-5 rounded-2xl bg-[#14141B] border border-zinc-800/90 shadow-xl relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1 flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                    Daily Steps Tracker
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-black text-emerald-400 flex items-baseline gap-2">
+                    {health.steps.toLocaleString()}
+                    <span className="text-sm font-medium text-zinc-400">
+                      / {health.steps_goal.toLocaleString()} steps
+                    </span>
+                  </div>
+                </div>
+                <div className="sm:text-right">
+                  <div className="text-2xl font-black text-cyan-400">
+                    {health.steps_percentage}%
+                  </div>
+                  <div className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">
+                    Daily Goal
+                  </div>
+                </div>
+              </div>
+
+              {/* Steps Progress Bar */}
+              <div className="w-full h-3 rounded-full bg-zinc-900 border border-zinc-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 transition-all duration-700 ease-out"
+                  style={{ width: `${health.steps_percentage}%` }}
+                />
+              </div>
+            </div>
+
+            {/* 8-Column Compact Health Metrics Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+              {/* HRV */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  HRV (Variability)
+                </div>
+                <div className="text-xl font-black text-cyan-400">
+                  {health.hrv > 0 ? `${health.hrv} ms` : 'No data'}
+                </div>
+              </div>
+
+              {/* Sleep Duration */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Sleep Duration
+                </div>
+                <div className="text-xl font-black text-amber-400">
+                  {health.sleep_duration}
+                </div>
+              </div>
+
+              {/* Fell Asleep */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Fell Asleep
+                </div>
+                <div className="text-lg font-black text-amber-300 truncate">
+                  {health.sleep_time}
+                </div>
+              </div>
+
+              {/* Wake Up Time */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Wake Up Time
+                </div>
+                <div className="text-lg font-black text-purple-400 truncate">
+                  {health.wake_time}
+                </div>
+              </div>
+
+              {/* Resting Heart Rate */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Resting HR
+                </div>
+                <div className="text-xl font-black text-rose-400">
+                  {health.rhr > 0 ? `${health.rhr} bpm` : 'No data'}
+                </div>
+              </div>
+
+              {/* Bodyweight */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Bodyweight
+                </div>
+                <div className="text-xl font-black text-emerald-400">
+                  {health.bodyweight} lbs
+                </div>
+              </div>
+
+              {/* Workout Calories */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Workout Cal
+                </div>
+                <div className="text-xl font-black text-orange-400">
+                  {health.workout_calories > 0 ? `${health.workout_calories} kcal` : 'No data'}
+                </div>
+              </div>
+
+              {/* Workout Duration */}
+              <div className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 flex flex-col justify-between">
+                <div className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider mb-2">
+                  Workout Dur
+                </div>
+                <div className="text-xl font-black text-blue-400">
+                  {health.workout_duration > 0 ? `${health.workout_duration} min` : 'No data'}
+                </div>
+              </div>
+            </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {activeTaskList.map((task) => {
+          <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800 text-center text-xs text-zinc-400">
+            No health data available. Connect Apple Health via Google Sheets.
+          </div>
+        )}
+      </section>
+
+      {/* ⚡ Habits Command Center */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Flame className="h-5 w-5 text-amber-400" />
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              Habits Command Center
+            </h2>
+          </div>
+          <span className="text-xs text-zinc-400">Daily Streaks & Consistency</span>
+        </div>
+
+        {loadingHabits ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-64 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {habits.map((habit) => (
+              <div
+                key={habit.name}
+                className="p-4 rounded-2xl bg-[#14141B] border border-zinc-800/90 shadow-xl flex flex-col justify-between space-y-4"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between pb-3 border-b border-zinc-800/80">
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                      <span>{habit.icon}</span>
+                      <span>{habit.name}</span>
+                    </div>
+                    <div className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider mt-0.5">
+                      {habit.monthName} {habit.year}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm font-black text-emerald-400">
+                        {habit.streak} 🔥
+                      </div>
+                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                        Streak
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-black text-cyan-400">
+                        {habit.consistencyRate}%
+                      </div>
+                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                        Cons.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mini Monthly Calendar Grid */}
+                <div>
+                  {/* Days of week header */}
+                  <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
+                    {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((dayChar, idx) => (
+                      <div key={idx} className="text-[10px] font-bold text-zinc-400">
+                        {dayChar}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Month days */}
+                  <div className="grid grid-cols-7 gap-1 text-center">
+                    {habit.days.map((d, dIdx) => {
+                      if (d.dayNumber === 0) {
+                        return <div key={`empty-${dIdx}`} className="aspect-square" />;
+                      }
+
+                      let bgClass = 'bg-[#1C1C24] text-zinc-400 border border-zinc-800/60';
+                      if (d.completed) {
+                        bgClass = 'bg-[#00FF66] text-black font-extrabold shadow-sm shadow-[#00FF66]/20';
+                      }
+
+                      const todayClass = d.isToday ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-[#14141B] font-bold' : '';
+
+                      return (
+                        <div
+                          key={d.dateStr}
+                          title={`${d.dateStr}: ${d.completed ? 'Completed' : 'Incomplete'}`}
+                          className={`aspect-square rounded flex items-center justify-center text-[10px] transition-all ${bgClass} ${todayClass}`}
+                        >
+                          {d.dayNumber}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 1-Click Toggle Button for Today */}
+                <button
+                  onClick={() => toggleHabit(habit.name, habit.completedToday)}
+                  disabled={togglingHabit === habit.name}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+                    habit.completedToday
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/40'
+                      : 'bg-zinc-800/80 text-zinc-200 border border-zinc-700/80 hover:border-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10'
+                  }`}
+                >
+                  {habit.completedToday ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Completed Today ✅</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Mark Done</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 📅 Today's Agenda / Critical Tasks Snapshot */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-blue-400" />
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              Today's Agenda & Critical Focus
+            </h2>
+            <span className="text-[11px] font-mono text-zinc-400 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800">
+              {todayTasks.length} items
+            </span>
+          </div>
+
+          <Link
+            href="/tasks"
+            className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition"
+          >
+            <span>Open Mission Control</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+
+        {loadingTasks ? (
+          <div className="h-28 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse flex items-center justify-center text-xs text-zinc-400">
+            Loading Today's Schedule...
+          </div>
+        ) : todayTasks.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-[#14141B] border border-zinc-800/80 text-center space-y-2">
+            <CheckCircle2 className="h-8 w-8 text-emerald-400 mx-auto opacity-80" />
+            <p className="text-sm font-medium text-white">No pending tasks or events for today!</p>
+            <p className="text-xs text-zinc-400">
+              Check your backlog or schedule upcoming school modules in Mission Control.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {todayTasks.map((task) => {
               const calStyle = CALENDAR_COLORS[task.calendar_name] || {
-                bg: 'bg-zinc-800',
+                bg: 'bg-zinc-800/40',
                 text: 'text-zinc-300',
                 border: 'border-zinc-700',
               };
@@ -387,61 +571,55 @@ export default function MissionControlPage() {
               return (
                 <div
                   key={task.id}
-                  className={`group relative rounded-2xl border transition-all duration-150 bg-[#121218] p-4 flex flex-col justify-between gap-3 ${
+                  className={`p-3.5 rounded-xl bg-[#14141B] border transition-all duration-150 flex items-start gap-3 shadow-md ${
                     task.is_completed
-                      ? 'border-zinc-800/60 opacity-60'
-                      : 'border-zinc-800 hover:border-zinc-700 shadow-sm'
+                      ? 'border-emerald-500/30 opacity-60 bg-emerald-950/10'
+                      : 'border-zinc-800 hover:border-zinc-700'
                   }`}
                 >
-                  <div className="space-y-2">
-                    {/* Header Row: Checkbox + Calendar Badge */}
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => toggleTaskCompletion(task.id, task.is_completed)}
-                        className={`h-5 w-5 rounded-lg border flex items-center justify-center transition-all ${
-                          task.is_completed
-                            ? 'bg-emerald-500 border-emerald-500 text-black'
-                            : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
-                        }`}
-                      >
-                        {task.is_completed && <Check className="h-3.5 w-3.5 stroke-[3]" />}
-                      </button>
+                  <button
+                    onClick={() => toggleTask(task.id, task.is_completed)}
+                    className={`mt-0.5 h-4.5 w-4.5 rounded-md flex items-center justify-center border transition-all shrink-0 ${
+                      task.is_completed
+                        ? 'bg-emerald-500 border-emerald-400 text-black shadow-sm'
+                        : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
+                    }`}
+                  >
+                    {task.is_completed && <Check className="h-3 w-3 stroke-[3]" />}
+                  </button>
 
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
                       <span
-                        className={`text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
                       >
                         {task.calendar_name}
                       </span>
+                      {task.due_time && (
+                        <span className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
+                          <Clock className="h-2.5 w-2.5" />
+                          {task.due_time}
+                        </span>
+                      )}
+                      {task.duration_mins > 0 && (
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          ({task.duration_mins}m)
+                        </span>
+                      )}
                     </div>
 
-                    {/* Task Title */}
-                    <h3
-                      className={`text-sm font-semibold tracking-tight leading-snug line-clamp-2 ${
-                        task.is_completed ? 'line-through text-zinc-500' : 'text-white'
+                    <div
+                      className={`text-xs font-bold leading-snug truncate ${
+                        task.is_completed ? 'line-through text-zinc-400' : 'text-white'
                       }`}
                     >
                       {task.title}
-                    </h3>
+                    </div>
 
-                    {/* Notes if any */}
-                    {task.notes && (
-                      <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
-                        {task.notes}
+                    {task.location && (
+                      <p className="text-[10px] text-zinc-400 truncate mt-0.5">
+                        📍 {task.location}
                       </p>
-                    )}
-                  </div>
-
-                  {/* Footer Meta Row */}
-                  <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60 text-[11px] text-zinc-400">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3 w-3 text-zinc-500" />
-                      {task.due_date || 'No Date'}
-                    </span>
-                    {task.due_time && (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3 text-zinc-500" />
-                        {task.due_time} {task.duration_mins > 0 && `(${task.duration_mins}m)`}
-                      </span>
                     )}
                   </div>
                 </div>
@@ -449,131 +627,85 @@ export default function MissionControlPage() {
             })}
           </div>
         )}
-      </main>
+      </section>
 
-      {/* Add Task Modal */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-[#121218] p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-cyan-400" /> Create New Task
-              </h3>
-              <button
-                onClick={() => setIsAddModalOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
-              >
-                <X className="h-4 w-4" />
-              </button>
+      {/* Available Modules Launchpad */}
+      <section className="space-y-4 pt-4 border-t border-zinc-800/80">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+          OS Modules Launchpad
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <Link
+            href="/tasks"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800 hover:border-cyan-500/50 hover:bg-zinc-900/80 transition group flex flex-col justify-between space-y-3"
+          >
+            <div className="h-8 w-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center group-hover:scale-105 transition">
+              <Rocket className="h-4 w-4" />
             </div>
-
-            <form onSubmit={handleCreateTask} className="space-y-3.5 text-xs">
-              <div>
-                <label className="text-zinc-400 block mb-1">Task Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Study Cardiology Chapter 4"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
-                />
+            <div>
+              <div className="text-xs font-bold text-white group-hover:text-cyan-400 transition">
+                Mission Control
               </div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Master Task Tracker & GCal</div>
+            </div>
+          </Link>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-zinc-400 block mb-1">Due Date</label>
-                  <input
-                    type="date"
-                    value={newTaskDate}
-                    onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
-                    onChange={(e) => setNewTaskDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
-                  />
-                </div>
-                <div>
-                  <label className="text-zinc-400 block mb-1">Start Time</label>
-                  <input
-                    type="text"
-                    placeholder="10:00 AM"
-                    value={newTaskTime}
-                    onChange={(e) => setNewTaskTime(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 font-mono"
-                  />
-                </div>
+          <Link
+            href="/school"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800 hover:border-purple-500/50 hover:bg-zinc-900/80 transition group flex flex-col justify-between space-y-3"
+          >
+            <div className="h-8 w-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center group-hover:scale-105 transition">
+              <GraduationCap className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-white group-hover:text-purple-400 transition">
+                School Sync
               </div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Elentra iCal & Scheduler</div>
+            </div>
+          </Link>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-zinc-400 block mb-1">Duration (Mins)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={600}
-                    value={newTaskDuration}
-                    onChange={(e) => setNewTaskDuration(parseInt(e.target.value, 10) || 30)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-zinc-400 block mb-1">Calendar</label>
-                  <select
-                    value={newTaskCalendar}
-                    onChange={(e) => setNewTaskCalendar(e.target.value as CalendarName)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="Kevin Nguyen">Kevin Nguyen</option>
-                    <option value="School">School</option>
-                    <option value="Family">Family</option>
-                    <option value="Volunteering">Volunteering</option>
-                  </select>
-                </div>
-              </div>
+          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
+            <div className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-zinc-300">Habit Tracker</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 3</div>
+            </div>
+          </div>
 
-              <div>
-                <label className="text-zinc-400 block mb-1">Notes / Instructions</label>
-                <textarea
-                  rows={2}
-                  placeholder="Optional details or checklist..."
-                  value={newTaskNotes}
-                  onChange={(e) => setNewTaskNotes(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-white focus:outline-none focus:border-cyan-500"
-                />
-              </div>
+          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
+            <div className="h-8 w-8 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center">
+              <Dumbbell className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-zinc-300">Workout Tracker</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 4</div>
+            </div>
+          </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="timeblock"
-                  checked={createTimeblock}
-                  onChange={(e) => setCreateTimeblock(e.target.checked)}
-                  className="rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-0"
-                />
-                <label htmlFor="timeblock" className="text-zinc-300 cursor-pointer">
-                  Create Google Calendar timeblock event
-                </label>
-              </div>
+          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
+            <div className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <UtensilsCrossed className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-zinc-300">Meal Prep</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 4</div>
+            </div>
+          </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-zinc-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingTask}
-                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold"
-                >
-                  {submittingTask ? 'Creating...' : 'Create Task'}
-                </button>
-              </div>
-            </form>
+          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
+            <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+              <Bot className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-zinc-300">AI Scheduler</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 5</div>
+            </div>
           </div>
         </div>
-      )}
+      </section>
     </div>
   );
 }

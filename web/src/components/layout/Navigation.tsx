@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Home,
   Rocket,
   GraduationCap,
   Activity,
@@ -15,7 +16,8 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { name: 'Mission Control', href: '/', icon: Rocket, activeMatch: (p: string) => p === '/' },
+  { name: 'Home', href: '/', icon: Home, activeMatch: (p: string) => p === '/' },
+  { name: 'Mission Control', href: '/tasks', icon: Rocket, activeMatch: (p: string) => p.startsWith('/tasks') },
   { name: 'School Sync', href: '/school', icon: GraduationCap, activeMatch: (p: string) => p.startsWith('/school') },
   { name: 'Habit Tracker', href: '/habits', icon: Activity, activeMatch: (p: string) => p.startsWith('/habits'), badge: 'Phase 3' },
   { name: 'Daily Journal', href: '/journal', icon: BookOpen, activeMatch: (p: string) => p.startsWith('/journal'), badge: 'Phase 3' },

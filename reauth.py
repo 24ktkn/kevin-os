@@ -3,7 +3,8 @@ import toml
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 def main():
-    secrets_path = os.path.join(".streamlit", "secrets.toml")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    secrets_path = os.path.join(base_dir, ".streamlit", "secrets.toml")
     
     if not os.path.exists(secrets_path):
         print("Could not find .streamlit/secrets.toml!")
@@ -59,7 +60,7 @@ def main():
         print("✓ Automatically updated .streamlit/secrets.toml")
 
         # 2. Update web/.env.local
-        web_env_path = os.path.join("web", ".env.local")
+        web_env_path = os.path.join(base_dir, "web", ".env.local")
         if os.path.exists(web_env_path):
             with open(web_env_path, "r", encoding="utf-8") as f:
                 env_content = f.read()
