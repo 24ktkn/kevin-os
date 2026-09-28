@@ -1,0 +1,100 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { google } from 'googleapis';
+
+const CALENDAR_MAP: Record<string, string> = {
+  'Kevin Nguyen': '24ktkn@gmail.com',
+  'Family': 'family05668227215423587251@group.calendar.google.com',
+  'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
+  'Volunteering': '57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com',
+};
+
+const TASKLIST_MAP: Record<string, string> = {
+  'Kevin Nguyen': '@default',
+  'Family': 'Um85a3gwMVZqTXN4X0M3Wg',
+  'School': 'ZGRiT21qM2ZCbVRWOVBlMQ',
+  'Volunteering': 'bUtfd3ZxU0Y3RFUyM2x2dQ',
+};
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { title, description, date, time, duration, calendar: calCat } = body;
+
+    if (!title || !date || !time) {
+      return NextResponse.json({ error: 'Missing required schedule fields' }, { status: 400 });
+    }
+
+    const durationMins = parseInt(duration, 10) || 60;
+    const targetCalId = CALENDAR_MAP[calCat] || CALENDAR_MAP['School'];
+    const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['School'];
+
+    // Construct start & end ISO strings
+    // Format: YYYY-MM-DDTHH:MM:SS
+    const startIso = `${date}T${time.length === 5 ? time + ':00' : time}`;
+    const startDt = new Date(startIso);
+    const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
+    const endIso = endDt.toISOString().replace(/\.\d{3}Z$/, '');
+
+    let calendarEventId: string | null = null;
+    let taskId: string | null = null;
+
+    // 1. Insert Google Calendar Timeblock (Service Account)
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (clientEmail && rawPrivateKey) {
+      const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
+      const jwtClient = new google.auth.JWT({
+        email: clientEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/calendar'],
+      });
+
+      const calendarApi = google.calendar({ version: 'v3', auth: jwtClient });
+
+      const calRes = await calendarApi.events.insert({
+        calendarId: targetCalId,
+        requestBody: {
+          summary: `🎓 [Task] ${title}`,
+          description: description || '',
+          start: { dateTime: `${startIso}-04:00` },
+          end: { dateTime: `${endIso}-04:00` },
+        },
+      });
+
+      calendarEventId = calRes.data.id || null;
+    }
+
+    // 2. Insert Google Task (OAuth)
+    const clientId = process.env.GOOGLE_TASKS_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_TASKS_CLIENT_SECRET;
+    const refreshToken = process.env.GOOGLE_TASKS_REFRESH_TOKEN;
+
+    if (clientId && clientSecret && refreshToken) {
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oauth2Client.setCredentials({ refresh_token: refreshToken });
+      const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
+
+      const taskRes = await tasksApi.tasks.insert({
+        tasklist: targetTaskListId,
+        requestBody: {
+          title,
+          notes: `⏰ Scheduled: ${time}\n\n${description || ''}`,
+          due: `${date}T00:00:00.000Z`,
+        },
+      });
+
+      taskId = taskRes.data.id || null;
+    }
+
+    return NextResponse.json({
+      success: true,
+      calendarEventId,
+      taskId,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('Schedule error:', errorMsg);
+    return NextResponse.json({ error: errorMsg }, { status: 500 });
+  }
+}

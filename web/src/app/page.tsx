@@ -36,6 +36,7 @@ export default function SchoolSyncPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [supabaseConnected, setSupabaseConnected] = useState(false);
+  const [schedulingId, setSchedulingId] = useState<string | null>(null);
 
   // Local & Supabase state tracking
   const [overrides, setOverrides] = useState<Record<string, SchoolCategory>>({});
@@ -162,23 +163,52 @@ export default function SchoolSyncPage() {
       calendar: 'School',
     };
 
-    const updated = { ...scheduledItems, [uid]: existing };
-    setScheduledItems(updated);
-    localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
-    setExpandedId(null);
+    setSchedulingId(uid);
 
-    if (supabase) {
-      await supabase.from('school_items').upsert({
-        uid,
-        title: defaultEvent?.summary || 'Untitled',
-        category: overrides[uid] || defaultEvent?.category || 'module',
-        is_scheduled: true,
-        scheduled_date: existing.date,
-        scheduled_time: existing.time,
-        duration_mins: existing.duration,
-        target_calendar: existing.calendar,
-        updated_at: new Date().toISOString(),
+    try {
+      // 1. Push timeblock & task to Google Calendar & Google Tasks
+      const scheduleRes = await fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: defaultEvent?.summary || 'Untitled',
+          description: defaultEvent?.description || '',
+          date: existing.date,
+          time: existing.time,
+          duration: existing.duration,
+          calendar: existing.calendar,
+        }),
       });
+
+      const schedData = await scheduleRes.json();
+      if (!scheduleRes.ok) {
+        console.error('Google Calendar error:', schedData.error);
+      }
+
+      // 2. Update local state
+      const updated = { ...scheduledItems, [uid]: existing };
+      setScheduledItems(updated);
+      localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+      setExpandedId(null);
+
+      // 3. Upsert to Supabase
+      if (supabase) {
+        await supabase.from('school_items').upsert({
+          uid,
+          title: defaultEvent?.summary || 'Untitled',
+          category: overrides[uid] || defaultEvent?.category || 'module',
+          is_scheduled: true,
+          scheduled_date: existing.date,
+          scheduled_time: existing.time,
+          duration_mins: existing.duration,
+          target_calendar: existing.calendar,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      console.error('Failed to schedule:', err);
+    } finally {
+      setSchedulingId(null);
     }
   };
 
@@ -602,9 +632,11 @@ export default function SchoolSyncPage() {
                         <div className="pt-1 flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleScheduleItem(event.uid)}
-                            className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-medium shadow-md shadow-cyan-500/10 transition"
+                            disabled={schedulingId === event.uid}
+                            className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-60 text-white text-xs font-medium shadow-md shadow-cyan-500/10 transition flex items-center gap-1.5"
                           >
-                            Add to Schedule & Calendar
+                            {schedulingId === event.uid && <RefreshCw className="h-3 w-3 animate-spin" />}
+                            <span>{schedulingId === event.uid ? 'Syncing to Google...' : 'Add to Schedule & Calendar'}</span>
                           </button>
                         </div>
                       </div>
