@@ -38,11 +38,16 @@ export async function POST(req: NextRequest) {
     if (isPm && hours < 12) hours += 12;
     if (isAm && hours === 12) hours = 0;
 
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const startIso = `${date}T${pad(hours)}:${pad(minutes)}:00`;
-    const startDt = new Date(startIso);
+    const [y, m, d] = date.split('-').map((v: string) => parseInt(v, 10));
+    const startDt = new Date(y, m - 1, d, hours, minutes, 0);
     const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
-    const endIso = endDt.toISOString().replace(/\.\d{3}Z$/, '');
+
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const formatLocalIso = (dt: Date) =>
+      `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+
+    const startIso = formatLocalIso(startDt);
+    const endIso = formatLocalIso(endDt);
 
     let calendarEventId: string | null = null;
     let calendarError: string | null = null;

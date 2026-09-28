@@ -214,8 +214,9 @@ export default function SchoolSyncPage() {
 
   // Processed and categorized events
   const categorized = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
 
     const activeMods: SchoolEvent[] = [];
     const activeAss: SchoolEvent[] = [];
@@ -229,7 +230,15 @@ export default function SchoolSyncPage() {
       const isDone = completions[e.uid] === true;
       const isSched = Boolean(scheduledItems[e.uid]);
       const eventDate = new Date(e.dateObj);
-      const isPast = eventDate.getTime() < today.getTime();
+
+      // Check if past: All-day events compare to midnight; timed classes compare to current time
+      let isPast = false;
+      if (e.isAllDay) {
+        isPast = eventDate.getTime() < todayMidnight.getTime();
+      } else {
+        const eventEndTime = eventDate.getTime() + (e.duration || 60) * 60 * 1000;
+        isPast = eventEndTime < now.getTime();
+      }
 
       const enriched: SchoolEvent = {
         ...e,
