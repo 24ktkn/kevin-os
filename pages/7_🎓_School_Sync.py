@@ -359,7 +359,9 @@ def render_event_card(e, idx, category):
 from datetime import datetime
 today_date = datetime.now().date()
 
-completed_items = []
+completed_modules = []
+completed_assignments = []
+completed_classes = []
 
 # Filter Modules
 active_modules = []
@@ -367,7 +369,7 @@ for e in modules:
     title = e.get('SUMMARY', 'Untitled')
     matching = df[df["Item Name"] == title]
     if not matching.empty and matching.iloc[0]["Status"] == True:
-        completed_items.append(e)
+        completed_modules.append(e)
     else:
         active_modules.append(e)
         
@@ -377,24 +379,42 @@ for e in assignments:
     title = e.get('SUMMARY', 'Untitled')
     matching = df[df["Item Name"] == title]
     if not matching.empty and matching.iloc[0]["Status"] == True:
-        completed_items.append(e)
+        completed_assignments.append(e)
     else:
         active_assignments.append(e)
         
-# Filter Classes (Upcoming only)
-active_classes = [e for e in classes if e['date_obj'].date() >= today_date]
+# Filter Classes (Upcoming vs Past)
+active_classes = []
+for e in classes:
+    if e['date_obj'].date() >= today_date:
+        active_classes.append(e)
+    else:
+        completed_classes.append(e)
 
-tab1, tab2, tab3, tab4 = st.tabs([f"?? Online Modules ({len(active_modules)})", f"?? Assignments ({len(active_assignments)})", f"?? Upcoming Classes ({len(active_classes)})", f"? Completed ({len(completed_items)})"])
+tabs = st.tabs([
+    f"?? Active Modules ({len(active_modules)})", 
+    f"?? Active Assignments ({len(active_assignments)})", 
+    f"?? Upcoming Classes ({len(active_classes)})", 
+    f"? Comp. Modules ({len(completed_modules)})",
+    f"? Comp. Assignments ({len(completed_assignments)})",
+    f"? Past Classes ({len(completed_classes)})"
+])
 
-with tab1:
+with tabs[0]:
     if not active_modules: st.info("No active modules found.")
     for i, e in enumerate(active_modules): render_event_card(e, i, 'mod')
-with tab2:
+with tabs[1]:
     if not active_assignments: st.info("No active assignments found.")
     for i, e in enumerate(active_assignments): render_event_card(e, i, 'ass')
-with tab3:
+with tabs[2]:
     if not active_classes: st.info("No upcoming classes found.")
     for i, e in enumerate(active_classes): render_event_card(e, i, 'cls')
-with tab4:
-    if not completed_items: st.info("No completed items found.")
-    for i, e in enumerate(completed_items): render_event_card(e, i, 'comp')
+with tabs[3]:
+    if not completed_modules: st.info("No completed modules found.")
+    for i, e in enumerate(completed_modules): render_event_card(e, i, 'c_mod')
+with tabs[4]:
+    if not completed_assignments: st.info("No completed assignments found.")
+    for i, e in enumerate(completed_assignments): render_event_card(e, i, 'c_ass')
+with tabs[5]:
+    if not completed_classes: st.info("No past classes found.")
+    for i, e in enumerate(completed_classes): render_event_card(e, i, 'c_cls')
