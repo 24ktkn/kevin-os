@@ -105,13 +105,35 @@ export default function SchoolSyncPage() {
     try {
       const res = await fetch('/api/tasks/sync');
       const data = await res.json();
-      if (data.completedTitles && data.completedTitles.length > 0) {
+      const completedList: string[] = data.completedTitles || data.results?.completedTitles || [];
+
+      if (completedList.length > 0) {
+        const cleanStr = (s: string) =>
+          s.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+        const cleanedCompleted = completedList.map(cleanStr);
         const newCompletions: Record<string, boolean> = {};
+
         for (const ev of currentEvents) {
-          if (data.completedTitles.includes(ev.summary)) {
+          const cleanSummary = cleanStr(ev.summary);
+          const isMatch =
+            completedList.includes(ev.summary) ||
+            cleanedCompleted.includes(cleanSummary) ||
+            completedList.some((t) => t.includes(ev.summary) || ev.summary.includes(t)) ||
+            cleanedCompleted.some((t) => t.includes(cleanSummary) || cleanSummary.includes(t));
+
+          if (isMatch) {
             newCompletions[ev.uid] = true;
+
+            if (supabase) {
+              await supabase
+                .from('school_items')
+                .update({ is_completed: true, updated_at: new Date().toISOString() })
+                .eq('uid', ev.uid);
+            }
           }
         }
+
         if (Object.keys(newCompletions).length > 0) {
           setCompletions((prev) => {
             const merged = { ...prev, ...newCompletions };

@@ -140,6 +140,8 @@ export async function GET() {
     syncResults.errors.push(`Calendar Service Account: ${msg}`);
   }
 
+  const completedTitles: string[] = [];
+
   // 2. Sync Google Tasks (if refresh token is valid)
   try {
     const clientId = process.env.GOOGLE_TASKS_CLIENT_ID;
@@ -162,21 +164,32 @@ export async function GET() {
 
           const items = res.data.items || [];
           for (const item of items) {
-            if (item.status === 'completed' && item.title && supabase) {
-              // Update both school_items and tasks table
-              await supabase
-                .from('school_items')
-                .update({ is_completed: true, updated_at: new Date().toISOString() })
-                .eq('title', item.title)
-                .eq('is_completed', false);
+            if (item.status === 'completed' && item.title) {
+              const taskTitle = item.title.trim();
+              completedTitles.push(taskTitle);
 
-              await supabase
-                .from('tasks')
-                .update({ is_completed: true, updated_at: new Date().toISOString() })
-                .eq('title', item.title)
-                .eq('is_completed', false);
+              if (supabase) {
+                // 1. Update school_items table
+                await supabase
+                  .from('school_items')
+                  .update({ is_completed: true, updated_at: new Date().toISOString() })
+                  .ilike('title', `%${taskTitle}%`);
 
-              syncResults.tasksSynced++;
+                // 2. Update tasks table (matches exact, with prefixes like 🎓 [Task], ?? [Task], etc.)
+                await supabase
+                  .from('tasks')
+                  .update({ is_completed: true, updated_at: new Date().toISOString() })
+                  .ilike('title', `%${taskTitle}%`);
+
+                if (item.id) {
+                  await supabase
+                    .from('tasks')
+                    .update({ is_completed: true, updated_at: new Date().toISOString() })
+                    .eq('google_task_id', item.id);
+                }
+
+                syncResults.tasksSynced++;
+              }
             }
           }
         } catch (err) {
@@ -191,6 +204,10 @@ export async function GET() {
 
   return NextResponse.json({
     success: true,
-    results: syncResults,
+    completedTitles,
+    results: {
+      ...syncResults,
+      completedTitles,
+    },
   });
 }
