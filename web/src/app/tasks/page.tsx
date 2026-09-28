@@ -32,8 +32,10 @@ export default function MissionControlPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'today' | 'upcoming' | 'backlog' | 'completed'>('today');
   const [selectedCalendar, setSelectedCalendar] = useState<string>('all');
+  const [activeTab, setActiveTab] = useState<
+    'upcoming' | 'today' | 'backlog' | 'completed_events' | 'completed_tasks'
+  >('upcoming');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // New task form state
@@ -195,17 +197,22 @@ export default function MissionControlPage() {
   }, [tasks, selectedCalendar, searchQuery]);
 
   // Section categorizations
-  const { todayTasks, upcomingTasks, backlogTasks, completedTasks } = useMemo(() => {
+  const { upcomingEvents, todayTasks, backlogTasks, completedEvents, completedTasks } = useMemo(() => {
     const todayStr = new Date().toISOString().split('T')[0];
 
     const today: TaskItem[] = [];
     const upcoming: TaskItem[] = [];
     const backlog: TaskItem[] = [];
-    const completed: TaskItem[] = [];
+    const compEvents: TaskItem[] = [];
+    const compTasks: TaskItem[] = [];
 
     for (const t of filteredTasks) {
       if (t.is_completed) {
-        completed.push(t);
+        if (t.type === 'Event') {
+          compEvents.push(t);
+        } else {
+          compTasks.push(t);
+        }
       } else if (!t.due_date) {
         backlog.push(t);
       } else if (t.due_date <= todayStr) {
@@ -215,21 +222,54 @@ export default function MissionControlPage() {
       }
     }
 
+    // Sort completed tasks and events in descending order (most recent first)
+    const sortDesc = (a: TaskItem, b: TaskItem) => {
+      const dateA = a.due_date || '';
+      const dateB = b.due_date || '';
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      const timeA = a.due_time || '';
+      const timeB = b.due_time || '';
+      return timeB.localeCompare(timeA);
+    };
+
+    compEvents.sort(sortDesc);
+    compTasks.sort(sortDesc);
+
+    // Sort upcoming in chronological order (closest first)
+    upcoming.sort((a, b) => {
+      const dateA = a.due_date || '';
+      const dateB = b.due_date || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const timeA = a.due_time || '';
+      const timeB = b.due_time || '';
+      return timeA.localeCompare(timeB);
+    });
+
+    // Sort today by time
+    today.sort((a, b) => {
+      const timeA = a.due_time || '';
+      const timeB = b.due_time || '';
+      return timeA.localeCompare(timeB);
+    });
+
     return {
+      upcomingEvents: upcoming,
       todayTasks: today,
-      upcomingTasks: upcoming,
       backlogTasks: backlog,
-      completedTasks: completed,
+      completedEvents: compEvents,
+      completedTasks: compTasks,
     };
   }, [filteredTasks]);
 
   const activeTaskList =
-    activeTab === 'today'
+    activeTab === 'upcoming'
+      ? upcomingEvents
+      : activeTab === 'today'
       ? todayTasks
-      : activeTab === 'upcoming'
-      ? upcomingTasks
       : activeTab === 'backlog'
       ? backlogTasks
+      : activeTab === 'completed_events'
+      ? completedEvents
       : completedTasks;
 
   const todayFormatted = new Date().toLocaleDateString('en-US', {
@@ -275,32 +315,78 @@ export default function MissionControlPage() {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 space-y-6">
         {/* Metric Cards Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div
+            onClick={() => setActiveTab('upcoming')}
+            className={`rounded-2xl border p-4 shadow-sm cursor-pointer transition ${
+              activeTab === 'upcoming'
+                ? 'border-purple-500/50 bg-[#161622] ring-1 ring-purple-500/30'
+                : 'border-zinc-800/80 bg-[#121218] hover:border-zinc-700'
+            }`}
+          >
             <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Today's Focus</span>
+              <span>Upcoming Events</span>
+              <CalendarDays className="h-4 w-4 text-purple-400" />
+            </div>
+            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{upcomingEvents.length}</div>
+          </div>
+
+          <div
+            onClick={() => setActiveTab('today')}
+            className={`rounded-2xl border p-4 shadow-sm cursor-pointer transition ${
+              activeTab === 'today'
+                ? 'border-cyan-500/50 bg-[#161622] ring-1 ring-cyan-500/30'
+                : 'border-zinc-800/80 bg-[#121218] hover:border-zinc-700'
+            }`}
+          >
+            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
+              <span>Today's Tasks</span>
               <AlertCircle className="h-4 w-4 text-cyan-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-white tracking-tight">{todayTasks.length}</div>
           </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
-            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Upcoming</span>
-              <CalendarDays className="h-4 w-4 text-purple-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{upcomingTasks.length}</div>
-          </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
+
+          <div
+            onClick={() => setActiveTab('backlog')}
+            className={`rounded-2xl border p-4 shadow-sm cursor-pointer transition ${
+              activeTab === 'backlog'
+                ? 'border-amber-500/50 bg-[#161622] ring-1 ring-amber-500/30'
+                : 'border-zinc-800/80 bg-[#121218] hover:border-zinc-700'
+            }`}
+          >
             <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
               <span>Unscheduled Backlog</span>
               <ListTodo className="h-4 w-4 text-amber-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-white tracking-tight">{backlogTasks.length}</div>
           </div>
-          <div className="rounded-2xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">
+
+          <div
+            onClick={() => setActiveTab('completed_events')}
+            className={`rounded-2xl border p-4 shadow-sm cursor-pointer transition ${
+              activeTab === 'completed_events'
+                ? 'border-emerald-500/50 bg-[#161622] ring-1 ring-emerald-500/30'
+                : 'border-zinc-800/80 bg-[#121218] hover:border-zinc-700'
+            }`}
+          >
             <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-              <span>Completed</span>
+              <span>Completed Events</span>
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            </div>
+            <div className="mt-2 text-2xl font-bold text-white tracking-tight">{completedEvents.length}</div>
+          </div>
+
+          <div
+            onClick={() => setActiveTab('completed_tasks')}
+            className={`rounded-2xl border p-4 shadow-sm cursor-pointer transition ${
+              activeTab === 'completed_tasks'
+                ? 'border-blue-500/50 bg-[#161622] ring-1 ring-blue-500/30'
+                : 'border-zinc-800/80 bg-[#121218] hover:border-zinc-700'
+            }`}
+          >
+            <div className="text-xs font-medium text-zinc-400 flex items-center justify-between">
+              <span>Completed Tasks</span>
+              <CheckCircle2 className="h-4 w-4 text-blue-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-white tracking-tight">{completedTasks.length}</div>
           </div>
@@ -342,17 +428,18 @@ export default function MissionControlPage() {
         </div>
 
         {/* View Tabs */}
-        <div className="flex gap-2 border-b border-zinc-800/80 pb-2">
+        <div className="flex gap-2 border-b border-zinc-800/80 pb-2 overflow-x-auto scrollbar-none">
           {[
-            { id: 'today', label: `Today's Focus (${todayTasks.length})` },
-            { id: 'upcoming', label: `Upcoming (${upcomingTasks.length})` },
+            { id: 'upcoming', label: `Upcoming Events (${upcomingEvents.length})` },
+            { id: 'today', label: `Today's Tasks (${todayTasks.length})` },
             { id: 'backlog', label: `Backlog (${backlogTasks.length})` },
-            { id: 'completed', label: `Completed (${completedTasks.length})` },
+            { id: 'completed_events', label: `Completed Events (${completedEvents.length})` },
+            { id: 'completed_tasks', label: `Completed Tasks (${completedTasks.length})` },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all ${
                 activeTab === tab.id
                   ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 font-semibold shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
