@@ -201,9 +201,6 @@ for e in events:
         classes.append(e)
 
 
-tab1, tab2, tab3 = st.tabs([f"?? Online Modules ({len(modules)})", f"?? Assignments ({len(assignments)})", f"?? Classes ({len(classes)})"])
-
-
 def render_event_card(e, idx, category):
     title = e.get('SUMMARY', 'Untitled')
     desc = e.get('DESCRIPTION', '').replace('\\n', ' ')
@@ -261,7 +258,34 @@ def render_event_card(e, idx, category):
                         st.error(f"Failed: {ex}")
         elif not is_scheduled:
             with st.expander("Schedule & Add to Tasks"):
-
+                col_btn, col_empty = st.columns([1, 1])
+                with col_btn:
+                    if st.button("? Instant Complete (Without Scheduling)", key=f"inst_comp_{category}_{idx}", use_container_width=True):
+                        with st.spinner("Completing..."):
+                            try:
+                                new_row = {
+                                    "Status": True, 
+                                    "Item Name": title, 
+                                    "Type": "Task", 
+                                    "Calendar": "School", 
+                                    "Date": str(dt.date()), 
+                                    "Time": "10:00", 
+                                    "Duration (Mins)": default_dur, 
+                                    "Scheduled?": False, 
+                                    "Location": "", 
+                                    "Notes": desc, 
+                                    "Event ID": "", 
+                                    "Timeblock ID": ""
+                                }
+                                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                                conn.update(data=df, spreadsheet=st.secrets.connections.gsheets.mission_control_sheet)
+                                st.cache_data.clear()
+                                st.success("Completed!")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Failed: {ex}")
+                st.markdown("---")
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     sched_date = st.date_input("Date to complete", value=dt.date(), key=f"d_{category}_{idx}")
@@ -331,11 +355,46 @@ def render_event_card(e, idx, category):
                         except Exception as ex:
                             st.error(f"Failed: {ex}")
 
-with tab1:
-    for i, e in enumerate(modules): render_event_card(e, i, 'mod')
-        
-with tab2:
-    for i, e in enumerate(assignments): render_event_card(e, i, 'ass')
+# Pre-filter lists based on completion and date
+from datetime import datetime
+today_date = datetime.now().date()
 
+completed_items = []
+
+# Filter Modules
+active_modules = []
+for e in modules:
+    title = e.get('SUMMARY', 'Untitled')
+    matching = df[df["Item Name"] == title]
+    if not matching.empty and matching.iloc[0]["Status"] == True:
+        completed_items.append(e)
+    else:
+        active_modules.append(e)
+        
+# Filter Assignments
+active_assignments = []
+for e in assignments:
+    title = e.get('SUMMARY', 'Untitled')
+    matching = df[df["Item Name"] == title]
+    if not matching.empty and matching.iloc[0]["Status"] == True:
+        completed_items.append(e)
+    else:
+        active_assignments.append(e)
+        
+# Filter Classes (Upcoming only)
+active_classes = [e for e in classes if e['date_obj'].date() >= today_date]
+
+tab1, tab2, tab3, tab4 = st.tabs([f"?? Online Modules ({len(active_modules)})", f"?? Assignments ({len(active_assignments)})", f"?? Upcoming Classes ({len(active_classes)})", f"? Completed ({len(completed_items)})"])
+
+with tab1:
+    if not active_modules: st.info("No active modules found.")
+    for i, e in enumerate(active_modules): render_event_card(e, i, 'mod')
+with tab2:
+    if not active_assignments: st.info("No active assignments found.")
+    for i, e in enumerate(active_assignments): render_event_card(e, i, 'ass')
 with tab3:
-    for i, e in enumerate(classes): render_event_card(e, i, 'cls')
+    if not active_classes: st.info("No upcoming classes found.")
+    for i, e in enumerate(active_classes): render_event_card(e, i, 'cls')
+with tab4:
+    if not completed_items: st.info("No completed items found.")
+    for i, e in enumerate(completed_items): render_event_card(e, i, 'comp')
