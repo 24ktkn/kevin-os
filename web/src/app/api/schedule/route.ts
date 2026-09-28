@@ -45,33 +45,40 @@ export async function POST(req: NextRequest) {
     const endIso = endDt.toISOString().replace(/\.\d{3}Z$/, '');
 
     let calendarEventId: string | null = null;
+    let calendarError: string | null = null;
     let taskId: string | null = null;
+    let taskError: string | null = null;
 
     // 1. Insert Google Calendar Timeblock (Service Account)
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 
     if (clientEmail && rawPrivateKey) {
-      const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
-      const jwtClient = new google.auth.JWT({
-        email: clientEmail,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/calendar'],
-      });
+      try {
+        const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
+        const jwtClient = new google.auth.JWT({
+          email: clientEmail,
+          key: privateKey,
+          scopes: ['https://www.googleapis.com/auth/calendar'],
+        });
 
-      const calendarApi = google.calendar({ version: 'v3', auth: jwtClient });
+        const calendarApi = google.calendar({ version: 'v3', auth: jwtClient });
 
-      const calRes = await calendarApi.events.insert({
-        calendarId: targetCalId,
-        requestBody: {
-          summary: `🎓 [Task] ${title}`,
-          description: description || '',
-          start: { dateTime: `${startIso}-04:00` },
-          end: { dateTime: `${endIso}-04:00` },
-        },
-      });
+        const calRes = await calendarApi.events.insert({
+          calendarId: targetCalId,
+          requestBody: {
+            summary: `🎓 [Task] ${title}`,
+            description: description || '',
+            start: { dateTime: `${startIso}-04:00` },
+            end: { dateTime: `${endIso}-04:00` },
+          },
+        });
 
-      calendarEventId = calRes.data.id || null;
+        calendarEventId = calRes.data.id || null;
+      } catch (calErr: unknown) {
+        calendarError = calErr instanceof Error ? calErr.message : 'Calendar insertion error';
+        console.error('Calendar error:', calendarError);
+      }
     }
 
     // 2. Insert Google Task (OAuth)
@@ -80,30 +87,40 @@ export async function POST(req: NextRequest) {
     const refreshToken = process.env.GOOGLE_TASKS_REFRESH_TOKEN;
 
     if (clientId && clientSecret && refreshToken) {
-      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
-      oauth2Client.setCredentials({ refresh_token: refreshToken });
-      const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
+      try {
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+        oauth2Client.setCredentials({ refresh_token: refreshToken });
+        const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
 
-      const taskRes = await tasksApi.tasks.insert({
-        tasklist: targetTaskListId,
-        requestBody: {
-          title,
-          notes: `⏰ Scheduled: ${time}\n\n${description || ''}`,
-          due: `${date}T00:00:00.000Z`,
-        },
-      });
+        const taskRes = await tasksApi.tasks.insert({
+          tasklist: targetTaskListId,
+          requestBody: {
+            title,
+            notes: `⏰ Scheduled: ${time}\n\n${description || ''}`,
+            due: `${date}T00:00:00.000Z`,
+          },
+        });
 
-      taskId = taskRes.data.id || null;
+        taskId = taskRes.data.id || null;
+      } catch (tErr: unknown) {
+        taskError = tErr instanceof Error ? tErr.message : 'Tasks insertion error';
+        console.error('Google Tasks error:', taskError);
+      }
     }
 
+    // If calendar succeeded, treat as successful schedule even if tasks token needs refresh
+    const overallSuccess = Boolean(calendarEventId);
+
     return NextResponse.json({
-      success: true,
+      success: overallSuccess,
       calendarEventId,
+      calendarError,
       taskId,
+      taskError,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Schedule error:', errorMsg);
+    console.error('Schedule route error:', errorMsg);
     return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }
