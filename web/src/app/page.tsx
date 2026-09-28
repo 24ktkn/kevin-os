@@ -573,18 +573,18 @@ export default function SchoolSyncPage() {
                           </div>
 
                           <div>
-                            <label className="text-zinc-400 block mb-1">Start Time</label>
+                            <label className="text-zinc-400 block mb-1">Start Time (HH:MM)</label>
                             <input
-                              type="time"
+                              type="text"
+                              placeholder="10:00"
                               value={currentForm.time}
-                              onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                               onChange={(e) =>
                                 setFormState({
                                   ...formState,
                                   [event.uid]: { ...currentForm, time: e.target.value },
                                 })
                               }
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                             />
                           </div>
 
