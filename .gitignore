@@ -1,2 +1,10 @@
 .streamlit/
-.envios_app/Secrets.swift
+.env
+ios_app/Secrets.swift
+__pycache__/
+*.pyc
+scratch/
+web/node_modules/
+web/.next/
+web/.vercel/
+web/*.tsbuildinfo
