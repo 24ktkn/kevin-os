@@ -18,7 +18,7 @@ const TASKLIST_MAP: Record<string, string> = {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { title, description, date, time, duration, calendar: calCat } = body;
+    const { title, description, date, time, duration, calendar: calCat, skipCalendar } = body;
 
     if (!title || !date || !time) {
       return NextResponse.json({ error: 'Missing required schedule fields' }, { status: 400 });
@@ -54,11 +54,11 @@ export async function POST(req: NextRequest) {
     let taskId: string | null = null;
     let taskError: string | null = null;
 
-    // 1. Insert Google Calendar Timeblock (Service Account)
+    // 1. Insert Google Calendar Timeblock (Service Account) unless skipCalendar is true
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 
-    if (clientEmail && rawPrivateKey) {
+    if (!skipCalendar && clientEmail && rawPrivateKey) {
       try {
         const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
         const jwtClient = new google.auth.JWT({
@@ -113,8 +113,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If calendar succeeded, treat as successful schedule even if tasks token needs refresh
-    const overallSuccess = Boolean(calendarEventId);
+    // Overall success if either calendar or task succeeded
+    const overallSuccess = Boolean(calendarEventId || taskId);
 
     return NextResponse.json({
       success: overallSuccess,

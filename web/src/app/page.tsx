@@ -17,6 +17,7 @@ import {
   CalendarDays,
   Sparkles,
   Database,
+  ListTodo,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { supabase } from '@/lib/supabase';
@@ -31,6 +32,7 @@ const CALENDAR_MAP: Record<string, string> = {
 export default function SchoolSyncPage() {
   const [events, setEvents] = useState<SchoolEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncingTasks, setSyncingTasks] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -42,7 +44,7 @@ export default function SchoolSyncPage() {
   const [overrides, setOverrides] = useState<Record<string, SchoolCategory>>({});
   const [completions, setCompletions] = useState<Record<string, boolean>>({});
   const [scheduledItems, setScheduledItems] = useState<
-    Record<string, { date: string; time: string; duration: number; calendar: string }>
+    Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }>
   >({});
 
   // Schedule form state per card
@@ -52,7 +54,6 @@ export default function SchoolSyncPage() {
 
   // Load from Supabase (with fallback to localStorage)
   const loadStoredData = useCallback(async () => {
-    // 1. Try LocalStorage first for instant paint
     try {
       const storedOverrides = localStorage.getItem('kevin_school_overrides');
       if (storedOverrides) setOverrides(JSON.parse(storedOverrides));
@@ -66,7 +67,6 @@ export default function SchoolSyncPage() {
       // ignore
     }
 
-    // 2. Fetch fresh state from Supabase
     if (supabase) {
       try {
         const { data, error: supaErr } = await supabase.from('school_items').select('*');
@@ -74,7 +74,7 @@ export default function SchoolSyncPage() {
           setSupabaseConnected(true);
           const newOverrides: Record<string, SchoolCategory> = {};
           const newCompletions: Record<string, boolean> = {};
-          const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string }> = {};
+          const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }> = {};
 
           for (const row of data) {
             if (row.category) newOverrides[row.uid] = row.category as SchoolCategory;
@@ -82,8 +82,8 @@ export default function SchoolSyncPage() {
             if (row.is_scheduled && row.scheduled_date) {
               newScheduled[row.uid] = {
                 date: row.scheduled_date,
-                time: row.scheduled_time || '10:00',
-                duration: row.duration_mins || 60,
+                time: row.scheduled_time || '10:00 AM',
+                duration: row.duration_mins || 0,
                 calendar: row.target_calendar || 'School',
               };
             }
@@ -99,6 +99,34 @@ export default function SchoolSyncPage() {
     }
   }, []);
 
+  // Check Google Tasks completion status and sync with local/Supabase
+  const syncGoogleTasks = useCallback(async (currentEvents: SchoolEvent[]) => {
+    setSyncingTasks(true);
+    try {
+      const res = await fetch('/api/tasks/sync');
+      const data = await res.json();
+      if (data.completedTitles && data.completedTitles.length > 0) {
+        const newCompletions: Record<string, boolean> = {};
+        for (const ev of currentEvents) {
+          if (data.completedTitles.includes(ev.summary)) {
+            newCompletions[ev.uid] = true;
+          }
+        }
+        if (Object.keys(newCompletions).length > 0) {
+          setCompletions((prev) => {
+            const merged = { ...prev, ...newCompletions };
+            localStorage.setItem('kevin_school_completions', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Two-way task sync error:', err);
+    } finally {
+      setSyncingTasks(false);
+    }
+  }, []);
+
   // Fetch school feed
   const fetchCalendar = async () => {
     setLoading(true);
@@ -107,7 +135,9 @@ export default function SchoolSyncPage() {
       const res = await fetch('/api/school/fetch');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to fetch');
-      setEvents(data.events || []);
+      const fetched = data.events || [];
+      setEvents(fetched);
+      syncGoogleTasks(fetched);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -154,19 +184,30 @@ export default function SchoolSyncPage() {
     }
   };
 
-  const handleScheduleItem = async (uid: string) => {
+  // Schedule handler: supports both calendar timeblocking and task-only creation
+  const handleScheduleItem = async (
+    uid: string,
+    opts?: { skipCalendar?: boolean; isAssignmentDue?: boolean }
+  ) => {
     const defaultEvent = events.find((e) => e.uid === uid);
+    const eventDateObj = defaultEvent ? new Date(defaultEvent.dateObj) : new Date();
+    const isTaskOnly = Boolean(opts?.skipCalendar || opts?.isAssignmentDue);
+
+    const defaultTimeStr = defaultEvent?.isAllDay
+      ? '11:59 PM'
+      : eventDateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
     const existing = formState[uid] || {
-      date: defaultEvent ? new Date(defaultEvent.dateObj).toISOString().split('T')[0] : '',
-      time: '10:00 AM',
-      duration: defaultEvent?.duration || 60,
+      date: eventDateObj.toISOString().split('T')[0],
+      time: isTaskOnly ? defaultTimeStr : '10:00 AM',
+      duration: isTaskOnly ? 0 : defaultEvent?.duration || 60,
       calendar: 'School',
     };
 
     setSchedulingId(uid);
 
     try {
-      // 1. Push timeblock & task to Google Calendar & Google Tasks
+      // 1. Call backend route
       const scheduleRes = await fetch('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -177,16 +218,17 @@ export default function SchoolSyncPage() {
           time: existing.time,
           duration: existing.duration,
           calendar: existing.calendar,
+          skipCalendar: isTaskOnly,
         }),
       });
 
       const schedData = await scheduleRes.json();
       if (!scheduleRes.ok) {
-        console.error('Google Calendar error:', schedData.error);
+        console.error('Google schedule error:', schedData.error);
       }
 
       // 2. Update local state
-      const updated = { ...scheduledItems, [uid]: existing };
+      const updated = { ...scheduledItems, [uid]: { ...existing, isTaskOnly } };
       setScheduledItems(updated);
       localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
       setExpandedId(null);
@@ -306,11 +348,21 @@ export default function SchoolSyncPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <div className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">
             <Database className={`h-3 w-3 ${supabaseConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
             <span>{supabaseConnected ? 'Supabase Live' : 'Local Storage Mode'}</span>
           </div>
+
+          <button
+            onClick={() => syncGoogleTasks(events)}
+            disabled={syncingTasks}
+            title="Check Google Tasks for completed items"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition"
+          >
+            <ListTodo className={`h-3.5 w-3.5 ${syncingTasks ? 'animate-pulse text-cyan-400' : 'text-zinc-400'}`} />
+            <span className="hidden md:inline">Sync Tasks</span>
+          </button>
 
           <button
             onClick={fetchCalendar}
@@ -422,6 +474,7 @@ export default function SchoolSyncPage() {
             {filteredItems.map((event) => {
               const dateObj = new Date(event.dateObj);
               const isExpanded = expandedId === event.uid;
+              const isAssignment = event.category === 'assignment';
               const formattedDate = dateObj.toLocaleDateString('en-US', {
                 weekday: 'short',
                 month: 'short',
@@ -434,8 +487,8 @@ export default function SchoolSyncPage() {
 
               const currentForm = formState[event.uid] || {
                 date: dateObj.toISOString().split('T')[0],
-                time: '10:00 AM',
-                duration: event.duration,
+                time: isAssignment ? formattedTime : '10:00 AM',
+                duration: isAssignment ? 60 : event.duration,
                 calendar: 'School',
               };
 
@@ -468,7 +521,8 @@ export default function SchoolSyncPage() {
 
                         {event.isScheduled && (
                           <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                            <Sparkles className="h-3 w-3" /> Already Scheduled
+                            <Sparkles className="h-3 w-3" />
+                            {isAssignment ? 'Due Date in Google Tasks' : 'Already Scheduled'}
                           </span>
                         )}
 
@@ -486,11 +540,11 @@ export default function SchoolSyncPage() {
                       <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
                         <span className="flex items-center gap-1 text-zinc-300">
                           <CalendarDays className="h-3.5 w-3.5 text-zinc-400" />
-                          {formattedDate}
+                          {isAssignment ? `Due: ${formattedDate}` : formattedDate}
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5 text-zinc-400" />
-                          {formattedTime} ({event.duration} mins)
+                          {formattedTime} {!isAssignment && `(${event.duration} mins)`}
                         </span>
                         {event.location && (
                           <span className="text-zinc-500 text-xs truncate max-w-xs">
@@ -501,7 +555,7 @@ export default function SchoolSyncPage() {
                     </div>
 
                     {/* Quick Action Buttons */}
-                    <div className="flex items-center gap-2 self-start">
+                    <div className="flex flex-wrap items-center gap-2 self-start">
                       {event.isCompleted ? (
                         <button
                           onClick={() => handleToggleComplete(event.uid, false)}
@@ -510,12 +564,26 @@ export default function SchoolSyncPage() {
                           <Undo2 className="h-3.5 w-3.5" /> Undo
                         </button>
                       ) : (
-                        <button
-                          onClick={() => handleToggleComplete(event.uid, true)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition shadow-sm"
-                        >
-                          <Check className="h-3.5 w-3.5" /> Mark Complete
-                        </button>
+                        <>
+                          {/* Dedicated 1-Click Assignment Due Date Task Button */}
+                          {isAssignment && !event.isScheduled && (
+                            <button
+                              onClick={() => handleScheduleItem(event.uid, { skipCalendar: true, isAssignmentDue: true })}
+                              disabled={schedulingId === event.uid}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition shadow-sm"
+                            >
+                              <ListTodo className="h-3.5 w-3.5" />
+                              <span>{schedulingId === event.uid ? 'Adding to Tasks...' : 'Add Due Date to Tasks'}</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => handleToggleComplete(event.uid, true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition shadow-sm"
+                          >
+                            <Check className="h-3.5 w-3.5" /> Mark Complete
+                          </button>
+                        </>
                       )}
 
                       {!event.isCompleted && (
@@ -561,12 +629,18 @@ export default function SchoolSyncPage() {
                       {/* Timeblock Scheduler Form */}
                       <div className="p-3.5 rounded-xl bg-[#0F0F14] border border-zinc-800/90 space-y-3">
                         <div className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
-                          <span>Timeblock & Schedule to Mission Control</span>
+                          <span>
+                            {isAssignment
+                              ? '📅 Timeblock Study / Working Session on Google Calendar'
+                              : '📅 Timeblock & Add to Google Tasks'}
+                          </span>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                           <div>
-                            <label className="text-zinc-400 block mb-1">Target Date</label>
+                            <label className="text-zinc-400 block mb-1">
+                              {isAssignment ? 'Working Session Date' : 'Target Date'}
+                            </label>
                             <input
                               type="date"
                               value={currentForm.date}
@@ -582,7 +656,9 @@ export default function SchoolSyncPage() {
                           </div>
 
                           <div>
-                            <label className="text-zinc-400 block mb-1">Start Time (e.g. 10:00 AM)</label>
+                            <label className="text-zinc-400 block mb-1">
+                              {isAssignment ? 'Working Session Start Time' : 'Start Time (e.g. 10:00 AM)'}
+                            </label>
                             <input
                               type="text"
                               placeholder="10:00 AM"
@@ -598,7 +674,9 @@ export default function SchoolSyncPage() {
                           </div>
 
                           <div>
-                            <label className="text-zinc-400 block mb-1">Duration (Mins)</label>
+                            <label className="text-zinc-400 block mb-1">
+                              {isAssignment ? 'Working Session Duration (Mins)' : 'Duration (Mins)'}
+                            </label>
                             <input
                               type="number"
                               min={1}
@@ -645,7 +723,13 @@ export default function SchoolSyncPage() {
                             className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-60 text-white text-xs font-medium shadow-md shadow-cyan-500/10 transition flex items-center gap-1.5"
                           >
                             {schedulingId === event.uid && <RefreshCw className="h-3 w-3 animate-spin" />}
-                            <span>{schedulingId === event.uid ? 'Syncing to Google...' : 'Add to Schedule & Calendar'}</span>
+                            <span>
+                              {schedulingId === event.uid
+                                ? 'Syncing to Google...'
+                                : isAssignment
+                                ? 'Add Working Session to Calendar'
+                                : 'Add to Schedule & Calendar'}
+                            </span>
                           </button>
                         </div>
                       </div>
