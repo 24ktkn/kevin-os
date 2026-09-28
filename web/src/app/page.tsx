@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   GraduationCap,
   BookOpen,
@@ -15,10 +15,11 @@ import {
   SlidersHorizontal,
   Undo2,
   CalendarDays,
-  ExternalLink,
   Sparkles,
+  Database,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
+import { supabase } from '@/lib/supabase';
 
 const CALENDAR_MAP: Record<string, string> = {
   'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
@@ -34,8 +35,9 @@ export default function SchoolSyncPage() {
   const [activeTab, setActiveTab] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [supabaseConnected, setSupabaseConnected] = useState(false);
 
-  // Local state for overrides, completions, and scheduling
+  // Local & Supabase state tracking
   const [overrides, setOverrides] = useState<Record<string, SchoolCategory>>({});
   const [completions, setCompletions] = useState<Record<string, boolean>>({});
   const [scheduledItems, setScheduledItems] = useState<
@@ -47,8 +49,9 @@ export default function SchoolSyncPage() {
     Record<string, { date: string; time: string; duration: number; calendar: string }>
   >({});
 
-  // Load local persistence on mount
-  useEffect(() => {
+  // Load from Supabase (with fallback to localStorage)
+  const loadStoredData = useCallback(async () => {
+    // 1. Try LocalStorage first for instant paint
     try {
       const storedOverrides = localStorage.getItem('kevin_school_overrides');
       if (storedOverrides) setOverrides(JSON.parse(storedOverrides));
@@ -59,7 +62,39 @@ export default function SchoolSyncPage() {
       const storedScheduled = localStorage.getItem('kevin_school_scheduled');
       if (storedScheduled) setScheduledItems(JSON.parse(storedScheduled));
     } catch {
-      // ignore storage errors
+      // ignore
+    }
+
+    // 2. Fetch fresh state from Supabase
+    if (supabase) {
+      try {
+        const { data, error: supaErr } = await supabase.from('school_items').select('*');
+        if (!supaErr && data) {
+          setSupabaseConnected(true);
+          const newOverrides: Record<string, SchoolCategory> = {};
+          const newCompletions: Record<string, boolean> = {};
+          const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string }> = {};
+
+          for (const row of data) {
+            if (row.category) newOverrides[row.uid] = row.category as SchoolCategory;
+            if (typeof row.is_completed === 'boolean') newCompletions[row.uid] = row.is_completed;
+            if (row.is_scheduled && row.scheduled_date) {
+              newScheduled[row.uid] = {
+                date: row.scheduled_date,
+                time: row.scheduled_time || '10:00',
+                duration: row.duration_mins || 60,
+                calendar: row.target_calendar || 'School',
+              };
+            }
+          }
+
+          setOverrides((prev) => ({ ...prev, ...newOverrides }));
+          setCompletions((prev) => ({ ...prev, ...newCompletions }));
+          setScheduledItems((prev) => ({ ...prev, ...newScheduled }));
+        }
+      } catch {
+        // Table might not exist yet
+      }
     }
   }, []);
 
@@ -81,22 +116,44 @@ export default function SchoolSyncPage() {
 
   useEffect(() => {
     fetchCalendar();
-  }, []);
+    loadStoredData();
+  }, [loadStoredData]);
 
-  // Persist handlers
-  const handleOverrideCategory = (uid: string, newCat: SchoolCategory) => {
+  // Persist handlers (Updates LocalStorage + Supabase in parallel)
+  const handleOverrideCategory = async (uid: string, newCat: SchoolCategory) => {
     const updated = { ...overrides, [uid]: newCat };
     setOverrides(updated);
     localStorage.setItem('kevin_school_overrides', JSON.stringify(updated));
+
+    if (supabase) {
+      const ev = events.find((e) => e.uid === uid);
+      await supabase.from('school_items').upsert({
+        uid,
+        title: ev?.summary || 'Untitled',
+        category: newCat,
+        updated_at: new Date().toISOString(),
+      });
+    }
   };
 
-  const handleToggleComplete = (uid: string, completed: boolean) => {
+  const handleToggleComplete = async (uid: string, completed: boolean) => {
     const updated = { ...completions, [uid]: completed };
     setCompletions(updated);
     localStorage.setItem('kevin_school_completions', JSON.stringify(updated));
+
+    if (supabase) {
+      const ev = events.find((e) => e.uid === uid);
+      await supabase.from('school_items').upsert({
+        uid,
+        title: ev?.summary || 'Untitled',
+        category: overrides[uid] || ev?.category || 'module',
+        is_completed: completed,
+        updated_at: new Date().toISOString(),
+      });
+    }
   };
 
-  const handleScheduleItem = (uid: string) => {
+  const handleScheduleItem = async (uid: string) => {
     const defaultEvent = events.find((e) => e.uid === uid);
     const existing = formState[uid] || {
       date: defaultEvent ? new Date(defaultEvent.dateObj).toISOString().split('T')[0] : '',
@@ -109,6 +166,20 @@ export default function SchoolSyncPage() {
     setScheduledItems(updated);
     localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
     setExpandedId(null);
+
+    if (supabase) {
+      await supabase.from('school_items').upsert({
+        uid,
+        title: defaultEvent?.summary || 'Untitled',
+        category: overrides[uid] || defaultEvent?.category || 'module',
+        is_scheduled: true,
+        scheduled_date: existing.date,
+        scheduled_time: existing.time,
+        duration_mins: existing.duration,
+        target_calendar: existing.calendar,
+        updated_at: new Date().toISOString(),
+      });
+    }
   };
 
   // Processed and categorized events
@@ -196,7 +267,12 @@ export default function SchoolSyncPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">
+            <Database className={`h-3 w-3 ${supabaseConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span>{supabaseConnected ? 'Supabase Live' : 'Local Storage Mode'}</span>
+          </div>
+
           <button
             onClick={fetchCalendar}
             disabled={loading}
