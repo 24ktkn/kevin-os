@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 
 export const dynamic = 'force-dynamic';
@@ -34,8 +34,11 @@ function parseSleepDuration(val: string | undefined): { text: string; hours: num
   return { text: 'No data', hours: 0 };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+    const requestedDate = url.searchParams.get('date')?.trim();
+
     const sheets = getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
@@ -63,14 +66,18 @@ export async function GET() {
     const wCalIdx = headers.indexOf('workout calories');
     const wDurIdx = headers.indexOf('workout duration');
 
-    // Find the latest valid row with date
+    // Find the data rows with valid date
     const dataRows = rows.slice(1).filter((r) => r[dateIdx] && String(r[dateIdx]).trim() !== '');
     if (dataRows.length === 0) {
       return NextResponse.json({ success: true, data: null });
     }
 
-    // Latest row
-    const latestRow = dataRows[dataRows.length - 1];
+    // If requestedDate specified, find that date; otherwise use latest
+    let targetRow = dataRows[dataRows.length - 1];
+    if (requestedDate) {
+      const match = dataRows.find((r) => String(r[dateIdx]).trim() === requestedDate);
+      if (match) targetRow = match;
+    }
 
     // Find latest valid bodyweight backwards
     let bodyweight = 170.0; // fallback
@@ -82,16 +89,16 @@ export async function GET() {
       }
     }
 
-    const rawSteps = parseInt(String(latestRow[stepsIdx] || '0').replace(/,/g, ''), 10) || 0;
-    const rawHrv = parseFloat(String(latestRow[hrvIdx] || '0')) || 0;
-    const sleepParsed = parseSleepDuration(latestRow[sleepIdx]);
-    const rawRhr = parseFloat(String(latestRow[rhrIdx] || '0')) || 0;
-    const wakeTime = String(latestRow[wakeIdx] || '').trim();
-    const sleepTime = String(latestRow[sleepTimeIdx] || '').trim();
-    const workoutCal = parseFloat(String(latestRow[wCalIdx] || '0')) || 0;
-    const workoutDur = parseFloat(String(latestRow[wDurIdx] || '0')) || 0;
+    const rawSteps = parseInt(String(targetRow[stepsIdx] || '0').replace(/,/g, ''), 10) || 0;
+    const rawHrv = parseFloat(String(targetRow[hrvIdx] || '0')) || 0;
+    const sleepParsed = parseSleepDuration(targetRow[sleepIdx]);
+    const rawRhr = parseFloat(String(targetRow[rhrIdx] || '0')) || 0;
+    const wakeTime = String(targetRow[wakeIdx] || '').trim();
+    const sleepTime = String(targetRow[sleepTimeIdx] || '').trim();
+    const workoutCal = parseFloat(String(targetRow[wCalIdx] || '0')) || 0;
+    const workoutDur = parseFloat(String(targetRow[wDurIdx] || '0')) || 0;
 
-    const rawDateStr = String(latestRow[dateIdx]).trim();
+    const rawDateStr = String(targetRow[dateIdx]).trim();
     let formattedDate = rawDateStr;
     try {
       const d = new Date(rawDateStr + 'T12:00:00');
@@ -129,3 +136,6 @@ export async function GET() {
     return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }
+
+export { POST } from './sync/route';
+

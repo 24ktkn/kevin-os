@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,10 +85,72 @@ export async function GET() {
       todayRow = newRow;
     }
 
+    // Cross-tab automation: If today's Gym Workout is FALSE, check if a workout was completed today in tasks
+    if (supabase && todayRow && String(todayRow[gymIdx] || '').trim().toUpperCase() !== 'TRUE') {
+      try {
+        const { data: gymTasks } = await supabase
+          .from('tasks')
+          .select('id')
+          .eq('due_date', todayStr)
+          .eq('is_completed', true);
+
+        const hasCompletedWorkout = (gymTasks || []).some(() => true);
+        if (hasCompletedWorkout) {
+          todayRow[gymIdx] = 'TRUE';
+          const rowIndex = rows.findIndex((r) => String(r[dateIdx]).trim() === todayStr) + 1;
+          if (rowIndex > 0) {
+            const colLetter = String.fromCharCode(65 + gymIdx);
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: SPREADSHEET_ID,
+              range: `Habits!${colLetter}${rowIndex}`,
+              valueInputOption: 'USER_ENTERED',
+              requestBody: { values: [['TRUE']] },
+            });
+          }
+        }
+      } catch (gymErr) {
+        console.warn('Cross-tab gym habit sync warning:', gymErr);
+      }
+    }
+
     // Days in current month
     const daysInMonth = new Date(year, month, 0).getDate();
     // Weekday of 1st day of month (0 = Sun, 1 = Mon, ..., 6 = Sat) -> convert to Mon = 0 .. Sun = 6
     const firstDayWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+
+    // Build rawHistory dictionary across all dates
+    const rawHistory: Record<string, { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; total: number }> = {};
+    for (const row of dataRows) {
+      const d = String(row[dateIdx]).trim();
+      if (!d) continue;
+      const wake = String(row[wakeIdx] || '').trim().toUpperCase() === 'TRUE';
+      const gym = String(row[gymIdx] || '').trim().toUpperCase() === 'TRUE';
+      const journal = String(row[journalIdx] || '').trim().toUpperCase() === 'TRUE';
+      const total = (wake ? 1 : 0) + (gym ? 1 : 0) + (journal ? 1 : 0);
+      rawHistory[d] = {
+        'Wake Up On Time': wake,
+        'Gym Workout': gym,
+        'Journaling': journal,
+        total,
+      };
+    }
+
+    // Build 30-Day Completeness Velocity
+    const velocity30Days: Array<{ date: string; dayLabel: string; wake: boolean; gym: boolean; journal: boolean; total: number }> = [];
+    for (let i = 29; i >= 0; i--) {
+      const pastDate = new Date();
+      pastDate.setDate(pastDate.getDate() - i);
+      const dStr = pastDate.toISOString().split('T')[0];
+      const rec = rawHistory[dStr] || { 'Wake Up On Time': false, 'Gym Workout': false, 'Journaling': false, total: 0 };
+      velocity30Days.push({
+        date: dStr,
+        dayLabel: pastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        wake: rec['Wake Up On Time'],
+        gym: rec['Gym Workout'],
+        journal: rec['Journaling'],
+        total: rec.total,
+      });
+    }
 
     const habitsData = HABITS_LIST.map((habitName) => {
       const colIdx = habitColMap[habitName];
@@ -97,7 +160,6 @@ export async function GET() {
 
       const completionMap: Record<string, boolean> = {};
 
-      // Build completion map
       for (const row of dataRows) {
         const d = String(row[dateIdx]).trim();
         const val = String(row[colIdx] || '').trim().toUpperCase();
@@ -115,7 +177,6 @@ export async function GET() {
         if (completionMap[d]) {
           streak++;
         } else {
-          // If today isn't done yet, don't break streak if yesterday was done
           if (d === todayStr) {
             continue;
           }
@@ -128,7 +189,6 @@ export async function GET() {
 
       // Build days array for current month
       const days = [];
-      // Empty slots before 1st of month
       for (let i = 0; i < firstDayWeekday; i++) {
         days.push({ dayNumber: 0, dateStr: '', completed: false, isToday: false, isFuture: false });
       }
@@ -153,6 +213,8 @@ export async function GET() {
         icon: habitName.includes('Wake') ? '⏰' : habitName.includes('Gym') ? '💪' : '✍️',
         streak,
         consistencyRate,
+        totalCompleted,
+        totalDays,
         completedToday,
         monthName,
         year,
@@ -164,6 +226,8 @@ export async function GET() {
       success: true,
       today: todayStr,
       habits: habitsData,
+      rawHistory,
+      velocity30Days,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

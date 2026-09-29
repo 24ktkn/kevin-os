@@ -5,8 +5,9 @@ import Combine
 class HealthManager: ObservableObject {
     let healthStore = HKHealthStore()
     
-    // Use your Apps Script Web App URL here
-    let apiURLString = "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
+    // Direct Next.js Webhook URL on Vercel (Replaces slow Google Apps Script)
+    let apiURLString = "https://kevin-os.vercel.app/api/health/sync"
+    // Legacy Apps Script Web App URL: "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
     
     // Define the data types we want to read
     let stepCountType = HKObjectType.quantityType(forIdentifier: .stepCount)!
