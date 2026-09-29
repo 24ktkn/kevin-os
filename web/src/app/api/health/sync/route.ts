@@ -37,14 +37,19 @@ function getProductivityDateString(tz = 'America/New_York'): string {
 function formatTimeString(isoString?: string): string {
   if (!isoString) return '';
   try {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return isoString;
-    return d.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZone: 'America/New_York',
-    });
+    const cleaned = String(isoString).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/New_York',
+      });
+    }
+    const timeMatch = cleaned.match(/\b(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)\b/i);
+    if (timeMatch) return timeMatch[1].trim();
+    return isoString || '';
   } catch {
     return isoString || '';
   }
@@ -147,8 +152,10 @@ export async function POST(req: NextRequest) {
     // Fallback: If sleep is 0 but wakeTime and sleepTime are valid timestamps, calculate duration
     if (sleepHours <= 0 && wakeTime && sleepTime) {
       try {
-        const dWake = new Date(wakeTime);
-        const dSleep = new Date(sleepTime);
+        const cleanWake = String(wakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+        const cleanSleep = String(sleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+        const dWake = new Date(cleanWake);
+        const dSleep = new Date(cleanSleep);
         if (!isNaN(dWake.getTime()) && !isNaN(dSleep.getTime())) {
           const diffMs = dWake.getTime() - dSleep.getTime();
           if (diffMs > 0 && diffMs < 24 * 3600 * 1000) {

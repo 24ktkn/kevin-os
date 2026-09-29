@@ -10,10 +10,11 @@ export function parseSleepDuration(val: string | number | undefined): { text: st
   }
   const str = String(val).trim().toLowerCase();
 
-  let hours = 0;
-  let minutes = 0;
+  let totalHours = 0;
 
   if (str.includes('h') || str.includes('m')) {
+    let hours = 0;
+    let minutes = 0;
     if (str.includes('h')) {
       const parts = str.split('h');
       hours = parseFloat(parts[0].trim()) || 0;
@@ -23,18 +24,46 @@ export function parseSleepDuration(val: string | number | undefined): { text: st
     } else if (str.includes('m')) {
       minutes = parseFloat(str.replace('m', '').trim()) || 0;
     }
-    const totalHours = hours + minutes / 60;
-    return { text: `${Math.floor(hours)}h ${Math.round(minutes)}m`, hours: totalHours };
+    totalHours = hours + minutes / 60;
+  } else {
+    totalHours = parseFloat(str) || 0;
   }
 
-  const num = parseFloat(str);
-  if (!isNaN(num) && num > 0) {
-    const h = Math.floor(num);
-    const m = Math.round((num - h) * 60);
-    return { text: `${h}h ${m}m`, hours: num };
+  if (totalHours <= 0) {
+    return { text: 'No data', hours: 0 };
   }
 
-  return { text: 'No data', hours: 0 };
+  const h = Math.floor(totalHours);
+  const m = Math.round((totalHours - h) * 60);
+
+  const finalH = m === 60 ? h + 1 : h;
+  const finalM = m === 60 ? 0 : m;
+
+  return {
+    text: `${finalH}h ${finalM}m`,
+    hours: totalHours,
+  };
+}
+
+export function formatDisplayTime(str?: string): string {
+  if (!str || str === '0' || str.toLowerCase() === 'nan') return 'No data';
+  try {
+    const cleaned = String(str).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/New_York',
+      });
+    }
+    const timeMatch = cleaned.match(/\b(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)\b/i);
+    if (timeMatch) return timeMatch[1].trim();
+    return str;
+  } catch {
+    return str;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -107,8 +136,8 @@ export async function GET(req: NextRequest) {
               hrv: Math.round(rawHrv),
               sleep_duration: sleepParsed.text,
               sleep_hours: target.sleep_hours || sleepParsed.hours,
-              sleep_time: sleepTime && sleepTime !== '0' && sleepTime !== 'nan' ? sleepTime : 'No data',
-              wake_time: wakeTime && wakeTime !== '0' && wakeTime !== 'nan' ? wakeTime : 'No data',
+              sleep_time: formatDisplayTime(sleepTime),
+              wake_time: formatDisplayTime(wakeTime),
               rhr: Math.round(rawRhr),
               bodyweight,
               workout_calories: Math.round(workoutCal),
@@ -202,8 +231,8 @@ export async function GET(req: NextRequest) {
         hrv: Math.round(rawHrv),
         sleep_duration: sleepParsed.text,
         sleep_hours: sleepParsed.hours,
-        sleep_time: sleepTime && sleepTime !== '0' && sleepTime !== 'nan' ? sleepTime : 'No data',
-        wake_time: wakeTime && wakeTime !== '0' && wakeTime !== 'nan' ? wakeTime : 'No data',
+        sleep_time: formatDisplayTime(sleepTime),
+        wake_time: formatDisplayTime(wakeTime),
         rhr: Math.round(rawRhr),
         bodyweight,
         workout_calories: Math.round(workoutCal),
