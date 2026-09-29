@@ -6,7 +6,7 @@ class HealthManager: ObservableObject {
     let healthStore = HKHealthStore()
     
     // Direct Next.js Webhook URL on Vercel (Replaces slow Google Apps Script)
-    let apiURLString = "https://kevin-os.vercel.app/api/health/sync"
+    let apiURLString = "https://kevin-os-xr4m.vercel.app/api/health/sync"
     // Legacy Apps Script Web App URL: "https://script.google.com/macros/s/AKfycbzlQKBy3jyOv3SqhV-iqwtCQBoP7Ry-uAhTpbTJE0FhU0mZKG-KX0UlR-BB2VrVYrx5Xg/exec"
     
     // Define the data types we want to read
