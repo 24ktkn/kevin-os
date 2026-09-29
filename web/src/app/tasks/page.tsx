@@ -108,6 +108,7 @@ export default function MissionControlPage() {
   // Optimistic Toggle Task/Event Completion (Supports both checking and unchecking)
   const toggleTaskCompletion = async (id: string, currentStatus: boolean) => {
     const updatedStatus = !currentStatus;
+    const target = tasks.find((t) => t.id === id);
 
     // Instant local UI update (< 5ms)
     setTasks((prev) => {
@@ -116,7 +117,20 @@ export default function MissionControlPage() {
       return next;
     });
 
-    // Asynchronous Supabase update
+    // 1. Sync directly to Google Tasks and Supabase via complete API
+    fetch('/api/tasks/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId: id,
+        googleTaskId: target?.google_task_id,
+        title: target?.title,
+        calendar_name: target?.calendar_name,
+        completed: updatedStatus,
+      }),
+    }).catch((err) => console.error('Failed to sync completion to Google Tasks:', err));
+
+    // 2. Direct Supabase update for instantaneous persistence
     if (supabase) {
       await supabase
         .from('tasks')
@@ -124,7 +138,6 @@ export default function MissionControlPage() {
         .eq('id', id);
 
       // Also sync completion/unchecking to school_items
-      const target = tasks.find((t) => t.id === id);
       if (target?.title) {
         const clean = target.title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
         if (clean) {
@@ -211,9 +224,30 @@ export default function MissionControlPage() {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
       } else {
-        // 2c. Standalone Task (Supabase)
-        if (supabase) {
-          await supabase.from('tasks').insert([taskItem]);
+        // 2c. Standalone Task (Google Tasks & Supabase)
+        try {
+          const res = await fetch('/api/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: taskItem.title,
+              description: taskItem.notes,
+              date: taskItem.due_date,
+              time: taskItem.due_time,
+              duration: 0,
+              calendar: taskItem.calendar_name,
+              skipCalendar: true,
+              isStandaloneEvent: false,
+            }),
+          });
+          const data = await res.json();
+          if (data.item) {
+            setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
+          }
+        } catch {
+          if (supabase) {
+            await supabase.from('tasks').insert([taskItem]);
+          }
         }
         const todayStr = new Date().toISOString().split('T')[0];
         if (taskItem.due_date && taskItem.due_date <= todayStr) {

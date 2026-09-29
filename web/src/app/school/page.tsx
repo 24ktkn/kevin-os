@@ -194,9 +194,23 @@ export default function SchoolSyncPage() {
     setCompletions(updated);
     localStorage.setItem('kevin_school_completions', JSON.stringify(updated));
 
+    const ev = events.find((e) => e.uid === uid);
+    const title = ev?.summary || 'Untitled';
+
+    // 1. Sync directly to Google Tasks via complete API
+    if (title && title !== 'Untitled') {
+      fetch('/api/tasks/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          calendar_name: 'School',
+          completed,
+        }),
+      }).catch((err) => console.error('Failed to sync school module completion to Google Tasks:', err));
+    }
+
     if (supabase) {
-      const ev = events.find((e) => e.uid === uid);
-      const title = ev?.summary || 'Untitled';
       await supabase.from('school_items').upsert({
         uid,
         title,

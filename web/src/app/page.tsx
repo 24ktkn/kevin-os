@@ -189,16 +189,41 @@ export default function HomePage() {
   // Toggle task completion
   const toggleTask = async (id: string, currentCompleted: boolean) => {
     const nextCompleted = !currentCompleted;
+    const target = todayTasks.find((t) => t.id === id);
+
     // Optimistic update
     setTodayTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, is_completed: nextCompleted } : t))
     );
+
+    // Sync to Google Tasks via complete API
+    fetch('/api/tasks/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId: id,
+        googleTaskId: target?.google_task_id,
+        title: target?.title,
+        calendar_name: target?.calendar_name,
+        completed: nextCompleted,
+      }),
+    }).catch((err) => console.error('Failed to sync dashboard task completion to Google Tasks:', err));
 
     if (supabase) {
       await supabase
         .from('tasks')
         .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
         .eq('id', id);
+
+      if (target?.title) {
+        const clean = target.title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+        if (clean) {
+          await supabase
+            .from('school_items')
+            .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+            .ilike('title', `%${clean}%`);
+        }
+      }
     }
   };
 
