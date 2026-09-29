@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
+import { supabase } from '@/lib/supabase';
 
 const CALENDAR_MAP: Record<string, string> = {
   'Kevin Nguyen': '24ktkn@gmail.com',
@@ -115,6 +116,41 @@ export async function POST(req: NextRequest) {
 
     // Overall success if either calendar or task succeeded
     const overallSuccess = Boolean(calendarEventId || taskId);
+
+    // 3. Persist Event and/or Task into Supabase tasks table
+    if (supabase) {
+      if (calendarEventId) {
+        await supabase.from('tasks').insert({
+          title: `🎓 [Task] ${title}`,
+          type: 'Event',
+          calendar_name: calCat || 'School',
+          due_date: date,
+          due_time: time,
+          duration_mins: durationMins,
+          location: '',
+          notes: description || '',
+          calendar_event_id: calendarEventId,
+          is_scheduled: true,
+          is_completed: false,
+        });
+      }
+
+      if (taskId) {
+        await supabase.from('tasks').insert({
+          title: title,
+          type: 'Task',
+          calendar_name: calCat || 'School',
+          due_date: date,
+          due_time: '',
+          duration_mins: 0,
+          location: '',
+          notes: description || '',
+          google_task_id: taskId,
+          is_scheduled: false,
+          is_completed: false,
+        });
+      }
+    }
 
     return NextResponse.json({
       success: overallSuccess,

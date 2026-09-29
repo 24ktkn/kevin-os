@@ -113,6 +113,8 @@ export async function GET() {
                 };
                 if (eventAlreadyPassed) {
                   updatePayload.is_completed = true;
+                } else {
+                  updatePayload.is_completed = false;
                 }
 
                 await supabase
@@ -161,7 +163,7 @@ export async function GET() {
       oauth2Client.setCredentials({ refresh_token: refreshToken });
       const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
 
-      for (const [, listId] of Object.entries(TASKLIST_MAP)) {
+      for (const [calName, listId] of Object.entries(TASKLIST_MAP)) {
         try {
           const res = await tasksApi.tasks.list({
             tasklist: listId,
@@ -172,32 +174,80 @@ export async function GET() {
 
           const items = res.data.items || [];
           for (const item of items) {
-            if (item.status === 'completed' && item.title) {
-              const taskTitle = item.title.trim();
-              completedTitles.push(taskTitle);
+            if (!item.title) continue;
+            const taskTitle = item.title.trim();
+            if (!taskTitle) continue;
 
-              if (supabase) {
-                // 1. Update school_items table
+            const isDone = item.status === 'completed';
+            if (isDone) {
+              completedTitles.push(taskTitle);
+            }
+
+            let dateStr = '';
+            if (item.due) {
+              dateStr = item.due.split('T')[0];
+            }
+
+            if (supabase) {
+              // 1. If completed, update school_items table
+              if (isDone) {
                 await supabase
                   .from('school_items')
                   .update({ is_completed: true, updated_at: new Date().toISOString() })
                   .ilike('title', `%${taskTitle}%`);
+              }
 
-                // 2. Update tasks table (matches exact, with prefixes like 🎓 [Task], ?? [Task], etc.)
+              // 2. Check if this task exists in tasks table by google_task_id or title
+              let existingId: string | null = null;
+              if (item.id) {
+                const { data: byId } = await supabase
+                  .from('tasks')
+                  .select('id')
+                  .eq('google_task_id', item.id)
+                  .maybeSingle();
+                if (byId) existingId = byId.id;
+              }
+
+              if (!existingId) {
+                const { data: byTitle } = await supabase
+                  .from('tasks')
+                  .select('id')
+                  .eq('title', taskTitle)
+                  .eq('type', 'Task')
+                  .maybeSingle();
+                if (byTitle) existingId = byTitle.id;
+              }
+
+              if (existingId) {
                 await supabase
                   .from('tasks')
-                  .update({ is_completed: true, updated_at: new Date().toISOString() })
-                  .ilike('title', `%${taskTitle}%`);
-
-                if (item.id) {
-                  await supabase
-                    .from('tasks')
-                    .update({ is_completed: true, updated_at: new Date().toISOString() })
-                    .eq('google_task_id', item.id);
-                }
-
-                syncResults.tasksSynced++;
+                  .update({
+                    title: taskTitle,
+                    type: 'Task',
+                    calendar_name: calName,
+                    due_date: dateStr || undefined,
+                    is_completed: isDone,
+                    google_task_id: item.id,
+                    duration_mins: 0,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', existingId);
+              } else {
+                await supabase.from('tasks').insert({
+                  title: taskTitle,
+                  type: 'Task',
+                  calendar_name: calName,
+                  due_date: dateStr || new Date().toISOString().split('T')[0],
+                  due_time: '',
+                  duration_mins: 0,
+                  notes: item.notes || '',
+                  google_task_id: item.id,
+                  is_completed: isDone,
+                  is_scheduled: false,
+                });
               }
+
+              syncResults.tasksSynced++;
             }
           }
         } catch (err) {

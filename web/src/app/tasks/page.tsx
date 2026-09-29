@@ -581,7 +581,7 @@ export default function MissionControlPage() {
                     {task.due_time && (
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3 text-zinc-500" />
-                        {task.due_time} {task.duration_mins > 0 && `(${task.duration_mins}m)`}
+                        {task.due_time} {task.type === 'Event' && task.duration_mins > 0 && `(${task.duration_mins}m)`}
                       </span>
                     )}
                   </div>

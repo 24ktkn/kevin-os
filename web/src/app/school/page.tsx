@@ -196,13 +196,21 @@ export default function SchoolSyncPage() {
 
     if (supabase) {
       const ev = events.find((e) => e.uid === uid);
+      const title = ev?.summary || 'Untitled';
       await supabase.from('school_items').upsert({
         uid,
-        title: ev?.summary || 'Untitled',
+        title,
         category: overrides[uid] || ev?.category || 'module',
         is_completed: completed,
         updated_at: new Date().toISOString(),
       });
+
+      if (title && title !== 'Untitled') {
+        await supabase
+          .from('tasks')
+          .update({ is_completed: completed, updated_at: new Date().toISOString() })
+          .ilike('title', `%${title}%`);
+      }
     }
   };
 
