@@ -172,33 +172,6 @@ export async function GET() {
       mirrorHabitToSheets(todayStr, 'Wake Up On Time', false);
     }
 
-    // 4. Cross-tab automation: If today's Gym Workout is FALSE, check if a workout task was completed in Supabase
-    if (sb && !todayRecord.gym_workout) {
-      try {
-        const { data: gymTasks } = await sb
-          .from('tasks')
-          .select('id, title')
-          .eq('due_date', todayStr)
-          .eq('is_completed', true);
-
-        const hasCompletedWorkout = (gymTasks || []).some((t) => {
-          const lower = (t.title || '').toLowerCase();
-          return lower.includes('workout') || lower.includes('gym') || lower.includes('soccer');
-        });
-
-        if (hasCompletedWorkout) {
-          todayRecord.gym_workout = true;
-          await sb.from('habits').upsert(
-            { date: todayStr, gym_workout: true, updated_at: new Date().toISOString() },
-            { onConflict: 'date' }
-          );
-          mirrorHabitToSheets(todayStr, 'Gym Workout', true);
-        }
-      } catch (gymErr) {
-        console.warn('Cross-tab gym habit sync warning:', gymErr);
-      }
-    }
-
     // 5. Build rawHistory dictionary across all dates
     const rawHistory: Record<string, { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; total: number }> = {};
     for (const rec of records) {
