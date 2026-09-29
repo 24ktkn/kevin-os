@@ -1,15 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
 const HABITS_LIST = ['Wake Up On Time', 'Gym Workout', 'Journaling'];
 
+const HABIT_DB_MAP: Record<string, string> = {
+  'Wake Up On Time': 'wake_up_on_time',
+  'Gym Workout': 'gym_workout',
+  'Journaling': 'journaling',
+};
+
 // Night owl rollover: if before 2 AM EDT, count as previous day
 function getProductivityDate(): { dateStr: string; year: number; month: number; monthName: string } {
   const now = new Date();
-  // Get time in EDT (America/New_York)
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric',
@@ -28,7 +33,6 @@ function getProductivityDate(): { dateStr: string; year: number; month: number; 
   const hour = parseInt(findPart('hour'), 10);
 
   if (hour < 2) {
-    // subtract 1 day
     const prev = new Date(year, month - 1, day - 1);
     year = prev.getFullYear();
     month = prev.getMonth() + 1;
@@ -41,101 +45,173 @@ function getProductivityDate(): { dateStr: string; year: number; month: number; 
   return { dateStr, year, month, monthName };
 }
 
-export async function GET() {
+// Background mirror helper to Google Sheets
+async function mirrorHabitToSheets(todayStr: string, habit: string, completed: boolean) {
   try {
     const sheets = getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: 'Habits!A1:D1005',
     });
-
     const rows = res.data.values || [];
-    if (rows.length < 2) {
-      return NextResponse.json({ success: true, habits: [] });
-    }
-
+    if (rows.length === 0) return;
     const headers = rows[0].map((h: string) => String(h).trim());
     const dateIdx = headers.indexOf('Date');
-    const wakeIdx = headers.indexOf('Wake Up On Time');
-    const gymIdx = headers.indexOf('Gym Workout');
-    const journalIdx = headers.indexOf('Journaling');
+    const colIdx = headers.indexOf(habit);
+    if (colIdx === -1) return;
+    const colLetter = String.fromCharCode(65 + colIdx);
 
-    const habitColMap: Record<string, number> = {
-      'Wake Up On Time': wakeIdx,
-      'Gym Workout': gymIdx,
-      'Journaling': journalIdx,
-    };
-
-    const { dateStr: todayStr, year, month, monthName } = getProductivityDate();
-
-    // Parse all rows
-    const dataRows = rows.slice(1).filter((r) => r[dateIdx] && String(r[dateIdx]).trim() !== '');
-
-    // Check if today exists, if not create/append
-    let todayRow = dataRows.find((r) => String(r[dateIdx]).trim() === todayStr);
-    if (!todayRow) {
+    let rowIndex = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][dateIdx]).trim() === todayStr) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+    const valToSet = completed ? 'TRUE' : 'FALSE';
+    if (rowIndex !== -1) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `Habits!${colLetter}${rowIndex}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[valToSet]] },
+      });
+    } else {
       const newRow = [todayStr, 'FALSE', 'FALSE', 'FALSE'];
+      newRow[colIdx] = valToSet;
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
         range: 'Habits!A:D',
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [newRow] },
       });
-      dataRows.push(newRow);
-      todayRow = newRow;
+    }
+  } catch (err) {
+    console.warn('mirrorHabitToSheets warning (non-fatal):', err);
+  }
+}
+
+interface HabitRecord {
+  date: string;
+  wake_up_on_time: boolean;
+  gym_workout: boolean;
+  journaling: boolean;
+}
+
+export async function GET() {
+  try {
+    const { dateStr: todayStr, year, month, monthName } = getProductivityDate();
+    let records: HabitRecord[] = [];
+
+    // 1. Primary: Load from Supabase (sub-20ms)
+    const sb = supabaseAdmin || supabase;
+    if (sb) {
+      const { data, error } = await sb
+        .from('habits')
+        .select('date, wake_up_on_time, gym_workout, journaling')
+        .order('date', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        records = data.map((r) => ({
+          date: String(r.date).trim(),
+          wake_up_on_time: Boolean(r.wake_up_on_time),
+          gym_workout: Boolean(r.gym_workout),
+          journaling: Boolean(r.journaling),
+        }));
+      }
     }
 
-    // Cross-tab automation: If today's Gym Workout is FALSE, check if a workout was completed today in tasks
-    if (supabase && todayRow && String(todayRow[gymIdx] || '').trim().toUpperCase() !== 'TRUE') {
+    // 2. Fallback to Google Sheets if Supabase had no records
+    if (records.length === 0) {
       try {
-        const { data: gymTasks } = await supabase
+        const sheets = getGoogleSheetsClient();
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'Habits!A1:D1005',
+        });
+        const rows = res.data.values || [];
+        if (rows.length > 1) {
+          const headers = rows[0].map((h: string) => String(h).trim());
+          const dateIdx = headers.indexOf('Date');
+          const wakeIdx = headers.indexOf('Wake Up On Time');
+          const gymIdx = headers.indexOf('Gym Workout');
+          const journalIdx = headers.indexOf('Journaling');
+
+          for (let i = 1; i < rows.length; i++) {
+            const d = String(rows[i][dateIdx] || '').trim();
+            if (!d) continue;
+            records.push({
+              date: d,
+              wake_up_on_time: String(rows[i][wakeIdx] || '').trim().toUpperCase() === 'TRUE',
+              gym_workout: String(rows[i][gymIdx] || '').trim().toUpperCase() === 'TRUE',
+              journaling: String(rows[i][journalIdx] || '').trim().toUpperCase() === 'TRUE',
+            });
+          }
+        }
+      } catch (sheetsErr) {
+        console.warn('Fallback to Sheets failed in habits GET:', sheetsErr);
+      }
+    }
+
+    // 3. Ensure today's row exists
+    let todayRecord = records.find((r) => r.date === todayStr);
+    if (!todayRecord) {
+      todayRecord = {
+        date: todayStr,
+        wake_up_on_time: false,
+        gym_workout: false,
+        journaling: false,
+      };
+      records.push(todayRecord);
+
+      // Async write to Supabase
+      if (sb) {
+        sb.from('habits').upsert(todayRecord, { onConflict: 'date' }).then(() => {});
+      }
+      // Async write to Sheets
+      mirrorHabitToSheets(todayStr, 'Wake Up On Time', false);
+    }
+
+    // 4. Cross-tab automation: If today's Gym Workout is FALSE, check if a workout task was completed in Supabase
+    if (sb && !todayRecord.gym_workout) {
+      try {
+        const { data: gymTasks } = await sb
           .from('tasks')
-          .select('id')
+          .select('id, title')
           .eq('due_date', todayStr)
           .eq('is_completed', true);
 
-        const hasCompletedWorkout = (gymTasks || []).some(() => true);
+        const hasCompletedWorkout = (gymTasks || []).some((t) => {
+          const lower = (t.title || '').toLowerCase();
+          return lower.includes('workout') || lower.includes('gym') || lower.includes('soccer');
+        });
+
         if (hasCompletedWorkout) {
-          todayRow[gymIdx] = 'TRUE';
-          const rowIndex = rows.findIndex((r) => String(r[dateIdx]).trim() === todayStr) + 1;
-          if (rowIndex > 0) {
-            const colLetter = String.fromCharCode(65 + gymIdx);
-            await sheets.spreadsheets.values.update({
-              spreadsheetId: SPREADSHEET_ID,
-              range: `Habits!${colLetter}${rowIndex}`,
-              valueInputOption: 'USER_ENTERED',
-              requestBody: { values: [['TRUE']] },
-            });
-          }
+          todayRecord.gym_workout = true;
+          await sb.from('habits').upsert(
+            { date: todayStr, gym_workout: true, updated_at: new Date().toISOString() },
+            { onConflict: 'date' }
+          );
+          mirrorHabitToSheets(todayStr, 'Gym Workout', true);
         }
       } catch (gymErr) {
         console.warn('Cross-tab gym habit sync warning:', gymErr);
       }
     }
 
-    // Days in current month
-    const daysInMonth = new Date(year, month, 0).getDate();
-    // Weekday of 1st day of month (0 = Sun, 1 = Mon, ..., 6 = Sat) -> convert to Mon = 0 .. Sun = 6
-    const firstDayWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7;
-
-    // Build rawHistory dictionary across all dates
+    // 5. Build rawHistory dictionary across all dates
     const rawHistory: Record<string, { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; total: number }> = {};
-    for (const row of dataRows) {
-      const d = String(row[dateIdx]).trim();
-      if (!d) continue;
-      const wake = String(row[wakeIdx] || '').trim().toUpperCase() === 'TRUE';
-      const gym = String(row[gymIdx] || '').trim().toUpperCase() === 'TRUE';
-      const journal = String(row[journalIdx] || '').trim().toUpperCase() === 'TRUE';
-      const total = (wake ? 1 : 0) + (gym ? 1 : 0) + (journal ? 1 : 0);
-      rawHistory[d] = {
-        'Wake Up On Time': wake,
-        'Gym Workout': gym,
-        'Journaling': journal,
+    for (const rec of records) {
+      const total = (rec.wake_up_on_time ? 1 : 0) + (rec.gym_workout ? 1 : 0) + (rec.journaling ? 1 : 0);
+      rawHistory[rec.date] = {
+        'Wake Up On Time': rec.wake_up_on_time,
+        'Gym Workout': rec.gym_workout,
+        'Journaling': rec.journaling,
         total,
       };
     }
 
-    // Build 30-Day Completeness Velocity
+    // 6. Build 30-Day Completeness Velocity
     const velocity30Days: Array<{ date: string; dayLabel: string; wake: boolean; gym: boolean; journal: boolean; total: number }> = [];
     for (let i = 29; i >= 0; i--) {
       const pastDate = new Date();
@@ -152,20 +228,21 @@ export async function GET() {
       });
     }
 
+    // 7. Days in current month & weekday calculation
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstDayWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7; // Mon = 0 ... Sun = 6
+
     const habitsData = HABITS_LIST.map((habitName) => {
-      const colIdx = habitColMap[habitName];
+      const dbCol = HABIT_DB_MAP[habitName] as keyof HabitRecord;
       let streak = 0;
       let totalDays = 0;
       let totalCompleted = 0;
 
       const completionMap: Record<string, boolean> = {};
 
-      for (const row of dataRows) {
-        const d = String(row[dateIdx]).trim();
-        const val = String(row[colIdx] || '').trim().toUpperCase();
-        const isDone = val === 'TRUE';
-        completionMap[d] = isDone;
-
+      for (const rec of records) {
+        const isDone = Boolean(rec[dbCol]);
+        completionMap[rec.date] = isDone;
         totalDays++;
         if (isDone) totalCompleted++;
       }
@@ -178,16 +255,16 @@ export async function GET() {
           streak++;
         } else {
           if (d === todayStr) {
-            continue;
+            continue; // Today hasn't ended yet
           }
           break;
         }
       }
 
       const consistencyRate = totalDays > 0 ? Math.round((totalCompleted / totalDays) * 100) : 0;
-      const completedToday = Boolean(todayRow && String(todayRow[colIdx] || '').trim().toUpperCase() === 'TRUE');
+      const completedToday = Boolean(todayRecord && todayRecord[dbCol]);
 
-      // Build days array for current month
+      // Build days array for current month grid
       const days = [];
       for (let i = 0; i < firstDayWeekday; i++) {
         days.push({ dayNumber: 0, dateStr: '', completed: false, isToday: false, isFuture: false });
@@ -245,60 +322,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing habit name or completed boolean' }, { status: 400 });
     }
 
+    const dbCol = HABIT_DB_MAP[habit];
+    if (!dbCol) {
+      return NextResponse.json({ error: `Unknown habit '${habit}'` }, { status: 400 });
+    }
+
     const { dateStr: todayStr } = getProductivityDate();
-    const sheets = getGoogleSheetsClient();
 
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Habits!A1:D1005',
-    });
-
-    const rows = res.data.values || [];
-    if (rows.length < 1) {
-      return NextResponse.json({ error: 'Habits sheet is empty' }, { status: 500 });
-    }
-
-    const headers = rows[0].map((h: string) => String(h).trim());
-    const dateIdx = headers.indexOf('Date');
-    const colIdx = headers.indexOf(habit);
-
-    if (colIdx === -1) {
-      return NextResponse.json({ error: `Habit column '${habit}' not found` }, { status: 404 });
-    }
-
-    // Convert colIdx to letter: 0=A, 1=B, 2=C, 3=D
-    const colLetter = String.fromCharCode(65 + colIdx);
-
-    // Find row index (1-based for Sheets API)
-    let rowIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][dateIdx]).trim() === todayStr) {
-        rowIndex = i + 1; // 1-indexed
-        break;
+    // 1. Primary: Save to Supabase (immediate sub-20ms response)
+    const sb = supabaseAdmin || supabase;
+    if (sb) {
+      const { data: existing } = await sb.from('habits').select('*').eq('date', todayStr).single();
+      if (existing) {
+        await sb.from('habits').update({
+          [dbCol]: completed,
+          updated_at: new Date().toISOString(),
+        }).eq('date', todayStr);
+      } else {
+        await sb.from('habits').insert({
+          date: todayStr,
+          wake_up_on_time: false,
+          gym_workout: false,
+          journaling: false,
+          [dbCol]: completed,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
     }
 
-    const valToSet = completed ? 'TRUE' : 'FALSE';
-
-    if (rowIndex !== -1) {
-      // Update cell
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `Habits!${colLetter}${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[valToSet]] },
-      });
-    } else {
-      // Append new row for today
-      const newRow = [todayStr, 'FALSE', 'FALSE', 'FALSE'];
-      newRow[colIdx] = valToSet;
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: 'Habits!A:D',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [newRow] },
-      });
-    }
+    // 2. Background mirror to Google Sheets (non-blocking)
+    mirrorHabitToSheets(todayStr, habit, completed).catch((e) => {
+      console.warn('Background Sheets sync failed:', e);
+    });
 
     return NextResponse.json({
       success: true,

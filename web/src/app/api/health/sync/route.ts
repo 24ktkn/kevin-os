@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,26 +50,9 @@ function formatTimeString(isoString?: string): string {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string) {
   try {
-    const body = await req.json();
-    const {
-      steps,
-      rhr,
-      hrv,
-      weight,
-      sleep,
-      workoutCalories,
-      workoutDuration,
-      wakeTime,
-      sleepTime,
-      timezone,
-    } = body;
-
-    const targetDate = getProductivityDateString(timezone);
     const sheets = getGoogleSheetsClient();
-
-    // Read existing health_metrics
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: 'health_metrics!A1:J1000',
@@ -101,7 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     const dateIdx = headers.indexOf('Date');
-    let rowIndex = -1; // 1-indexed for Google Sheets API
+    let rowIndex = -1;
 
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][dateIdx] || '').trim() === targetDate) {
@@ -110,32 +94,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Format fields
-    const stepsVal = String(steps ?? 0);
-    const hrvVal = String(Math.round(Number(hrv) || 0));
-    const sleepVal = sleep !== undefined && sleep !== null ? String(Number(sleep).toFixed(1)) : '0';
-    const rhrVal = String(Math.round(Number(rhr) || 0));
-    const weightVal = weight !== undefined && weight !== null ? String(Number(weight).toFixed(1)) : '0';
-    const wakeVal = formatTimeString(wakeTime);
-    const sleepTimeVal = formatTimeString(sleepTime);
-    const wCalVal = String(Math.round(Number(workoutCalories) || 0));
-    const wDurVal = String(Math.round(Number(workoutDuration) || 0));
-
-    const updatedRow = [
-      targetDate,
-      stepsVal,
-      hrvVal,
-      sleepVal,
-      rhrVal,
-      weightVal,
-      wakeVal,
-      sleepTimeVal,
-      wCalVal,
-      wDurVal,
-    ];
-
     if (rowIndex !== -1) {
-      // Update today's existing row
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `health_metrics!A${rowIndex}:J${rowIndex}`,
@@ -143,7 +102,6 @@ export async function POST(req: NextRequest) {
         requestBody: { values: [updatedRow] },
       });
     } else {
-      // Append new row for today
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
         range: 'health_metrics!A:J',
@@ -151,6 +109,76 @@ export async function POST(req: NextRequest) {
         requestBody: { values: [updatedRow] },
       });
     }
+  } catch (err) {
+    console.warn('mirrorBiometricsToSheets warning (non-fatal):', err);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const {
+      steps,
+      rhr,
+      hrv,
+      weight,
+      sleep,
+      workoutCalories,
+      workoutDuration,
+      wakeTime,
+      sleepTime,
+      timezone,
+    } = body;
+
+    const targetDate = getProductivityDateString(timezone);
+
+    const stepsVal = parseInt(String(steps ?? 0), 10) || 0;
+    const hrvVal = parseFloat(String(hrv || 0)) || 0;
+    const sleepHours = sleep !== undefined && sleep !== null ? parseFloat(String(sleep)) || 0 : 0;
+    const sleepDurationStr = `${sleepHours.toFixed(1)}h`;
+    const rhrVal = parseFloat(String(rhr || 0)) || 0;
+    const weightVal = weight !== undefined && weight !== null ? parseFloat(String(weight)) || 170.0 : 170.0;
+    const wakeVal = formatTimeString(wakeTime);
+    const sleepTimeVal = formatTimeString(sleepTime);
+    const wCalVal = parseFloat(String(workoutCalories || 0)) || 0;
+    const wDurVal = parseFloat(String(workoutDuration || 0)) || 0;
+
+    // 1. Primary: Save to Supabase (immediate sub-20ms response)
+    const sb = supabaseAdmin || supabase;
+    if (sb) {
+      await sb.from('biometrics').upsert({
+        date: targetDate,
+        steps: stepsVal,
+        hrv: hrvVal,
+        sleep_duration: sleepDurationStr,
+        sleep_hours: sleepHours,
+        rhr: rhrVal,
+        bodyweight: weightVal,
+        wake_time: wakeVal,
+        sleep_time: sleepTimeVal,
+        workout_calories: wCalVal,
+        workout_duration: wDurVal,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'date' });
+    }
+
+    // 2. Background mirror to Google Sheets (non-blocking)
+    const sheetsRow = [
+      targetDate,
+      String(stepsVal),
+      String(Math.round(hrvVal)),
+      String(sleepHours.toFixed(1)),
+      String(Math.round(rhrVal)),
+      String(weightVal.toFixed(1)),
+      wakeVal,
+      sleepTimeVal,
+      String(Math.round(wCalVal)),
+      String(Math.round(wDurVal)),
+    ];
+
+    mirrorBiometricsToSheets(sheetsRow, targetDate).catch((e) => {
+      console.warn('Background Sheets sync failed:', e);
+    });
 
     return NextResponse.json({
       success: true,
@@ -158,14 +186,14 @@ export async function POST(req: NextRequest) {
       date: targetDate,
       metrics: {
         steps: stepsVal,
-        hrv: hrvVal,
-        sleep: sleepVal,
-        rhr: rhrVal,
+        hrv: Math.round(hrvVal),
+        sleep: sleepHours,
+        rhr: Math.round(rhrVal),
         weight: weightVal,
         wakeTime: wakeVal,
         sleepTime: sleepTimeVal,
-        workoutCalories: wCalVal,
-        workoutDuration: wDurVal,
+        workoutCalories: Math.round(wCalVal),
+        workoutDuration: Math.round(wDurVal),
       },
     });
   } catch (err: unknown) {
