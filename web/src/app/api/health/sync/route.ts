@@ -134,12 +134,35 @@ export async function POST(req: NextRequest) {
 
     const stepsVal = parseInt(String(steps ?? 0), 10) || 0;
     const hrvVal = parseFloat(String(hrv || 0)) || 0;
-    const sleepHours = sleep !== undefined && sleep !== null ? parseFloat(String(sleep)) || 0 : 0;
+    let sleepHours = sleep !== undefined && sleep !== null ? parseFloat(String(sleep)) || 0 : 0;
+    if (sleepHours > 1440) {
+      sleepHours = sleepHours / 3600.0; // Converted from seconds
+    } else if (sleepHours > 24) {
+      sleepHours = sleepHours / 60.0; // Converted from minutes
+    }
+
+    const wakeVal = formatTimeString(wakeTime);
+    const sleepTimeVal = formatTimeString(sleepTime);
+
+    // Fallback: If sleep is 0 but wakeTime and sleepTime are valid timestamps, calculate duration
+    if (sleepHours <= 0 && wakeTime && sleepTime) {
+      try {
+        const dWake = new Date(wakeTime);
+        const dSleep = new Date(sleepTime);
+        if (!isNaN(dWake.getTime()) && !isNaN(dSleep.getTime())) {
+          const diffMs = dWake.getTime() - dSleep.getTime();
+          if (diffMs > 0 && diffMs < 24 * 3600 * 1000) {
+            sleepHours = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const sleepDurationStr = `${sleepHours.toFixed(1)}h`;
     const rhrVal = parseFloat(String(rhr || 0)) || 0;
     const weightVal = weight !== undefined && weight !== null ? parseFloat(String(weight)) || 170.0 : 170.0;
-    const wakeVal = formatTimeString(wakeTime);
-    const sleepTimeVal = formatTimeString(sleepTime);
     const wCalVal = parseFloat(String(workoutCalories || 0)) || 0;
     const wDurVal = parseFloat(String(workoutDuration || 0)) || 0;
 
