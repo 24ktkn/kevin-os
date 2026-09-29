@@ -107,7 +107,7 @@ struct ContentView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 // Fetch latest data every time the app opens
                 networkManager.fetchData()

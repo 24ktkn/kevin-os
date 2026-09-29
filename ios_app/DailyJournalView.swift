@@ -123,7 +123,7 @@ struct DailyJournalView: View {
                                     region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
                                 }
                             }
-                            .onChange(of: locationManager.location) { newLocation in
+                            .onChange(of: locationManager.location) { _, newLocation in
                                 if let loc = newLocation {
                                     region = MKCoordinateRegion(center: loc.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02))
                                 }
