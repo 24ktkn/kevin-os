@@ -726,15 +726,18 @@ export default function HomePage() {
             </div>
           </Link>
 
-          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
-            <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+          <Link
+            href="/ai"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 hover:border-purple-500/50 flex flex-col justify-between space-y-3 transition shadow-sm group"
+          >
+            <div className="h-8 w-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center group-hover:scale-105 transition">
               <Bot className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-xs font-bold text-zinc-300">AI Scheduler</div>
-              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 5</div>
+              <div className="text-xs font-bold text-white group-hover:text-purple-400 transition">AI Scheduler</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Autonomous Day Plan</div>
             </div>
-          </div>
+          </Link>
         </div>
       </section>
     </div>

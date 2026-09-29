@@ -15,7 +15,15 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-const NAV_ITEMS = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  activeMatch: (p: string) => boolean;
+  badge?: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { name: 'Home', href: '/', icon: Home, activeMatch: (p: string) => p === '/' },
   { name: 'Mission Control', href: '/tasks', icon: Rocket, activeMatch: (p: string) => p.startsWith('/tasks') },
   { name: 'School Sync', href: '/school', icon: GraduationCap, activeMatch: (p: string) => p.startsWith('/school') },
@@ -23,7 +31,7 @@ const NAV_ITEMS = [
   { name: 'Daily Journal', href: '/journal', icon: BookOpen, activeMatch: (p: string) => p.startsWith('/journal') },
   { name: 'Workout Tracker', href: '/workouts', icon: Dumbbell, activeMatch: (p: string) => p.startsWith('/workouts') },
   { name: 'Meal Prep', href: '/meals', icon: UtensilsCrossed, activeMatch: (p: string) => p.startsWith('/meals') },
-  { name: 'AI Scheduler', href: '/ai', icon: Bot, activeMatch: (p: string) => p.startsWith('/ai'), badge: 'Phase 5' },
+  { name: 'AI Scheduler', href: '/ai', icon: Bot, activeMatch: (p: string) => p.startsWith('/ai') },
 ];
 
 export default function Navigation({ children }: { children: React.ReactNode }) {
