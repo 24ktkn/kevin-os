@@ -16,9 +16,11 @@ import {
   AlertCircle,
   X,
   ListTodo,
+  RotateCcw,
 } from 'lucide-react';
 import { TaskItem, CalendarName } from '@/types/task';
 import { supabase } from '@/lib/supabase';
+import { isEventPast } from '@/lib/date-utils';
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
   'School': { bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
@@ -66,8 +68,28 @@ export default function MissionControlPage() {
           .order('due_date', { ascending: true });
 
         if (!error && data) {
-          setTasks(data as TaskItem[]);
-          localStorage.setItem('kevin_os_tasks', JSON.stringify(data));
+          const rawTasks = data as TaskItem[];
+          const pastEventIds: string[] = [];
+
+          const processed = rawTasks.map((t) => {
+            if (!t.is_completed && t.type === 'Event' && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
+              pastEventIds.push(t.id);
+              return { ...t, is_completed: true };
+            }
+            return t;
+          });
+
+          setTasks(processed);
+          localStorage.setItem('kevin_os_tasks', JSON.stringify(processed));
+
+          // Auto-sweep past events in database
+          if (pastEventIds.length > 0) {
+            supabase
+              .from('tasks')
+              .update({ is_completed: true, updated_at: new Date().toISOString() })
+              .in('id', pastEventIds)
+              .then();
+          }
         }
       }
     } catch (err) {
@@ -81,7 +103,7 @@ export default function MissionControlPage() {
     fetchTasks();
   }, [fetchTasks]);
 
-  // Optimistic Toggle Task Completion
+  // Optimistic Toggle Task/Event Completion (Supports both checking and unchecking)
   const toggleTaskCompletion = async (id: string, currentStatus: boolean) => {
     const updatedStatus = !currentStatus;
 
@@ -98,6 +120,18 @@ export default function MissionControlPage() {
         .from('tasks')
         .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
         .eq('id', id);
+
+      // Also sync completion/unchecking to school_items
+      const target = tasks.find((t) => t.id === id);
+      if (target?.title) {
+        const clean = target.title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+        if (clean) {
+          await supabase
+            .from('school_items')
+            .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
+            .ilike('title', `%${clean}%`);
+        }
+      }
     }
   };
 
@@ -213,12 +247,18 @@ export default function MissionControlPage() {
         } else {
           compTasks.push(t);
         }
-      } else if (!t.due_date) {
-        backlog.push(t);
-      } else if (t.due_date <= todayStr) {
-        today.push(t);
-      } else {
+      } else if (t.type === 'Event') {
+        // All active Google Calendar events appear in Upcoming Events tab
         upcoming.push(t);
+      } else {
+        // Tasks appear in Today's Tasks if due today or earlier, otherwise in Backlog
+        if (!t.due_date) {
+          backlog.push(t);
+        } else if (t.due_date <= todayStr) {
+          today.push(t);
+        } else {
+          backlog.push(t);
+        }
       }
     }
 
@@ -476,29 +516,43 @@ export default function MissionControlPage() {
                   key={task.id}
                   className={`group relative rounded-2xl border transition-all duration-150 bg-[#121218] p-4 flex flex-col justify-between gap-3 ${
                     task.is_completed
-                      ? 'border-zinc-800/60 opacity-60'
+                      ? 'border-zinc-800/60 opacity-60 hover:opacity-90'
                       : 'border-zinc-800 hover:border-zinc-700 shadow-sm'
                   }`}
                 >
                   <div className="space-y-2">
-                    {/* Header Row: Checkbox + Calendar Badge */}
+                    {/* Header Row: Checkbox + Calendar Badge + Uncheck Button */}
                     <div className="flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => toggleTaskCompletion(task.id, task.is_completed)}
-                        className={`h-5 w-5 rounded-lg border flex items-center justify-center transition-all ${
-                          task.is_completed
-                            ? 'bg-emerald-500 border-emerald-500 text-black'
-                            : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
-                        }`}
-                      >
-                        {task.is_completed && <Check className="h-3.5 w-3.5 stroke-[3]" />}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => toggleTaskCompletion(task.id, task.is_completed)}
+                          title={task.is_completed ? 'Click to uncheck (mark incomplete)' : 'Click to complete'}
+                          className={`h-5 w-5 rounded-lg border flex items-center justify-center transition-all ${
+                            task.is_completed
+                              ? 'bg-emerald-500 border-emerald-500 text-black hover:bg-rose-500 hover:border-rose-500 hover:text-white'
+                              : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
+                          }`}
+                        >
+                          {task.is_completed && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+                        </button>
 
-                      <span
-                        className={`text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
-                      >
-                        {task.calendar_name}
-                      </span>
+                        <span
+                          className={`text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
+                        >
+                          {task.calendar_name}
+                        </span>
+                      </div>
+
+                      {task.is_completed && (
+                        <button
+                          onClick={() => toggleTaskCompletion(task.id, task.is_completed)}
+                          title="Uncheck this item and mark as incomplete"
+                          className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-zinc-400 hover:text-amber-400 hover:bg-amber-400/10 border border-zinc-800 hover:border-amber-400/30 transition"
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                          <span>Uncheck</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Task Title */}

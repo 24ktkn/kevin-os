@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { supabase } from '@/lib/supabase';
+import { isEventPast } from '@/lib/date-utils';
 
 const CALENDAR_MAP: Record<string, string> = {
   'Kevin Nguyen': '24ktkn@gmail.com',
@@ -95,21 +96,28 @@ export async function GET() {
                 .eq('calendar_event_id', ev.id)
                 .maybeSingle();
 
+              const eventAlreadyPassed = isEventPast(dateStr, timeStr, durationMins);
+
               if (existing) {
+                const updatePayload: Record<string, unknown> = {
+                  title: ev.summary,
+                  type: 'Event',
+                  calendar_name: calName,
+                  due_date: dateStr,
+                  due_time: timeStr,
+                  duration_mins: durationMins,
+                  location: ev.location || '',
+                  notes: ev.description || '',
+                  is_scheduled: true,
+                  updated_at: new Date().toISOString(),
+                };
+                if (eventAlreadyPassed) {
+                  updatePayload.is_completed = true;
+                }
+
                 await supabase
                   .from('tasks')
-                  .update({
-                    title: ev.summary,
-                    type: 'Event',
-                    calendar_name: calName,
-                    due_date: dateStr,
-                    due_time: timeStr,
-                    duration_mins: durationMins,
-                    location: ev.location || '',
-                    notes: ev.description || '',
-                    is_scheduled: true,
-                    updated_at: new Date().toISOString(),
-                  })
+                  .update(updatePayload)
                   .eq('id', existing.id);
               } else {
                 await supabase.from('tasks').insert({
@@ -123,7 +131,7 @@ export async function GET() {
                   notes: ev.description || '',
                   calendar_event_id: ev.id,
                   is_scheduled: true,
-                  is_completed: false,
+                  is_completed: eventAlreadyPassed,
                 });
               }
               syncResults.calendarEventsSynced++;
@@ -200,6 +208,32 @@ export async function GET() {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     syncResults.errors.push(`Google Tasks sync: ${msg}`);
+  }
+
+  // 3. Auto-sweep all past events in database to is_completed = true
+  if (supabase) {
+    try {
+      const { data: activeEvents } = await supabase
+        .from('tasks')
+        .select('id, due_date, due_time, duration_mins')
+        .eq('type', 'Event')
+        .eq('is_completed', false);
+
+      if (activeEvents && activeEvents.length > 0) {
+        const pastIds = activeEvents
+          .filter((e) => isEventPast(e.due_date, e.due_time, e.duration_mins))
+          .map((e) => e.id);
+
+        if (pastIds.length > 0) {
+          await supabase
+            .from('tasks')
+            .update({ is_completed: true, updated_at: new Date().toISOString() })
+            .in('id', pastIds);
+        }
+      }
+    } catch (sweepErr) {
+      console.warn('Past events sweep error:', sweepErr);
+    }
   }
 
   return NextResponse.json({
