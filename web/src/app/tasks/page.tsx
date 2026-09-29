@@ -40,12 +40,14 @@ export default function MissionControlPage() {
   >('upcoming');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  // New task form state
+  // New item form state (Task vs Event)
+  const [modalMode, setModalMode] = useState<'Task' | 'Event'>('Task');
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDate, setNewTaskDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [newTaskTime, setNewTaskTime] = useState('10:00 AM');
   const [newTaskDuration, setNewTaskDuration] = useState(30);
   const [newTaskCalendar, setNewTaskCalendar] = useState<CalendarName>('Kevin Nguyen');
+  const [newTaskLocation, setNewTaskLocation] = useState('');
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [createTimeblock, setCreateTimeblock] = useState(false);
   const [submittingTask, setSubmittingTask] = useState(false);
@@ -135,24 +137,26 @@ export default function MissionControlPage() {
     }
   };
 
-  // Add New Task
+  // Add New Task or Standalone Event
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
     setSubmittingTask(true);
     const newId = crypto.randomUUID();
+    const isEvent = modalMode === 'Event';
 
     const taskItem: TaskItem = {
       id: newId,
       title: newTaskTitle.trim(),
-      type: createTimeblock ? 'Event' : 'Task',
+      type: isEvent ? 'Event' : createTimeblock ? 'Event' : 'Task',
       calendar_name: newTaskCalendar,
       due_date: newTaskDate,
       due_time: newTaskTime,
       duration_mins: newTaskDuration,
+      location: newTaskLocation.trim(),
       is_completed: false,
-      is_scheduled: createTimeblock,
+      is_scheduled: isEvent || createTimeblock,
       notes: newTaskNotes.trim(),
       created_at: new Date().toISOString(),
     };
@@ -165,9 +169,31 @@ export default function MissionControlPage() {
     });
 
     try {
-      // 2. Optional Google Calendar / Tasks sync
-      if (createTimeblock) {
-        await fetch('/api/schedule', {
+      if (isEvent) {
+        // 2a. Standalone Google Calendar Event
+        const res = await fetch('/api/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: taskItem.title,
+            description: taskItem.notes,
+            location: taskItem.location,
+            date: taskItem.due_date,
+            time: taskItem.due_time,
+            duration: taskItem.duration_mins,
+            calendar: taskItem.calendar_name,
+            isStandaloneEvent: true,
+            skipTask: true,
+          }),
+        });
+        const data = await res.json();
+        if (data.item) {
+          setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
+        }
+        setActiveTab('upcoming');
+      } else if (createTimeblock) {
+        // 2b. Timeblocked Task with Google Calendar
+        const res = await fetch('/api/schedule', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -177,21 +203,33 @@ export default function MissionControlPage() {
             time: taskItem.due_time,
             duration: taskItem.duration_mins,
             calendar: taskItem.calendar_name,
+            isStandaloneEvent: false,
           }),
         });
-      }
-
-      // 3. Supabase persist
-      if (supabase) {
-        await supabase.from('tasks').insert([taskItem]);
+        const data = await res.json();
+        if (data.item) {
+          setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
+        }
+      } else {
+        // 2c. Standalone Task (Supabase)
+        if (supabase) {
+          await supabase.from('tasks').insert([taskItem]);
+        }
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (taskItem.due_date && taskItem.due_date <= todayStr) {
+          setActiveTab('today');
+        } else {
+          setActiveTab('backlog');
+        }
       }
 
       // Reset form
       setNewTaskTitle('');
+      setNewTaskLocation('');
       setNewTaskNotes('');
       setIsAddModalOpen(false);
     } catch (err) {
-      console.error('Failed to create task:', err);
+      console.error('Failed to create item:', err);
     } finally {
       setSubmittingTask(false);
     }
@@ -343,8 +381,22 @@ export default function MissionControlPage() {
           </button>
 
           <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-md shadow-cyan-500/15 transition"
+            onClick={() => {
+              setModalMode('Event');
+              setIsAddModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-md shadow-purple-500/15 transition cursor-pointer"
+          >
+            <CalendarDays className="h-3.5 w-3.5" />
+            <span>New Event</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setModalMode('Task');
+              setIsAddModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-md shadow-cyan-500/15 transition cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             <span>New Task</span>
@@ -592,29 +644,71 @@ export default function MissionControlPage() {
         )}
       </main>
 
-      {/* Add Task Modal */}
+      {/* Add Task / Event Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-[#121218] p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-cyan-400" /> Create New Task
+                {modalMode === 'Event' ? (
+                  <>
+                    <CalendarDays className="h-4 w-4 text-purple-400" /> Create New Event
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 text-cyan-400" /> Create New Task
+                  </>
+                )}
               </h3>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
+            {/* Segmented Switch: Task vs Event */}
+            <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setModalMode('Task')}
+                className={`py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  modalMode === 'Task'
+                    ? 'bg-cyan-500 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <ListTodo className="h-3.5 w-3.5" />
+                <span>Task</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalMode('Event')}
+                className={`py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  modalMode === 'Event'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <CalendarDays className="h-3.5 w-3.5" />
+                <span>Calendar Event</span>
+              </button>
+            </div>
+
             <form onSubmit={handleCreateTask} className="space-y-3.5 text-xs">
               <div>
-                <label className="text-zinc-400 block mb-1">Task Title *</label>
+                <label className="text-zinc-400 block mb-1">
+                  {modalMode === 'Event' ? 'Event Title *' : 'Task Title *'}
+                </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Study Cardiology Chapter 4"
+                  placeholder={
+                    modalMode === 'Event'
+                      ? 'e.g. Dentist Appointment, Family Dinner, Gym Workout'
+                      : 'e.g. Study Cardiology Chapter 4, Call Insurance'
+                  }
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
@@ -623,9 +717,12 @@ export default function MissionControlPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-zinc-400 block mb-1">Due Date</label>
+                  <label className="text-zinc-400 block mb-1">
+                    {modalMode === 'Event' ? 'Event Date *' : 'Due Date'}
+                  </label>
                   <input
                     type="date"
+                    required={modalMode === 'Event'}
                     value={newTaskDate}
                     onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
                     onChange={(e) => setNewTaskDate(e.target.value)}
@@ -633,9 +730,12 @@ export default function MissionControlPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-400 block mb-1">Start Time</label>
+                  <label className="text-zinc-400 block mb-1">
+                    {modalMode === 'Event' ? 'Start Time *' : 'Start Time'}
+                  </label>
                   <input
                     type="text"
+                    required={modalMode === 'Event'}
                     placeholder="10:00 AM"
                     value={newTaskTime}
                     onChange={(e) => setNewTaskTime(e.target.value)}
@@ -657,7 +757,9 @@ export default function MissionControlPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-400 block mb-1">Calendar</label>
+                  <label className="text-zinc-400 block mb-1">
+                    {modalMode === 'Event' ? 'Target Calendar' : 'Category / Calendar'}
+                  </label>
                   <select
                     value={newTaskCalendar}
                     onChange={(e) => setNewTaskCalendar(e.target.value as CalendarName)}
@@ -672,43 +774,79 @@ export default function MissionControlPage() {
               </div>
 
               <div>
-                <label className="text-zinc-400 block mb-1">Notes / Instructions</label>
+                <label className="text-zinc-400 block mb-1">Location (Optional)</label>
+                <input
+                  type="text"
+                  placeholder={
+                    modalMode === 'Event'
+                      ? 'e.g. Dental Clinic, Zoom, Library, Home'
+                      : 'e.g. Library, Room 302, Online'
+                  }
+                  value={newTaskLocation}
+                  onChange={(e) => setNewTaskLocation(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-white focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-400 block mb-1">Notes / Description (Optional)</label>
                 <textarea
                   rows={2}
-                  placeholder="Optional details or checklist..."
+                  placeholder={
+                    modalMode === 'Event'
+                      ? 'Optional agenda, room details, or notes...'
+                      : 'Optional details or checklist...'
+                  }
                   value={newTaskNotes}
                   onChange={(e) => setNewTaskNotes(e.target.value)}
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-white focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="timeblock"
-                  checked={createTimeblock}
-                  onChange={(e) => setCreateTimeblock(e.target.checked)}
-                  className="rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-0"
-                />
-                <label htmlFor="timeblock" className="text-zinc-300 cursor-pointer">
-                  Create Google Calendar timeblock event
-                </label>
-              </div>
+              {modalMode === 'Event' ? (
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs">
+                  <CalendarDays className="h-4 w-4 shrink-0 text-purple-400" />
+                  <span>Syncs directly to your selected Google Calendar & appears under Upcoming Events.</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="timeblock"
+                    checked={createTimeblock}
+                    onChange={(e) => setCreateTimeblock(e.target.checked)}
+                    className="rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-0 cursor-pointer"
+                  />
+                  <label htmlFor="timeblock" className="text-zinc-300 cursor-pointer">
+                    Also create Google Calendar timeblock event
+                  </label>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-zinc-400 hover:text-white"
+                  className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submittingTask}
-                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold"
+                  className={`px-4 py-1.5 rounded-xl text-white font-semibold transition cursor-pointer shadow-md ${
+                    modalMode === 'Event'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-purple-500/20'
+                      : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-cyan-500/20'
+                  }`}
                 >
-                  {submittingTask ? 'Creating...' : 'Create Task'}
+                  {submittingTask
+                    ? modalMode === 'Event'
+                      ? 'Creating Event...'
+                      : 'Creating Task...'
+                    : modalMode === 'Event'
+                    ? 'Create Event'
+                    : 'Create Task'}
                 </button>
               </div>
             </form>

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 
 const CALENDAR_MAP: Record<string, string> = {
   'Kevin Nguyen': '24ktkn@gmail.com',
@@ -19,18 +19,31 @@ const TASKLIST_MAP: Record<string, string> = {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { title, description, date, time, duration, calendar: calCat, skipCalendar } = body;
+    const {
+      title,
+      description,
+      location,
+      date,
+      time,
+      duration,
+      calendar: calCat,
+      skipCalendar,
+      skipTask,
+      isStandaloneEvent,
+    } = body;
 
-    if (!title || !date || !time) {
-      return NextResponse.json({ error: 'Missing required schedule fields' }, { status: 400 });
+    if (!title || !date) {
+      return NextResponse.json({ error: 'Missing required title or date' }, { status: 400 });
     }
 
     const durationMins = parseInt(duration, 10) || 60;
-    const targetCalId = CALENDAR_MAP[calCat] || CALENDAR_MAP['School'];
-    const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['School'];
+    const targetCalId = CALENDAR_MAP[calCat] || CALENDAR_MAP['Kevin Nguyen'] || CALENDAR_MAP['School'];
+    const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['Kevin Nguyen'] || TASKLIST_MAP['School'];
+
+    const eventTime = time ? time.trim() : '10:00 AM';
 
     // Parse time supporting both "10:00 AM" / "02:30 PM" and 24h formats
-    const cleaned = time.trim().toLowerCase();
+    const cleaned = eventTime.toLowerCase();
     const isPm = cleaned.includes('pm');
     const isAm = cleaned.includes('am');
     const parts = cleaned.replace(/am|pm/g, '').trim().split(':');
@@ -55,9 +68,11 @@ export async function POST(req: NextRequest) {
     let taskId: string | null = null;
     let taskError: string | null = null;
 
-    // 1. Insert Google Calendar Timeblock (Service Account) unless skipCalendar is true
+    // 1. Insert Google Calendar Event unless skipCalendar is true
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    const eventSummary = isStandaloneEvent ? title.trim() : `🎓 [Task] ${title.trim()}`;
 
     if (!skipCalendar && clientEmail && rawPrivateKey) {
       try {
@@ -73,8 +88,9 @@ export async function POST(req: NextRequest) {
         const calRes = await calendarApi.events.insert({
           calendarId: targetCalId,
           requestBody: {
-            summary: `🎓 [Task] ${title}`,
+            summary: eventSummary,
             description: description || '',
+            location: location || '',
             start: { dateTime: `${startIso}-04:00` },
             end: { dateTime: `${endIso}-04:00` },
           },
@@ -87,12 +103,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Insert Google Task (OAuth)
+    // 2. Insert Google Task unless skipTask is true or it's a standalone event without explicit task
+    const shouldCreateTask = !isStandaloneEvent && !skipTask;
     const clientId = process.env.GOOGLE_TASKS_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_TASKS_CLIENT_SECRET;
     const refreshToken = process.env.GOOGLE_TASKS_REFRESH_TOKEN;
 
-    if (clientId && clientSecret && refreshToken) {
+    if (shouldCreateTask && clientId && clientSecret && refreshToken) {
       try {
         const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
         oauth2Client.setCredentials({ refresh_token: refreshToken });
@@ -102,7 +119,7 @@ export async function POST(req: NextRequest) {
           tasklist: targetTaskListId,
           requestBody: {
             title,
-            notes: `⏰ Scheduled: ${time}\n\n${description || ''}`,
+            notes: `⏰ Scheduled: ${eventTime}\n\n${description || ''}`,
             due: `${date}T00:00:00.000Z`,
           },
         });
@@ -114,29 +131,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Overall success if either calendar or task succeeded
-    const overallSuccess = Boolean(calendarEventId || taskId);
+    const sb = supabaseAdmin || supabase;
+    let createdItem = null;
 
-    // 3. Persist Event and/or Task into Supabase tasks table
-    if (supabase) {
-      if (calendarEventId) {
-        await supabase.from('tasks').insert({
-          title: `🎓 [Task] ${title}`,
+    if (sb) {
+      if (isStandaloneEvent || calendarEventId) {
+        const item = {
+          id: crypto.randomUUID(),
+          title: eventSummary,
           type: 'Event',
-          calendar_name: calCat || 'School',
+          calendar_name: calCat || 'Kevin Nguyen',
           due_date: date,
-          due_time: time,
+          due_time: eventTime,
           duration_mins: durationMins,
-          location: '',
+          location: location || '',
           notes: description || '',
           calendar_event_id: calendarEventId,
           is_scheduled: true,
           is_completed: false,
-        });
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { data } = await sb.from('tasks').insert([item]).select().single();
+        createdItem = data || item;
       }
 
-      if (taskId) {
-        await supabase.from('tasks').insert({
+      if (taskId && !isStandaloneEvent) {
+        await sb.from('tasks').insert({
+          id: crypto.randomUUID(),
           title: title,
           type: 'Task',
           calendar_name: calCat || 'School',
@@ -148,16 +170,19 @@ export async function POST(req: NextRequest) {
           google_task_id: taskId,
           is_scheduled: false,
           is_completed: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
       }
     }
 
     return NextResponse.json({
-      success: overallSuccess,
+      success: true,
       calendarEventId,
       calendarError,
       taskId,
       taskError,
+      item: createdItem,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
