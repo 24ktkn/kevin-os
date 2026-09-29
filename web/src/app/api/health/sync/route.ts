@@ -192,12 +192,31 @@ export async function POST(req: NextRequest) {
 
     const sleepDurationStr = `${sleepHours.toFixed(1)}h`;
     const rhrVal = parseFloat(String(rhr || 0)) || 0;
-    const weightVal = weight !== undefined && weight !== null ? parseFloat(String(weight)) || 170.0 : 170.0;
+    const sb = supabaseAdmin || supabase;
+    let weightVal = weight !== undefined && weight !== null ? parseFloat(String(weight)) || 0 : 0;
+    if (weightVal <= 50 || weightVal >= 400) {
+      if (sb) {
+        const { data: latestWeight } = await sb
+          .from('biometrics')
+          .select('bodyweight')
+          .gt('bodyweight', 50)
+          .lt('bodyweight', 400)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestWeight?.bodyweight) {
+          weightVal = parseFloat(String(latestWeight.bodyweight));
+        } else {
+          weightVal = 175.2;
+        }
+      } else {
+        weightVal = 175.2;
+      }
+    }
     const wCalVal = parseFloat(String(workoutCalories || 0)) || 0;
     const wDurVal = parseFloat(String(workoutDuration || 0)) || 0;
 
     // 1. Primary: Save to Supabase (immediate sub-20ms response)
-    const sb = supabaseAdmin || supabase;
     if (sb) {
       await sb.from('biometrics').upsert({
         date: targetDate,
