@@ -149,15 +149,38 @@ export async function POST(req: NextRequest) {
     const wakeVal = formatTimeString(wakeTime);
     const sleepTimeVal = formatTimeString(sleepTime);
 
-    // Fallback: If sleep is 0 but wakeTime and sleepTime are valid timestamps, calculate duration
+    // Fallback: If sleep is 0 or suspiciously small while wakeTime & sleepTime are provided
     if (sleepHours <= 0 && wakeTime && sleepTime) {
       try {
         const cleanWake = String(wakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
         const cleanSleep = String(sleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
-        const dWake = new Date(cleanWake);
-        const dSleep = new Date(cleanSleep);
-        if (!isNaN(dWake.getTime()) && !isNaN(dSleep.getTime())) {
-          const diffMs = dWake.getTime() - dSleep.getTime();
+        let dWake = new Date(cleanWake);
+        let dSleep = new Date(cleanSleep);
+
+        if (isNaN(dWake.getTime()) || isNaN(dSleep.getTime())) {
+          const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+          const mWake = matchTime(cleanWake);
+          const mSleep = matchTime(cleanSleep);
+          if (mWake && mSleep) {
+            let hW = parseInt(mWake[1], 10);
+            if (mWake[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
+            if (mWake[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
+            const mW = parseInt(mWake[2], 10);
+
+            let hS = parseInt(mSleep[1], 10);
+            if (mSleep[3]?.toUpperCase() === 'PM' && hS < 12) hS += 12;
+            if (mSleep[3]?.toUpperCase() === 'AM' && hS === 12) hS = 0;
+            const mS = parseInt(mSleep[2], 10);
+
+            let diffMinutes = (hW * 60 + mW) - (hS * 60 + mS);
+            if (diffMinutes < 0) diffMinutes += 24 * 60; // Spans midnight
+            if (diffMinutes > 0 && diffMinutes < 24 * 60) {
+              sleepHours = Math.round((diffMinutes / 60) * 10) / 10;
+            }
+          }
+        } else {
+          let diffMs = dWake.getTime() - dSleep.getTime();
+          if (diffMs < 0) diffMs += 24 * 3600 * 1000;
           if (diffMs > 0 && diffMs < 24 * 3600 * 1000) {
             sleepHours = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
           }
