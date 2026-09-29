@@ -18,9 +18,32 @@ import {
   Sparkles,
   Database,
   ListTodo,
+  CalendarCheck,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { supabase } from '@/lib/supabase';
+
+function formatScheduledDate(dateStr?: string): string {
+  if (!dateStr) return '';
+  try {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
+    if (dateStr === today) {
+      const d = new Date(dateStr + 'T12:00:00');
+      return `Today (${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })})`;
+    }
+    if (dateStr === tomorrow) {
+      const d = new Date(dateStr + 'T12:00:00');
+      return `Tomorrow (${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })})`;
+    }
+
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+  } catch {
+    return dateStr;
+  }
+}
 
 const CALENDAR_MAP: Record<string, string> = {
   'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
@@ -140,6 +163,54 @@ export default function SchoolSyncPage() {
             localStorage.setItem('kevin_school_completions', JSON.stringify(merged));
             return merged;
           });
+        }
+      }
+
+      // Also discover and sync scheduled items from tasks table in Supabase
+      if (supabase) {
+        const cleanStr = (s: string) =>
+          s
+            .replace(/\\,/g, ',')
+            .replace(/\\/g, '')
+            .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+            .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+
+        const { data: dbTasks } = await supabase
+          .from('tasks')
+          .select('title, due_date, due_time, duration_mins, calendar_name, is_scheduled, type')
+          .eq('is_scheduled', true);
+
+        if (dbTasks && dbTasks.length > 0) {
+          const newSchedFromDb: Record<
+            string,
+            { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }
+          > = {};
+
+          for (const ev of currentEvents) {
+            const cleanSummary = cleanStr(ev.summary);
+            const matched = dbTasks.find((t) => {
+              if (!t.title) return false;
+              const c = cleanStr(t.title);
+              return c === cleanSummary || (c.length > 5 && (c.includes(cleanSummary) || cleanSummary.includes(c)));
+            });
+
+            if (matched && matched.due_date) {
+              newSchedFromDb[ev.uid] = {
+                date: matched.due_date,
+                time: matched.due_time || '10:00 AM',
+                duration: matched.duration_mins || 60,
+                calendar: matched.calendar_name || 'School',
+                isTaskOnly: matched.type === 'Task',
+              };
+            }
+          }
+
+          if (Object.keys(newSchedFromDb).length > 0) {
+            setScheduledItems((prev) => ({ ...newSchedFromDb, ...prev }));
+          }
         }
       }
     } catch (err) {
@@ -326,13 +397,17 @@ export default function SchoolSyncPage() {
         isPast = eventEndTime < now.getTime();
       }
 
+      const schedInfo = scheduledItems[e.uid];
       const enriched: SchoolEvent = {
         ...e,
         category: effectiveCategory,
         isCompleted: isDone,
         isScheduled: isSched,
-        scheduledDate: scheduledItems[e.uid]?.date,
-        scheduledTime: scheduledItems[e.uid]?.time,
+        scheduledDate: schedInfo?.date,
+        scheduledTime: schedInfo?.time,
+        scheduledDuration: schedInfo?.duration,
+        scheduledCalendar: schedInfo?.calendar,
+        scheduledIsTaskOnly: schedInfo?.isTaskOnly,
       };
 
       if (effectiveCategory === 'module') {
@@ -640,6 +715,48 @@ export default function SchoolSyncPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* Scheduled Graphic Box */}
+                  {event.isScheduled && event.scheduledDate && (
+                    <div className="mt-3.5 p-3 rounded-xl bg-gradient-to-r from-emerald-950/50 via-teal-950/30 to-[#121218] border border-emerald-500/40 flex items-center justify-between gap-3 shadow-md shadow-emerald-950/20">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-8.5 w-8.5 rounded-lg bg-emerald-500/20 border border-emerald-500/35 flex items-center justify-center text-emerald-400 shrink-0">
+                          <CalendarCheck className="h-4.5 w-4.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-300">
+                              {event.scheduledIsTaskOnly ? 'Google Task Scheduled' : 'Timeblocked on Calendar'}
+                            </span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              {event.scheduledCalendar || 'School'}
+                            </span>
+                          </div>
+                          <div className="text-xs font-semibold text-white flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-emerald-200">
+                              📅 {formatScheduledDate(event.scheduledDate)}
+                            </span>
+                            {event.scheduledTime && (
+                              <>
+                                <span className="text-zinc-600">•</span>
+                                <span className="text-cyan-300 font-mono">
+                                  ⏰ {event.scheduledTime}
+                                </span>
+                              </>
+                            )}
+                            {event.scheduledDuration && event.scheduledDuration > 0 && !event.scheduledIsTaskOnly && (
+                              <>
+                                <span className="text-zinc-600">•</span>
+                                <span className="text-zinc-400 font-mono text-[11px]">
+                                  ({event.scheduledDuration}m block)
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Card Description Snippet */}
                   {event.description && (

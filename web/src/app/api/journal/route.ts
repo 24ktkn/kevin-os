@@ -227,6 +227,7 @@ export async function GET(req: NextRequest) {
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true,
+                timeZone: 'America/New_York',
               });
             } catch {
               timeStr = rawTs.split('T')[1] || '';

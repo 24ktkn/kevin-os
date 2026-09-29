@@ -73,13 +73,14 @@ export async function GET() {
               const end = new Date(ev.end.dateTime);
               durationMins = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
 
-              // Format date YYYY-MM-DD
-              dateStr = start.toLocaleDateString('en-CA'); // YYYY-MM-DD
-              // Format time 12-hour AM/PM
+              // Format date YYYY-MM-DD in America/New_York (Eastern Time)
+              dateStr = start.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+              // Format time 12-hour AM/PM in America/New_York (Eastern Time)
               timeStr = start.toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true,
+                timeZone: 'America/New_York',
               });
             } else if (ev.start?.date) {
               dateStr = ev.start.date;

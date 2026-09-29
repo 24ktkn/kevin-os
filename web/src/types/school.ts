@@ -14,6 +14,9 @@ export interface SchoolEvent {
   isCompleted?: boolean;
   scheduledTime?: string;
   scheduledDate?: string;
+  scheduledDuration?: number;
+  scheduledCalendar?: string;
+  scheduledIsTaskOnly?: boolean;
 }
 
 export interface SchoolFetchResponse {
