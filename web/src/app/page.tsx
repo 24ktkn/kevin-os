@@ -700,25 +700,31 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
-            <div className="h-8 w-8 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center">
+          <Link
+            href="/workouts"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 hover:border-cyan-500/50 flex flex-col justify-between space-y-3 transition shadow-sm group"
+          >
+            <div className="h-8 w-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center group-hover:scale-105 transition">
               <Dumbbell className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-xs font-bold text-zinc-300">Workout Tracker</div>
-              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 4</div>
+              <div className="text-xs font-bold text-white group-hover:text-cyan-400 transition">Workout Tracker</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Hevy Hub & Recovery</div>
             </div>
-          </div>
+          </Link>
 
-          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
-            <div className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+          <Link
+            href="/meals"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800/80 hover:border-orange-500/50 flex flex-col justify-between space-y-3 transition shadow-sm group"
+          >
+            <div className="h-8 w-8 rounded-lg bg-orange-500/10 text-orange-400 flex items-center justify-center group-hover:scale-105 transition">
               <UtensilsCrossed className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-xs font-bold text-zinc-300">Meal Prep</div>
-              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 4</div>
+              <div className="text-xs font-bold text-white group-hover:text-orange-400 transition">Meal Prep</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Costco & Weekly Rotation</div>
             </div>
-          </div>
+          </Link>
 
           <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
             <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">

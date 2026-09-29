@@ -21,8 +21,8 @@ const NAV_ITEMS = [
   { name: 'School Sync', href: '/school', icon: GraduationCap, activeMatch: (p: string) => p.startsWith('/school') },
   { name: 'Habit Tracker', href: '/habits', icon: Activity, activeMatch: (p: string) => p.startsWith('/habits') },
   { name: 'Daily Journal', href: '/journal', icon: BookOpen, activeMatch: (p: string) => p.startsWith('/journal') },
-  { name: 'Workout Tracker', href: '/workouts', icon: Dumbbell, activeMatch: (p: string) => p.startsWith('/workouts'), badge: 'Phase 4' },
-  { name: 'Meal Prep', href: '/meals', icon: UtensilsCrossed, activeMatch: (p: string) => p.startsWith('/meals'), badge: 'Phase 4' },
+  { name: 'Workout Tracker', href: '/workouts', icon: Dumbbell, activeMatch: (p: string) => p.startsWith('/workouts') },
+  { name: 'Meal Prep', href: '/meals', icon: UtensilsCrossed, activeMatch: (p: string) => p.startsWith('/meals') },
   { name: 'AI Scheduler', href: '/ai', icon: Bot, activeMatch: (p: string) => p.startsWith('/ai'), badge: 'Phase 5' },
 ];
 
