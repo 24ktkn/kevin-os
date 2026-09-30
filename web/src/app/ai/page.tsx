@@ -17,6 +17,7 @@ import {
   Rocket,
   Check,
   Zap,
+  CalendarClock,
 } from 'lucide-react';
 import {
   CalendarBusyBlock,
@@ -24,6 +25,8 @@ import {
   ProposedTask,
   ScheduledCommitItem,
 } from '@/types/ai';
+import { CalendarName } from '@/types/task';
+import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 const CALENDAR_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   'Kevin Nguyen': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20' },
@@ -55,6 +58,44 @@ export default function AISchedulerPage() {
   const [commitSuccess, setCommitSuccess] = useState<string>('');
   const [lastCommittedItems, setLastCommittedItems] = useState<ScheduledCommitItem[]>([]);
   const [undoing, setUndoing] = useState(false);
+  const [reschedulingBlock, setReschedulingBlock] = useState<{
+    title: string;
+    due_date: string;
+    due_time: string;
+    calendar_name: CalendarName;
+  } | null>(null);
+
+  const handleNudgeTask = (idx: number, deltaMins: number) => {
+    setProposedTasks((prev) =>
+      prev.map((t, i) => {
+        if (i !== idx) return t;
+        const [hStr, mStr] = (t.startTime24h || '09:00').split(':');
+        let totalMins = parseInt(hStr, 10) * 60 + parseInt(mStr || '0', 10) + deltaMins;
+        if (totalMins < 8 * 60) totalMins = 8 * 60;
+        if (totalMins > 21 * 60) totalMins = 21 * 60;
+        const newH = Math.floor(totalMins / 60);
+        const newM = totalMins % 60;
+        const newStart24 = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+
+        const endTotal = totalMins + t.durationMins;
+        const endH = Math.floor(endTotal / 60) % 24;
+        const endM = endTotal % 60;
+
+        const format12 = (h: number, m: number) => {
+          const ampm = h >= 12 ? 'PM' : 'AM';
+          const dh = h % 12 === 0 ? 12 : h % 12;
+          return `${dh}:${String(m).padStart(2, '0')} ${ampm}`;
+        };
+
+        return {
+          ...t,
+          startTime24h: newStart24,
+          startTimeFormatted: format12(newH, newM),
+          endTimeFormatted: format12(endH, endM),
+        };
+      })
+    );
+  };
 
   // 1. Fetch Calendar Context & Backlog
   const fetchContext = useCallback(async (date: string) => {
@@ -447,7 +488,24 @@ export default function AISchedulerPage() {
                         )}
                       </div>
 
-                      <div className="flex items-center gap-4 sm:text-right shrink-0">
+                      <div className="flex items-center gap-3 sm:text-right shrink-0">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleNudgeTask(idx, -15)}
+                            className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-mono transition cursor-pointer"
+                            title="Start 15m earlier"
+                          >
+                            -15m
+                          </button>
+                          <button
+                            onClick={() => handleNudgeTask(idx, 15)}
+                            className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-mono transition cursor-pointer"
+                            title="Start 15m later"
+                          >
+                            +15m
+                          </button>
+                        </div>
+
                         <div>
                           <div className="text-[10px] font-bold uppercase text-zinc-500">Scheduled</div>
                           <div className="text-xs font-black text-cyan-400 font-mono">
@@ -478,18 +536,35 @@ export default function AISchedulerPage() {
                   {busyBlocks.map((b, idx) => (
                     <div
                       key={idx}
-                      className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/80 flex items-center justify-between"
+                      className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/80 flex items-center justify-between gap-3"
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <div className="h-2 w-2 rounded-full bg-cyan-400 shrink-0" />
-                        <div>
-                          <div className="text-xs font-bold text-zinc-200">{b.title}</div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-zinc-200 truncate">{b.title}</div>
                           <div className="text-[10px] text-zinc-500">Calendar: [{b.calendar}]</div>
                         </div>
                       </div>
 
-                      <div className="text-xs font-mono font-bold text-zinc-400">
-                        {b.startTime} – {b.endTime}
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-xs font-mono font-bold text-zinc-400">
+                          {b.startTime} – {b.endTime}
+                        </div>
+                        <button
+                          onClick={() =>
+                            setReschedulingBlock({
+                              title: b.title,
+                              due_date: targetDate,
+                              due_time: b.startTime,
+                              calendar_name: (b.calendar || 'Kevin Nguyen') as CalendarName,
+                            })
+                          }
+                          className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-cyan-400 border border-zinc-700/60 transition cursor-pointer text-[10px] font-semibold flex items-center gap-1"
+                          title="Reschedule / Shift Event"
+                        >
+                          <CalendarClock className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Reschedule</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -503,6 +578,25 @@ export default function AISchedulerPage() {
           )}
         </div>
       </div>
+
+      {/* Reschedule Modal */}
+      {reschedulingBlock && (
+        <RescheduleModal
+          isOpen={Boolean(reschedulingBlock)}
+          onClose={() => setReschedulingBlock(null)}
+          item={{
+            title: reschedulingBlock.title,
+            due_date: reschedulingBlock.due_date,
+            due_time: reschedulingBlock.due_time,
+            calendar_name: reschedulingBlock.calendar_name,
+            type: 'Event',
+          }}
+          onSuccess={async () => {
+            await fetchContext(targetDate);
+            setReschedulingBlock(null);
+          }}
+        />
+      )}
     </div>
   );
 }

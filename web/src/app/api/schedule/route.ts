@@ -30,6 +30,8 @@ export async function POST(req: NextRequest) {
       skipCalendar,
       skipTask,
       isStandaloneEvent,
+      repeat,
+      recurrenceRule,
     } = body;
 
     if (!title || !date) {
@@ -41,6 +43,14 @@ export async function POST(req: NextRequest) {
     const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['Kevin Nguyen'] || TASKLIST_MAP['School'];
 
     const eventTime = time ? time.trim() : '10:00 AM';
+
+    const RRULE_MAP: Record<string, string> = {
+      'Daily': 'RRULE:FREQ=DAILY',
+      'Weekly': 'RRULE:FREQ=WEEKLY',
+      'Monthly': 'RRULE:FREQ=MONTHLY',
+      'Every Weekday (Mon-Fri)': 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+    };
+    const rrule = recurrenceRule || (repeat && RRULE_MAP[repeat] ? RRULE_MAP[repeat] : null);
 
     // Parse time supporting both "10:00 AM" / "02:30 PM" and 24h formats
     const cleaned = eventTime.toLowerCase();
@@ -85,15 +95,20 @@ export async function POST(req: NextRequest) {
 
         const calendarApi = google.calendar({ version: 'v3', auth: jwtClient });
 
+        const calReqBody: Record<string, unknown> = {
+          summary: eventSummary,
+          description: description || '',
+          location: location || '',
+          start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
+          end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
+        };
+        if (rrule) {
+          calReqBody.recurrence = [rrule];
+        }
+
         const calRes = await calendarApi.events.insert({
           calendarId: targetCalId,
-          requestBody: {
-            summary: eventSummary,
-            description: description || '',
-            location: location || '',
-            start: { dateTime: `${startIso}-04:00` },
-            end: { dateTime: `${endIso}-04:00` },
-          },
+          requestBody: calReqBody,
         });
 
         calendarEventId = calRes.data.id || null;
@@ -119,7 +134,7 @@ export async function POST(req: NextRequest) {
           tasklist: targetTaskListId,
           requestBody: {
             title,
-            notes: `⏰ Scheduled: ${eventTime}\n\n${description || ''}`,
+            notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
             due: `${date}T00:00:00.000Z`,
           },
         });
@@ -136,7 +151,7 @@ export async function POST(req: NextRequest) {
 
     if (sb) {
       if (isStandaloneEvent || calendarEventId) {
-        const item = {
+        const item: Record<string, unknown> = {
           id: crypto.randomUUID(),
           title: eventSummary,
           type: 'Event',
@@ -147,6 +162,8 @@ export async function POST(req: NextRequest) {
           location: location || '',
           notes: description || '',
           calendar_event_id: calendarEventId,
+          google_task_id: taskId,
+          recurrence_rule: rrule || null,
           is_scheduled: true,
           is_completed: false,
           created_at: new Date().toISOString(),
@@ -163,12 +180,14 @@ export async function POST(req: NextRequest) {
           type: 'Task',
           calendar_name: calCat || 'School',
           due_date: date,
-          due_time: '',
-          duration_mins: 0,
-          location: '',
+          due_time: eventTime,
+          duration_mins: durationMins,
+          location: location || '',
           notes: description || '',
           google_task_id: taskId,
-          is_scheduled: false,
+          calendar_event_id: calendarEventId,
+          recurrence_rule: rrule || null,
+          is_scheduled: Boolean(calendarEventId),
           is_completed: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

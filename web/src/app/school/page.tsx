@@ -19,9 +19,12 @@ import {
   Database,
   ListTodo,
   CalendarCheck,
+  CalendarClock,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
+import { CalendarName } from '@/types/task';
 import { supabase } from '@/lib/supabase';
+import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 function formatScheduledDate(dateStr?: string): string {
   if (!dateStr) return '';
@@ -74,6 +77,29 @@ export default function SchoolSyncPage() {
   const [formState, setFormState] = useState<
     Record<string, { date: string; time: string; duration: number; calendar: string }>
   >({});
+  const [reschedulingSchoolItem, setReschedulingSchoolItem] = useState<SchoolEvent | null>(null);
+
+  const handleSchoolRescheduleSuccess = (rescheduled: {
+    newDate: string;
+    newTime: string;
+    durationMins: number;
+  }) => {
+    if (!reschedulingSchoolItem) return;
+    const uid = reschedulingSchoolItem.uid;
+    const updated = {
+      ...scheduledItems,
+      [uid]: {
+        date: rescheduled.newDate,
+        time: rescheduled.newTime,
+        duration: rescheduled.durationMins,
+        calendar: reschedulingSchoolItem.scheduledCalendar || 'School',
+        isTaskOnly: reschedulingSchoolItem.scheduledIsTaskOnly,
+      },
+    };
+    setScheduledItems(updated);
+    localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+    setReschedulingSchoolItem(null);
+  };
 
   // Load from Supabase (with fallback to localStorage)
   const loadStoredData = useCallback(async () => {
@@ -755,6 +781,15 @@ export default function SchoolSyncPage() {
                           </div>
                         </div>
                       </div>
+
+                      <button
+                        onClick={() => setReschedulingSchoolItem(event)}
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-sm"
+                        title="Reschedule this module or assignment"
+                      >
+                        <CalendarClock className="h-3.5 w-3.5" />
+                        <span>Reschedule</span>
+                      </button>
                     </div>
                   )}
 
@@ -902,6 +937,24 @@ export default function SchoolSyncPage() {
           </div>
         )}
       </main>
+
+      {/* Reschedule Modal */}
+      {reschedulingSchoolItem && (
+        <RescheduleModal
+          isOpen={Boolean(reschedulingSchoolItem)}
+          onClose={() => setReschedulingSchoolItem(null)}
+          item={{
+            title: reschedulingSchoolItem.summary,
+            schoolUid: reschedulingSchoolItem.uid,
+            due_date: reschedulingSchoolItem.scheduledDate,
+            due_time: reschedulingSchoolItem.scheduledTime,
+            duration_mins: reschedulingSchoolItem.scheduledDuration,
+            calendar_name: (reschedulingSchoolItem.scheduledCalendar || 'School') as CalendarName,
+            type: reschedulingSchoolItem.scheduledIsTaskOnly ? 'Task' : 'Event',
+          }}
+          onSuccess={handleSchoolRescheduleSuccess}
+        />
+      )}
     </div>
   );
 }

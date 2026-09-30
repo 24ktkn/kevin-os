@@ -17,10 +17,13 @@ import {
   X,
   ListTodo,
   RotateCcw,
+  CalendarClock,
+  Repeat,
 } from 'lucide-react';
-import { TaskItem, CalendarName } from '@/types/task';
+import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
 import { isEventPast } from '@/lib/date-utils';
+import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
   'School': { bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
@@ -50,7 +53,35 @@ export default function MissionControlPage() {
   const [newTaskLocation, setNewTaskLocation] = useState('');
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [createTimeblock, setCreateTimeblock] = useState(false);
+  const [newTaskRepeat, setNewTaskRepeat] = useState<RepeatOption>('None');
   const [submittingTask, setSubmittingTask] = useState(false);
+  const [reschedulingTask, setReschedulingTask] = useState<TaskItem | null>(null);
+
+  const handleRescheduleSuccess = (rescheduled: {
+    newDate: string;
+    newTime: string;
+    durationMins: number;
+    updatedTask?: TaskItem;
+  }) => {
+    if (!reschedulingTask) return;
+    setTasks((prev) => {
+      const next = prev.map((t) =>
+        t.id === reschedulingTask.id || (rescheduled.updatedTask && t.id === rescheduled.updatedTask.id)
+          ? {
+              ...t,
+              ...(rescheduled.updatedTask || {}),
+              due_date: rescheduled.newDate,
+              due_time: rescheduled.newTime,
+              duration_mins: rescheduled.durationMins,
+              is_completed: false,
+            }
+          : t
+      );
+      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+      return next;
+    });
+    setReschedulingTask(null);
+  };
 
   // Fetch tasks from Supabase (with localStorage fallback)
   const fetchTasks = useCallback(async () => {
@@ -197,6 +228,7 @@ export default function MissionControlPage() {
             calendar: taskItem.calendar_name,
             isStandaloneEvent: true,
             skipTask: true,
+            repeat: newTaskRepeat,
           }),
         });
         const data = await res.json();
@@ -660,16 +692,35 @@ export default function MissionControlPage() {
 
                   {/* Footer Meta Row */}
                   <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60 text-[11px] text-zinc-400">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-3 w-3 text-zinc-500" />
-                      {task.due_date || 'No Date'}
-                    </span>
-                    {task.due_time && (
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3 text-zinc-500" />
-                        {task.due_time} {task.type === 'Event' && task.duration_mins > 0 && `(${task.duration_mins}m)`}
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <span className="flex items-center gap-1 shrink-0">
+                        <Calendar className="h-3 w-3 text-zinc-500" />
+                        {task.due_date || 'No Date'}
                       </span>
-                    )}
+                      {task.due_time && (
+                        <span className="flex items-center gap-1 shrink-0">
+                          <Clock className="h-3 w-3 text-zinc-500" />
+                          {task.due_time} {task.type === 'Event' && task.duration_mins > 0 && `(${task.duration_mins}m)`}
+                        </span>
+                      )}
+                      {task.recurrence_rule && (
+                        <span title={`Recurring: ${task.recurrence_rule}`} className="text-purple-400 shrink-0">
+                          <Repeat className="h-3 w-3" />
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReschedulingTask(task);
+                      }}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 border border-zinc-800 hover:border-cyan-500/30 transition cursor-pointer shrink-0"
+                      title="Reschedule / Shift Timeblock"
+                    >
+                      <CalendarClock className="h-3 w-3" />
+                      <span>Reschedule</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -807,6 +858,23 @@ export default function MissionControlPage() {
                 </div>
               </div>
 
+              {modalMode === 'Event' && (
+                <div>
+                  <label className="text-zinc-400 block mb-1">Repeat / Recurrence</label>
+                  <select
+                    value={newTaskRepeat}
+                    onChange={(e) => setNewTaskRepeat(e.target.value as RepeatOption)}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="None">None (One-time event)</option>
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                    <option value="Every Weekday (Mon-Fri)">Every Weekday (Mon-Fri)</option>
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="text-zinc-400 block mb-1">Location (Optional)</label>
                 <input
@@ -886,6 +954,16 @@ export default function MissionControlPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Reschedule Modal */}
+      {reschedulingTask && (
+        <RescheduleModal
+          isOpen={Boolean(reschedulingTask)}
+          onClose={() => setReschedulingTask(null)}
+          item={reschedulingTask}
+          onSuccess={handleRescheduleSuccess}
+        />
       )}
     </div>
   );
