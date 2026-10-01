@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Activity,
@@ -25,9 +25,16 @@ import {
   UtensilsCrossed,
   Bot,
   BookOpen,
+  CalendarClock,
+  CalendarCheck,
+  ListTodo,
+  Layers,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { TaskItem, CalendarName } from '@/types/task';
+import { isEventPast } from '@/lib/date-utils';
+import { groupTodayAgendaItems, UnifiedAgendaItem } from '@/lib/agenda-utils';
+import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 interface HealthData {
   date: string;
@@ -112,11 +119,13 @@ export default function HomePage() {
     }
   }, []);
 
-  // Fetch Today's Tasks & Events from Supabase
+  const [reschedulingItem, setReschedulingItem] = useState<UnifiedAgendaItem | null>(null);
+
+  // Fetch Today's Tasks & Events from Supabase with Option A auto-sweep
   const fetchTodayTasks = useCallback(async () => {
     try {
       if (supabase) {
-        const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
         const { data, error } = await supabase
           .from('tasks')
           .select('*')
@@ -124,7 +133,27 @@ export default function HomePage() {
           .order('due_time', { ascending: true, nullsFirst: false });
 
         if (!error && data) {
-          setTodayTasks(data);
+          const raw = data as TaskItem[];
+          const pastEventIds: string[] = [];
+
+          // Option A: Auto-sweep past events to completed
+          const processed = raw.map((t) => {
+            if (!t.is_completed && t.type === 'Event' && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
+              pastEventIds.push(t.id);
+              return { ...t, is_completed: true };
+            }
+            return t;
+          });
+
+          setTodayTasks(processed);
+
+          if (pastEventIds.length > 0) {
+            supabase
+              .from('tasks')
+              .update({ is_completed: true, updated_at: new Date().toISOString() })
+              .in('id', pastEventIds)
+              .then();
+          }
         }
       }
     } catch (err) {
@@ -133,6 +162,14 @@ export default function HomePage() {
       setLoadingTasks(false);
     }
   }, []);
+
+  // 60-second background heartbeat to check if any active timeblock has passed
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchTodayTasks();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [fetchTodayTasks]);
 
   // Load all initial data
   const loadAll = useCallback(async () => {
@@ -144,6 +181,11 @@ export default function HomePage() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  // Group today's tasks into deduplicated unified items
+  const unifiedAgendaItems = useMemo(() => {
+    return groupTodayAgendaItems(todayTasks);
+  }, [todayTasks]);
 
   // Toggle habit completion with instant optimistic update
   const toggleHabit = async (habitName: string, currentCompleted: boolean) => {
@@ -186,43 +228,100 @@ export default function HomePage() {
     }
   };
 
-  // Toggle task completion
-  const toggleTask = async (id: string, currentCompleted: boolean) => {
+  // Toggle Timeblock Only (Google Calendar / Supabase Event)
+  const toggleTimeblockOnly = async (eventId: string, currentCompleted: boolean) => {
     const nextCompleted = !currentCompleted;
-    const target = todayTasks.find((t) => t.id === id);
-
-    // Optimistic update
     setTodayTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, is_completed: nextCompleted } : t))
+      prev.map((t) => (t.id === eventId ? { ...t, is_completed: nextCompleted } : t))
     );
-
-    // Sync to Google Tasks via complete API
-    fetch('/api/tasks/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskId: id,
-        googleTaskId: target?.google_task_id,
-        title: target?.title,
-        calendar_name: target?.calendar_name,
-        completed: nextCompleted,
-      }),
-    }).catch((err) => console.error('Failed to sync dashboard task completion to Google Tasks:', err));
 
     if (supabase) {
       await supabase
         .from('tasks')
         .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-        .eq('id', id);
+        .eq('id', eventId);
+    }
+  };
 
-      if (target?.title) {
-        const clean = target.title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
-        if (clean) {
-          await supabase
-            .from('school_items')
-            .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-            .ilike('title', `%${clean}%`);
-        }
+  // Toggle Task Checklist Only (Google Tasks / School Sync / Supabase Task)
+  const toggleTaskOnly = async (
+    taskId: string,
+    currentCompleted: boolean,
+    title: string,
+    calendarName: string,
+    googleTaskId?: string
+  ) => {
+    const nextCompleted = !currentCompleted;
+    setTodayTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, is_completed: nextCompleted } : t))
+    );
+
+    fetch('/api/tasks/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        googleTaskId,
+        title,
+        calendar_name: calendarName,
+        completed: nextCompleted,
+      }),
+    }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
+
+    if (supabase) {
+      await supabase
+        .from('tasks')
+        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+        .eq('id', taskId);
+
+      const clean = title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+      if (clean) {
+        await supabase
+          .from('school_items')
+          .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+          .ilike('title', `%${clean}%`);
+      }
+    }
+  };
+
+  // Toggle Both Timeblock and Task Simultaneously (1-Click Complete Both)
+  const toggleBoth = async (
+    eventId: string,
+    taskId: string,
+    currentCompleted: boolean,
+    title: string,
+    calendarName: string,
+    googleTaskId?: string
+  ) => {
+    const nextCompleted = !currentCompleted;
+    setTodayTasks((prev) =>
+      prev.map((t) => (t.id === eventId || t.id === taskId ? { ...t, is_completed: nextCompleted } : t))
+    );
+
+    fetch('/api/tasks/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        googleTaskId,
+        title,
+        calendar_name: calendarName,
+        completed: nextCompleted,
+      }),
+    }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
+
+    if (supabase) {
+      await supabase
+        .from('tasks')
+        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+        .in('id', [eventId, taskId]);
+
+      const clean = title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+      if (clean) {
+        await supabase
+          .from('school_items')
+          .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+          .ilike('title', `%${clean}%`);
       }
     }
   };
@@ -559,7 +658,7 @@ export default function HomePage() {
               Today's Agenda & Critical Focus
             </h2>
             <span className="text-[11px] font-mono text-zinc-400 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800">
-              {todayTasks.length} items
+              {unifiedAgendaItems.length} items
             </span>
           </div>
 
@@ -576,7 +675,7 @@ export default function HomePage() {
           <div className="h-28 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse flex items-center justify-center text-xs text-zinc-400">
             Loading Today's Schedule...
           </div>
-        ) : todayTasks.length === 0 ? (
+        ) : unifiedAgendaItems.length === 0 ? (
           <div className="p-8 rounded-2xl bg-[#14141B] border border-zinc-800/80 text-center space-y-2">
             <CheckCircle2 className="h-8 w-8 text-emerald-400 mx-auto opacity-80" />
             <p className="text-sm font-medium text-white">No pending tasks or events for today!</p>
@@ -586,66 +685,259 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {todayTasks.map((task) => {
-              const calStyle = CALENDAR_COLORS[task.calendar_name] || {
+            {unifiedAgendaItems.map((item) => {
+              const calStyle = CALENDAR_COLORS[item.calendar_name] || {
                 bg: 'bg-zinc-800/40',
                 text: 'text-zinc-300',
                 border: 'border-zinc-700',
               };
 
+              // --- A. Merged Dual-Action Card (Timeblock + Task) ---
+              if (item.isMerged && item.timeblock && item.task) {
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3.5 rounded-2xl bg-[#14141B] border transition-all duration-150 flex flex-col justify-between gap-3 shadow-md ${
+                      item.allCompleted
+                        ? 'border-emerald-500/40 opacity-70 bg-emerald-950/10'
+                        : 'border-zinc-800 hover:border-zinc-700'
+                    }`}
+                  >
+                    {/* Card Top: Badges & Fast Master Action */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
+                          >
+                            {item.calendar_name}
+                          </span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/20 flex items-center gap-1">
+                            <Layers className="h-2.5 w-2.5" />
+                            Timeblock + Task
+                          </span>
+                        </div>
+
+                        {/* 1-Click Master Action: Complete Both */}
+                        <button
+                          onClick={() =>
+                            toggleBoth(
+                              item.timeblock!.id,
+                              item.task!.id,
+                              item.allCompleted,
+                              item.cleanTitle,
+                              item.calendar_name,
+                              item.task!.googleTaskId
+                            )
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                            item.allCompleted
+                              ? 'bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700'
+                              : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                          }`}
+                          title={item.allCompleted ? 'Mark both incomplete' : 'Complete both in 1 click'}
+                        >
+                          <Check className="h-3 w-3" />
+                          <span>{item.allCompleted ? 'All Done' : 'Complete Both'}</span>
+                        </button>
+                      </div>
+
+                      {/* Clean Title */}
+                      <div
+                        className={`text-xs font-bold leading-snug line-clamp-2 ${
+                          item.allCompleted ? 'line-through text-zinc-400' : 'text-white'
+                        }`}
+                      >
+                        {item.cleanTitle}
+                      </div>
+                    </div>
+
+                    {/* Dual Independent Action Pills */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-800/60">
+                      {/* Pill 1: Calendar Timeblock */}
+                      <button
+                        type="button"
+                        onClick={() => toggleTimeblockOnly(item.timeblock!.id, item.timeblock!.isCompleted)}
+                        className={`p-2 rounded-xl border text-left transition flex items-start gap-2 cursor-pointer ${
+                          item.timeblock!.isCompleted
+                            ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                            : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700 text-zinc-300'
+                        }`}
+                        title="Click to toggle timeblock completion"
+                      >
+                        <div
+                          className={`mt-0.5 h-3.5 w-3.5 rounded flex items-center justify-center border shrink-0 ${
+                            item.timeblock!.isCompleted
+                              ? 'bg-emerald-500 border-emerald-400 text-black'
+                              : 'border-zinc-700 bg-zinc-900'
+                          }`}
+                        >
+                          {item.timeblock!.isCompleted && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[9px] font-bold uppercase text-zinc-400 flex items-center gap-1">
+                            <CalendarCheck className="h-2.5 w-2.5 text-cyan-400" /> Timeblock
+                          </div>
+                          <div className="text-[11px] font-bold font-mono text-cyan-300 truncate">
+                            {item.timeblock!.timeStr || 'Untimed'}{' '}
+                            {item.timeblock!.durationMins > 0 && `(${item.timeblock!.durationMins}m)`}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Pill 2: Google Task Checklist */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          toggleTaskOnly(
+                            item.task!.id,
+                            item.task!.isCompleted,
+                            item.cleanTitle,
+                            item.calendar_name,
+                            item.task!.googleTaskId
+                          )
+                        }
+                        className={`p-2 rounded-xl border text-left transition flex items-start gap-2 cursor-pointer ${
+                          item.task!.isCompleted
+                            ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                            : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700 text-zinc-300'
+                        }`}
+                        title="Click to toggle Google Task deliverable"
+                      >
+                        <div
+                          className={`mt-0.5 h-3.5 w-3.5 rounded flex items-center justify-center border shrink-0 ${
+                            item.task!.isCompleted
+                              ? 'bg-emerald-500 border-emerald-400 text-black'
+                              : 'border-zinc-700 bg-zinc-900'
+                          }`}
+                        >
+                          {item.task!.isCompleted && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[9px] font-bold uppercase text-zinc-400 flex items-center gap-1">
+                            <ListTodo className="h-2.5 w-2.5 text-purple-400" /> Google Task
+                          </div>
+                          <div className="text-[11px] font-bold text-zinc-200 truncate">
+                            {item.task!.isCompleted ? 'Completed' : 'Pending'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Footer: Status Summary & Reschedule Button */}
+                    <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/40 text-[10px] text-zinc-400">
+                      <span className="text-zinc-500 font-mono truncate max-w-[170px]">
+                        {item.allCompleted
+                          ? '✓ Fully complete'
+                          : item.timeblock!.isCompleted
+                          ? '⏰ Timeblock passed'
+                          : item.task!.isCompleted
+                          ? '✓ Task done (timeblock pending)'
+                          : 'Scheduled for today'}
+                      </span>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReschedulingItem(item);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 border border-zinc-800 hover:border-cyan-500/30 transition cursor-pointer shrink-0"
+                        title="Reschedule / Shift to another day or time"
+                      >
+                        <CalendarClock className="h-3 w-3" />
+                        <span>Reschedule</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              // --- B. Standalone Item (Single Event or Task) ---
               return (
                 <div
-                  key={task.id}
-                  className={`p-3.5 rounded-xl bg-[#14141B] border transition-all duration-150 flex items-start gap-3 shadow-md ${
-                    task.is_completed
+                  key={item.id}
+                  className={`p-3.5 rounded-xl bg-[#14141B] border transition-all duration-150 flex flex-col justify-between gap-2.5 shadow-md ${
+                    item.allCompleted
                       ? 'border-emerald-500/30 opacity-60 bg-emerald-950/10'
                       : 'border-zinc-800 hover:border-zinc-700'
                   }`}
                 >
-                  <button
-                    onClick={() => toggleTask(task.id, task.is_completed)}
-                    className={`mt-0.5 h-4.5 w-4.5 rounded-md flex items-center justify-center border transition-all shrink-0 ${
-                      task.is_completed
-                        ? 'bg-emerald-500 border-emerald-400 text-black shadow-sm'
-                        : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
-                    }`}
-                  >
-                    {task.is_completed && <Check className="h-3 w-3 stroke-[3]" />}
-                  </button>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
-                      >
-                        {task.calendar_name}
-                      </span>
-                      {task.due_time && (
-                        <span className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
-                          <Clock className="h-2.5 w-2.5" />
-                          {task.due_time}
-                        </span>
-                      )}
-                      {task.duration_mins > 0 && (
-                        <span className="text-[10px] text-zinc-400 font-mono">
-                          ({task.duration_mins}m)
-                        </span>
-                      )}
-                    </div>
-
-                    <div
-                      className={`text-xs font-bold leading-snug truncate ${
-                        task.is_completed ? 'line-through text-zinc-400' : 'text-white'
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={() => {
+                        if (item.timeblock) {
+                          toggleTimeblockOnly(item.timeblock.id, item.timeblock.isCompleted);
+                        } else if (item.task) {
+                          toggleTaskOnly(
+                            item.task.id,
+                            item.task.isCompleted,
+                            item.cleanTitle,
+                            item.calendar_name,
+                            item.task.googleTaskId
+                          );
+                        }
+                      }}
+                      className={`mt-0.5 h-4.5 w-4.5 rounded-md flex items-center justify-center border transition-all shrink-0 cursor-pointer ${
+                        item.allCompleted
+                          ? 'bg-emerald-500 border-emerald-400 text-black shadow-sm'
+                          : 'border-zinc-700 bg-zinc-900/80 hover:border-cyan-400'
                       }`}
                     >
-                      {task.title}
-                    </div>
+                      {item.allCompleted && <Check className="h-3 w-3 stroke-[3]" />}
+                    </button>
 
-                    {task.location && (
-                      <p className="text-[10px] text-zinc-400 truncate mt-0.5">
-                        📍 {task.location}
-                      </p>
-                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${calStyle.bg} ${calStyle.text} ${calStyle.border}`}
+                        >
+                          {item.calendar_name}
+                        </span>
+                        {item.due_time && (
+                          <span className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
+                            <Clock className="h-2.5 w-2.5" />
+                            {item.due_time}
+                          </span>
+                        )}
+                        {item.duration_mins > 0 && (
+                          <span className="text-[10px] text-zinc-400 font-mono">
+                            ({item.duration_mins}m)
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        className={`text-xs font-bold leading-snug truncate ${
+                          item.allCompleted ? 'line-through text-zinc-400' : 'text-white'
+                        }`}
+                      >
+                        {item.cleanTitle}
+                      </div>
+
+                      {item.location && (
+                        <p className="text-[10px] text-zinc-400 truncate mt-0.5">
+                          📍 {item.location}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Standalone Reschedule Action */}
+                  <div className="flex items-center justify-between pt-1 border-t border-zinc-800/40 text-[10px] text-zinc-400">
+                    <span className="text-zinc-500">
+                      {item.timeblock ? 'Calendar Event' : 'Google Task'}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReschedulingItem(item);
+                      }}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 border border-zinc-800 hover:border-cyan-500/30 transition cursor-pointer"
+                      title="Reschedule / Shift to another day or time"
+                    >
+                      <CalendarClock className="h-3 w-3" />
+                      <span>Reschedule</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -740,6 +1032,29 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+
+      {/* Reschedule Modal */}
+      {reschedulingItem && (
+        <RescheduleModal
+          isOpen={Boolean(reschedulingItem)}
+          onClose={() => setReschedulingItem(null)}
+          item={{
+            id: reschedulingItem.task?.id || reschedulingItem.timeblock?.id,
+            title: reschedulingItem.cleanTitle,
+            calendar_name: reschedulingItem.calendar_name,
+            due_date: reschedulingItem.due_date,
+            due_time: reschedulingItem.timeblock?.timeStr || reschedulingItem.due_time,
+            duration_mins: reschedulingItem.timeblock?.durationMins || reschedulingItem.duration_mins,
+            calendar_event_id: reschedulingItem.timeblock?.calendarEventId,
+            google_task_id: reschedulingItem.task?.googleTaskId,
+            type: reschedulingItem.timeblock ? 'Event' : 'Task',
+          }}
+          onSuccess={async () => {
+            await fetchTodayTasks();
+            setReschedulingItem(null);
+          }}
+        />
+      )}
     </div>
   );
 }
