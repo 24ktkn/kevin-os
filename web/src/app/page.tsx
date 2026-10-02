@@ -394,7 +394,16 @@ export default function HomePage() {
               </span>
             )}
           </div>
-          <span className="text-xs text-zinc-400">Apple Health Synced</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-400 hidden sm:inline">Apple Health Synced</span>
+            <Link
+              href="/health"
+              className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition"
+            >
+              <span>Longitudinal Analytics</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </div>
 
         {loadingHealth ? (
@@ -540,13 +549,13 @@ export default function HomePage() {
         </div>
 
         {loadingHabits ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
               <div key={i} className="h-64 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {habits.map((habit) => (
               <div
                 key={habit.name}
@@ -982,15 +991,18 @@ export default function HomePage() {
             </div>
           </Link>
 
-          <div className="p-3.5 rounded-xl bg-[#14141B]/60 border border-zinc-800/60 flex flex-col justify-between space-y-3 opacity-75">
-            <div className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
-              <Activity className="h-4 w-4" />
+          <Link
+            href="/habits"
+            className="p-3.5 rounded-xl bg-[#14141B] border border-zinc-800 hover:border-amber-500/50 hover:bg-zinc-900/80 transition group flex flex-col justify-between space-y-3"
+          >
+            <div className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center group-hover:scale-105 transition">
+              <Flame className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-xs font-bold text-zinc-300">Habit Tracker</div>
-              <div className="text-[10px] text-zinc-400 mt-0.5">Phase 3</div>
+              <div className="text-xs font-bold text-white group-hover:text-amber-400 transition">Habit Tracker</div>
+              <div className="text-[10px] text-zinc-400 mt-0.5">Streaks & 30D Velocity</div>
             </div>
-          </div>
+          </Link>
 
           <Link
             href="/workouts"

@@ -42,6 +42,7 @@ interface VelocityDay {
   wake: boolean;
   gym: boolean;
   journal: boolean;
+  anki: boolean;
   total: number;
 }
 
@@ -49,6 +50,7 @@ interface RawHistoryRecord {
   'Wake Up On Time': boolean;
   'Gym Workout': boolean;
   'Journaling': boolean;
+  'Anki': boolean;
   total: number;
 }
 
@@ -124,13 +126,15 @@ export default function HabitsPage() {
           'Wake Up On Time': false,
           'Gym Workout': false,
           'Journaling': false,
+          'Anki': false,
           total: 0,
         };
         const updated = { ...cur, [habitName]: nextStatus };
         updated.total =
           (updated['Wake Up On Time'] ? 1 : 0) +
           (updated['Gym Workout'] ? 1 : 0) +
-          (updated['Journaling'] ? 1 : 0);
+          (updated['Journaling'] ? 1 : 0) +
+          (updated['Anki'] ? 1 : 0);
         return { ...prev, [todayStr]: updated };
       });
     }
@@ -329,7 +333,7 @@ export default function HabitsPage() {
         </section>
 
         {/* SECTION 2: STREAK MATRIX & CONSISTENCY KPIS */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {habits.map((h) => (
             <div
               key={`kpi-${h.name}`}
@@ -377,13 +381,16 @@ export default function HabitsPage() {
             </div>
             <div className="flex items-center gap-3 text-xs text-zinc-400">
               <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-400"></span> 3/3 Full Hit
+                <span className="h-2 w-2 rounded-full bg-emerald-400"></span> 4/4 Full Hit
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-cyan-400"></span> 2/3 Solid
+                <span className="h-2 w-2 rounded-full bg-cyan-400"></span> 3/4 Solid
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-zinc-600"></span> 1/3 Partial
+                <span className="h-2 w-2 rounded-full bg-indigo-400"></span> 2/4 Half
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-zinc-600"></span> 1/4 Partial
               </span>
             </div>
           </div>
@@ -392,12 +399,23 @@ export default function HabitsPage() {
           <div className="pt-2">
             <div className="flex items-end gap-1.5 sm:gap-2 h-36 border-b border-zinc-800/80 pb-2 overflow-x-auto">
               {velocity30Days.map((v) => {
-                const heightPct = v.total === 3 ? 100 : v.total === 2 ? 66 : v.total === 1 ? 33 : 6;
-                const barColor =
-                  v.total === 3
-                    ? 'bg-gradient-to-t from-emerald-600 to-emerald-400 shadow-md shadow-emerald-500/20'
+                const heightPct =
+                  v.total === 4
+                    ? 100
+                    : v.total === 3
+                    ? 75
                     : v.total === 2
+                    ? 50
+                    : v.total === 1
+                    ? 25
+                    : 6;
+                const barColor =
+                  v.total === 4
+                    ? 'bg-gradient-to-t from-emerald-600 to-emerald-400 shadow-md shadow-emerald-500/20'
+                    : v.total === 3
                     ? 'bg-gradient-to-t from-cyan-600 to-cyan-400'
+                    : v.total === 2
+                    ? 'bg-gradient-to-t from-indigo-600 to-indigo-400'
                     : v.total === 1
                     ? 'bg-zinc-600'
                     : 'bg-zinc-800/60';
@@ -410,7 +428,7 @@ export default function HabitsPage() {
                     {/* Hover Tooltip */}
                     <div className="absolute -top-12 z-30 hidden group-hover:flex flex-col items-center pointer-events-none whitespace-nowrap bg-zinc-900 border border-zinc-700 text-white text-[10px] px-2 py-1 rounded-md shadow-xl">
                       <span className="font-semibold">{v.dayLabel}</span>
-                      <span className="text-zinc-400">{v.total}/3 Habits Done</span>
+                      <span className="text-zinc-400">{v.total}/4 Habits Done</span>
                     </div>
 
                     <div
@@ -452,6 +470,7 @@ export default function HabitsPage() {
                 <option value="Wake Up On Time">Wake Up On Time ⏰</option>
                 <option value="Gym Workout">Gym Workout 💪</option>
                 <option value="Journaling">Journaling ✍️</option>
+                <option value="Anki">Anki 🎴</option>
               </select>
 
               {/* Month / Year Navigator */}
@@ -512,10 +531,12 @@ export default function HabitsPage() {
                 let tileBg = 'bg-zinc-900/60 border-zinc-800/60 text-zinc-500';
                 if (!c.isFuture && isCompleted) {
                   if (selectedFilter === 'All Habits (Combined Count)') {
-                    if (completionCount === 3) {
+                    if (completionCount === 4) {
                       tileBg = 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-sm';
-                    } else if (completionCount === 2) {
+                    } else if (completionCount === 3) {
                       tileBg = 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300';
+                    } else if (completionCount === 2) {
+                      tileBg = 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300';
                     } else {
                       tileBg = 'bg-zinc-800/90 border-zinc-700/80 text-zinc-300';
                     }
@@ -542,6 +563,7 @@ export default function HabitsPage() {
                         <div>⏰ Wake: {c.record?.['Wake Up On Time'] ? '✓ Done' : '✕ Missed'}</div>
                         <div>💪 Gym: {c.record?.['Gym Workout'] ? '✓ Done' : '✕ Missed'}</div>
                         <div>✍️ Journal: {c.record?.['Journaling'] ? '✓ Done' : '✕ Missed'}</div>
+                        <div>🎴 Anki: {c.record?.['Anki'] ? '✓ Done' : '✕ Missed'}</div>
                       </div>
                     </div>
 
@@ -558,16 +580,18 @@ export default function HabitsPage() {
                       {selectedFilter === 'All Habits (Combined Count)' ? (
                         <span
                           className={`text-xs font-mono font-bold ${
-                            completionCount === 3
+                            completionCount === 4
                               ? 'text-emerald-400'
-                              : completionCount === 2
+                              : completionCount === 3
                               ? 'text-cyan-400'
+                              : completionCount === 2
+                              ? 'text-indigo-400'
                               : completionCount === 1
                               ? 'text-zinc-400'
                               : 'text-zinc-600'
                           }`}
                         >
-                          {completionCount > 0 ? `${completionCount}/3` : '—'}
+                          {completionCount > 0 ? `${completionCount}/4` : '—'}
                         </span>
                       ) : (
                         <span className="text-xs font-bold">

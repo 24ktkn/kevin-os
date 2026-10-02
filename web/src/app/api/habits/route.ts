@@ -4,12 +4,13 @@ import { supabase, supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-const HABITS_LIST = ['Wake Up On Time', 'Gym Workout', 'Journaling'];
+const HABITS_LIST = ['Wake Up On Time', 'Gym Workout', 'Journaling', 'Anki'];
 
 const HABIT_DB_MAP: Record<string, string> = {
   'Wake Up On Time': 'wake_up_on_time',
   'Gym Workout': 'gym_workout',
   'Journaling': 'journaling',
+  'Anki': 'anki',
 };
 
 // Night owl rollover: if before 2 AM EDT, count as previous day
@@ -51,7 +52,7 @@ async function mirrorHabitToSheets(todayStr: string, habit: string, completed: b
     const sheets = getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'Habits!A1:D1005',
+      range: 'Habits!A1:E1005',
     });
     const rows = res.data.values || [];
     if (rows.length === 0) return;
@@ -77,11 +78,11 @@ async function mirrorHabitToSheets(todayStr: string, habit: string, completed: b
         requestBody: { values: [[valToSet]] },
       });
     } else {
-      const newRow = [todayStr, 'FALSE', 'FALSE', 'FALSE'];
+      const newRow = [todayStr, 'FALSE', 'FALSE', 'FALSE', 'FALSE'];
       newRow[colIdx] = valToSet;
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'Habits!A:D',
+        range: 'Habits!A:E',
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [newRow] },
       });
@@ -96,6 +97,7 @@ interface HabitRecord {
   wake_up_on_time: boolean;
   gym_workout: boolean;
   journaling: boolean;
+  anki: boolean;
 }
 
 export async function GET() {
@@ -106,10 +108,23 @@ export async function GET() {
     // 1. Primary: Load from Supabase (sub-20ms)
     const sb = supabaseAdmin || supabase;
     if (sb) {
-      const { data, error } = await sb
+      // First attempt querying with anki column
+      let { data, error } = await sb
         .from('habits')
-        .select('date, wake_up_on_time, gym_workout, journaling')
+        .select('date, wake_up_on_time, gym_workout, journaling, anki')
         .order('date', { ascending: true });
+
+      // Graceful fallback if anki column is not yet migrated in Supabase table
+      if (error && (error.code === '42703' || error.message?.includes('anki'))) {
+        const fallback = await sb
+          .from('habits')
+          .select('date, wake_up_on_time, gym_workout, journaling')
+          .order('date', { ascending: true });
+        if (!fallback.error && fallback.data) {
+          data = fallback.data.map((r) => ({ ...r, anki: false }));
+          error = null;
+        }
+      }
 
       if (!error && data && data.length > 0) {
         records = data.map((r) => ({
@@ -117,6 +132,7 @@ export async function GET() {
           wake_up_on_time: Boolean(r.wake_up_on_time),
           gym_workout: Boolean(r.gym_workout),
           journaling: Boolean(r.journaling),
+          anki: Boolean(r.anki),
         }));
       }
     }
@@ -127,7 +143,7 @@ export async function GET() {
         const sheets = getGoogleSheetsClient();
         const res = await sheets.spreadsheets.values.get({
           spreadsheetId: SPREADSHEET_ID,
-          range: 'Habits!A1:D1005',
+          range: 'Habits!A1:E1005',
         });
         const rows = res.data.values || [];
         if (rows.length > 1) {
@@ -136,6 +152,7 @@ export async function GET() {
           const wakeIdx = headers.indexOf('Wake Up On Time');
           const gymIdx = headers.indexOf('Gym Workout');
           const journalIdx = headers.indexOf('Journaling');
+          const ankiIdx = headers.indexOf('Anki');
 
           for (let i = 1; i < rows.length; i++) {
             const d = String(rows[i][dateIdx] || '').trim();
@@ -145,6 +162,7 @@ export async function GET() {
               wake_up_on_time: String(rows[i][wakeIdx] || '').trim().toUpperCase() === 'TRUE',
               gym_workout: String(rows[i][gymIdx] || '').trim().toUpperCase() === 'TRUE',
               journaling: String(rows[i][journalIdx] || '').trim().toUpperCase() === 'TRUE',
+              anki: ankiIdx !== -1 && String(rows[i][ankiIdx] || '').trim().toUpperCase() === 'TRUE',
             });
           }
         }
@@ -161,6 +179,7 @@ export async function GET() {
         wake_up_on_time: false,
         gym_workout: false,
         journaling: false,
+        anki: false,
       };
       records.push(todayRecord);
 
@@ -173,30 +192,53 @@ export async function GET() {
     }
 
     // 5. Build rawHistory dictionary across all dates
-    const rawHistory: Record<string, { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; total: number }> = {};
+    const rawHistory: Record<
+      string,
+      { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; 'Anki': boolean; total: number }
+    > = {};
     for (const rec of records) {
-      const total = (rec.wake_up_on_time ? 1 : 0) + (rec.gym_workout ? 1 : 0) + (rec.journaling ? 1 : 0);
+      const total =
+        (rec.wake_up_on_time ? 1 : 0) +
+        (rec.gym_workout ? 1 : 0) +
+        (rec.journaling ? 1 : 0) +
+        (rec.anki ? 1 : 0);
       rawHistory[rec.date] = {
         'Wake Up On Time': rec.wake_up_on_time,
         'Gym Workout': rec.gym_workout,
         'Journaling': rec.journaling,
+        'Anki': rec.anki,
         total,
       };
     }
 
     // 6. Build 30-Day Completeness Velocity
-    const velocity30Days: Array<{ date: string; dayLabel: string; wake: boolean; gym: boolean; journal: boolean; total: number }> = [];
+    const velocity30Days: Array<{
+      date: string;
+      dayLabel: string;
+      wake: boolean;
+      gym: boolean;
+      journal: boolean;
+      anki: boolean;
+      total: number;
+    }> = [];
     for (let i = 29; i >= 0; i--) {
       const pastDate = new Date();
       pastDate.setDate(pastDate.getDate() - i);
       const dStr = pastDate.toISOString().split('T')[0];
-      const rec = rawHistory[dStr] || { 'Wake Up On Time': false, 'Gym Workout': false, 'Journaling': false, total: 0 };
+      const rec = rawHistory[dStr] || {
+        'Wake Up On Time': false,
+        'Gym Workout': false,
+        'Journaling': false,
+        'Anki': false,
+        total: 0,
+      };
       velocity30Days.push({
         date: dStr,
         dayLabel: pastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         wake: rec['Wake Up On Time'],
         gym: rec['Gym Workout'],
         journal: rec['Journaling'],
+        anki: rec['Anki'],
         total: rec.total,
       });
     }
@@ -260,7 +302,14 @@ export async function GET() {
 
       return {
         name: habitName,
-        icon: habitName.includes('Wake') ? '⏰' : habitName.includes('Gym') ? '💪' : '✍️',
+        icon:
+          habitName === 'Anki'
+            ? '🎴'
+            : habitName.includes('Wake')
+            ? '⏰'
+            : habitName.includes('Gym')
+            ? '💪'
+            : '✍️',
         streak,
         consistencyRate,
         totalCompleted,
@@ -305,22 +354,30 @@ export async function POST(request: Request) {
     // 1. Primary: Save to Supabase (immediate sub-20ms response)
     const sb = supabaseAdmin || supabase;
     if (sb) {
-      const { data: existing } = await sb.from('habits').select('*').eq('date', todayStr).single();
-      if (existing) {
-        await sb.from('habits').update({
-          [dbCol]: completed,
-          updated_at: new Date().toISOString(),
-        }).eq('date', todayStr);
-      } else {
-        await sb.from('habits').insert({
-          date: todayStr,
-          wake_up_on_time: false,
-          gym_workout: false,
-          journaling: false,
-          [dbCol]: completed,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+      try {
+        const { data: existing } = await sb.from('habits').select('*').eq('date', todayStr).single();
+        if (existing) {
+          await sb
+            .from('habits')
+            .update({
+              [dbCol]: completed,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('date', todayStr);
+        } else {
+          await sb.from('habits').insert({
+            date: todayStr,
+            wake_up_on_time: false,
+            gym_workout: false,
+            journaling: false,
+            anki: false,
+            [dbCol]: completed,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
+      } catch (sbErr) {
+        console.warn('Supabase habit update warning (e.g. column not yet in schema):', sbErr);
       }
     }
 
