@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { calculateEstimated1RM, resolveMuscleGroup } from '../route';
 
 export const dynamic = 'force-dynamic';
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     const headers = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/[\"\'\s_]/g, ''));
-    
+
     // Detect column indexes flexibly
     const dateIdx = headers.findIndex((h) => h.includes('start') || h.includes('date'));
     const exeIdx = headers.findIndex((h) => h.includes('exercise') || h.includes('movement'));
@@ -58,34 +59,55 @@ export async function POST(req: NextRequest) {
     const titleIdx = headers.findIndex((h) => h.includes('title') || h.includes('workout'));
     const durIdx = headers.findIndex((h) => h.includes('duration') || h.includes('second'));
 
-    if (dateIdx === -1 || exeIdx === -1 || weightIdx === -1 || repsIdx === -1) {
+    if (dateIdx === -1 || exeIdx === -1) {
       return NextResponse.json(
-        { error: 'CSV missing required Hevy columns (Date/Start Time, Exercise, Weight, Reps)' },
+        { error: 'CSV missing required Date or Exercise column headers' },
         { status: 400 }
       );
     }
 
-    const sheets = getGoogleSheetsClient();
-    const existingRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'workout_logs!A1:K3000',
-    });
-
-    const existingRows = existingRes.data.values || [];
+    const sb = supabaseAdmin || supabase;
     const existingKeys = new Set<string>();
 
-    if (existingRows.length > 1) {
-      const eDateIdx = 0;
-      const eExeIdx = 2;
-      const eSetIdx = 3;
-      for (let i = 1; i < existingRows.length; i++) {
-        const r = existingRows[i];
-        const key = `${String(r[eDateIdx] || '').trim()}|${String(r[eExeIdx] || '').trim().toLowerCase()}|${String(r[eSetIdx] || '').trim()}`;
-        existingKeys.add(key);
+    // 1. Fetch existing keys from Supabase
+    if (sb) {
+      try {
+        const { data: existingRows } = await sb.from('workout_logs').select('date, exercise, set_number');
+        if (existingRows) {
+          for (const r of existingRows) {
+            existingKeys.add(`${r.date}|${String(r.exercise).toLowerCase()}|${r.set_number}`);
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase workout_logs existing check notice:', err);
       }
     }
 
-    const newRowsToAppend: string[][] = [];
+    // Fallback: Check existing from Sheets if Supabase had none
+    if (existingKeys.size === 0) {
+      try {
+        const sheets = getGoogleSheetsClient();
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'workout_logs!A:E',
+        });
+        const existingRows = res.data.values || [];
+        for (let i = 1; i < existingRows.length; i++) {
+          const r = existingRows[i];
+          const d = String(r[0] || '').trim();
+          const exe = String(r[2] || '').trim().toLowerCase();
+          const setN = String(r[3] || '').trim();
+          if (d && exe) {
+            existingKeys.add(`${d}|${exe}|${setN}`);
+          }
+        }
+      } catch (sheetsErr) {
+        console.warn('Sheets existing check fallback notice:', sheetsErr);
+      }
+    }
+
+    const dbRowsToInsert: any[] = [];
+    const sheetsRowsToAppend: string[][] = [];
     const uniqueDates = new Set<string>();
     let skippedCount = 0;
 
@@ -110,8 +132,8 @@ export async function POST(req: NextRequest) {
       const exercise = parts[exeIdx] || '';
       if (!formattedDate || !exercise) continue;
 
-      const weight = parseFloat(parts[weightIdx].replace(/[^0-9.]/g, '')) || 0;
-      const reps = parseInt(parts[repsIdx].replace(/[^0-9]/g, ''), 10) || 0;
+      const weight = parseFloat((parts[weightIdx] || '0').replace(/[^0-9.]/g, '')) || 0;
+      const reps = parseInt((parts[repsIdx] || '0').replace(/[^0-9]/g, ''), 10) || 0;
 
       const dayExeKey = `${formattedDate}|${exercise.toLowerCase()}`;
       let setNum = setIdx !== -1 && parts[setIdx] ? parseInt(parts[setIdx].replace(/[^0-9]/g, ''), 10) || 0 : 0;
@@ -151,39 +173,74 @@ export async function POST(req: NextRequest) {
         durationMins = rawDur > 200 ? Math.round(rawDur / 60) : Math.round(rawDur);
       }
 
-      const row = [
-        formattedDate, // Date
-        splitDay,      // Split Day
-        exercise,      // Exercise
-        String(setNum),// Set Number
-        String(weight),// Weight (lbs)
-        String(reps),  // Reps
-        String(estimated1RM), // Estimated 1RM
-        '12:00:00',    // Timestamp
-        '0',           // Duration (Mins)
-        String(durationMins || 60), // Gym Duration (Mins)
-        '0',           // Distance (km)
-      ];
+      // Supabase format
+      dbRowsToInsert.push({
+        date: formattedDate,
+        split_day: splitDay,
+        exercise,
+        set_number: setNum,
+        weight_lbs: weight,
+        reps,
+        estimated_1rm: estimated1RM,
+        timestamp: '12:00:00',
+        duration_mins: 0,
+        gym_duration_mins: durationMins || 60,
+        distance_km: 0,
+      });
 
-      newRowsToAppend.push(row);
+      // Sheets backup format
+      sheetsRowsToAppend.push([
+        formattedDate,
+        splitDay,
+        exercise,
+        String(setNum),
+        String(weight),
+        String(reps),
+        String(estimated1RM),
+        '12:00:00',
+        '0',
+        String(durationMins || 60),
+        '0',
+      ]);
+
       uniqueDates.add(formattedDate);
     }
 
-    if (newRowsToAppend.length > 0) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: 'workout_logs!A:K',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: newRowsToAppend },
-      });
+    // 1. Primary write to Supabase workout_logs
+    if (sb && dbRowsToInsert.length > 0) {
+      try {
+        const { error: insErr } = await sb.from('workout_logs').insert(dbRowsToInsert);
+        if (insErr) {
+          console.warn('Supabase workout_logs insert notice:', insErr.message);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase workout_logs insert error:', sbErr);
+      }
+    }
+
+    // 2. Non-blocking Google Sheets append (optional backup)
+    if (sheetsRowsToAppend.length > 0) {
+      try {
+        const sheets = getGoogleSheetsClient();
+        sheets.spreadsheets.values
+          .append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: 'workout_logs!A:K',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: sheetsRowsToAppend },
+          })
+          .catch((e) => console.warn('Background sheets workout append notice:', e));
+      } catch {
+        // silent
+      }
     }
 
     return NextResponse.json({
       success: true,
-      importedSetsCount: newRowsToAppend.length,
+      importedSetsCount: dbRowsToInsert.length,
       importedWorkoutsCount: uniqueDates.size,
       skippedCount,
-      message: `Successfully imported ${newRowsToAppend.length} sets across ${uniqueDates.size} workout sessions (${skippedCount} duplicates skipped).`,
+      message: `Successfully imported ${dbRowsToInsert.length} sets across ${uniqueDates.size} workout sessions (${skippedCount} duplicates skipped).`,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

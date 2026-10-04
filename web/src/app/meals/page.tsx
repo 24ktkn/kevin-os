@@ -49,15 +49,22 @@ export default function MealsPage() {
     }
   }, []);
 
-  // Save checked items to localStorage
+  // Save checked items to localStorage and Supabase
   const toggleItem = (itemId: string) => {
     setCheckedItems((prev) => {
-      const next = { ...prev, [itemId]: !prev[itemId] };
+      const nextChecked = !prev[itemId];
+      const next = { ...prev, [itemId]: nextChecked };
       try {
         localStorage.setItem('kevin_costco_checked_items', JSON.stringify(next));
       } catch {
         // ignore
       }
+      // Non-blocking sync to Supabase
+      fetch('/api/meals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: itemId, isChecked: nextChecked }),
+      }).catch(() => {});
       return next;
     });
   };

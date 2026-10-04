@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import {
   CostcoGroceryItem,
   MealPlanWeek,
@@ -58,42 +59,41 @@ const DEFAULT_RECIPES: HighProteinRecipe[] = [
       'Toss diced sweet potatoes with 1 tbsp olive oil, salt, and smoked paprika. Roast for 25 mins.',
       'Marinate butterflied chicken breasts in lemon juice, olive oil, and herbs for 15 minutes.',
       'Sear chicken on a hot grill pan for 5-6 mins per side until internal temp hits 165°F.',
-      'Slice chicken and divide into 5 containers alongside roasted sweet potatoes.',
+      'Pack each meal container with 6.5 oz sliced chicken and 1 cup roasted sweet potatoes.',
     ],
-    tags: ['Lean Protein', 'Micronutrient Dense', 'Costco Essential'],
+    tags: ['Lean Muscle', 'High Volume', 'Anti-Inflammatory'],
   },
   {
-    id: 'fairlife-anabolic-proats',
-    title: 'Anabolic Fairlife Overnight Oats & Greek Yogurt',
+    id: 'overnight-fairlife-proats',
+    title: 'Fairlife High-Protein Chocolate Berry Overnight Oats',
     category: 'Breakfast',
     servings: 5,
     prepTimeMins: 15,
     calories: 460,
     proteinGrams: 42,
     carbsGrams: 54,
-    fatGrams: 7,
+    fatGrams: 8,
     ingredients: [
-      '2.5 cups Rolled Oats (Costco Kirkland Oats)',
-      '3 cups Fairlife 2% Ultra-Filtered Milk',
-      '1.5 cups Kirkland Plain Non-Fat Greek Yogurt',
-      '3 scoops Whey Isolate (Vanilla or Chocolate)',
-      '1 cup Frozen mixed berries (Costco Three Berry Blend)',
+      '2.5 cups Rolled Oats (Costco Quaker bulk box)',
+      '4 cups Fairlife Chocolate 30g Protein Shakes',
+      '5 tbsp Chia Seeds',
+      '1.5 cups Frozen Organic Blueberries',
+      '2 tbsp Peanut Butter Powder',
     ],
     instructions: [
-      'In a large mixing bowl, combine rolled oats, Fairlife milk, Greek yogurt, and protein powder.',
-      'Whisk vigorously until smooth and no protein clumps remain.',
-      'Distribute mixture evenly into 5 glass mason jars or containers.',
-      'Top each with a handful of frozen Kirkland mixed berries.',
-      'Refrigerate overnight (minimum 6 hours). Ready to eat cold or microwaved for 60 seconds.',
+      'Line up 5 wide-mouth mason jars on your counter.',
+      'Distribute 1/2 cup rolled oats, 1 tbsp chia seeds, and 1 scoop PB powder into each jar.',
+      'Pour approx. 3/4 cup Fairlife shake into each jar and stir thoroughly.',
+      'Top with frozen blueberries, seal airtight, and refrigerate overnight (ready for 5 mornings).',
     ],
-    tags: ['Quick Breakfast', 'High Fiber', '40g+ Protein'],
+    tags: ['Quick Prep', 'No Cook', 'Grab & Go'],
   },
 ];
 
 const DEFAULT_WEEKLY_PLAN: MealPlanWeek = {
   weekNumber: 1,
-  theme: 'High-Volume Hypertrophy & Clean Provisioning',
-  dailyAverageCalories: 2650,
+  theme: 'High-Protein Muscle Hypertrophy & Clean Bulking',
+  dailyAverageCalories: 2645,
   dailyAverageProtein: 185,
   schedule: [
     {
@@ -101,7 +101,7 @@ const DEFAULT_WEEKLY_PLAN: MealPlanWeek = {
       breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
       lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
       dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Kirkland Greek Yogurt + Honey & Almonds',
+      snack: 'Kirkland Greek Yogurt (1 cup) + Mixed Berries',
       proteinGrams: 188,
       calories: 2620,
     },
@@ -110,9 +110,9 @@ const DEFAULT_WEEKLY_PLAN: MealPlanWeek = {
       breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
       lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
       dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Protein Shake + Rice Cakes with Peanut Butter',
-      proteinGrams: 185,
-      calories: 2640,
+      snack: 'Fairlife Protein Shake + Almonds',
+      proteinGrams: 192,
+      calories: 2650,
     },
     {
       dayName: 'Wednesday',
@@ -172,45 +172,81 @@ export async function GET(req: NextRequest) {
     const activeTrip: 'Trip 1' | 'Trip 2' = requestedTrip.includes('2') || dayOfMonth > 14 ? 'Trip 2' : 'Trip 1';
     const activeWeek = Math.min(4, Math.max(1, Math.ceil(dayOfMonth / 7)));
 
-    const sheets = getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Costco_MealPlan!A1:E100',
-    });
-
-    const rows = res.data.values || [];
-    const groceryItems: CostcoGroceryItem[] = [];
+    let groceryItems: CostcoGroceryItem[] = [];
     const deptSet = new Set<string>();
 
-    if (rows.length > 1) {
-      const headers = rows[0].map((h: string) => String(h).trim().toLowerCase());
-      const tripIdx = headers.findIndex((h: string) => h.includes('trip') || h.includes('phase'));
-      const deptIdx = headers.findIndex((h: string) => h.includes('dept') || h.includes('department'));
-      const nameIdx = headers.findIndex((h: string) => h.includes('item') || h.includes('name'));
-      const scaleIdx = headers.findIndex((h: string) => h.includes('scale') || h.includes('size'));
-      const assignIdx = headers.findIndex((h: string) => h.includes('target') || h.includes('assignment'));
+    const sb = supabaseAdmin || supabase;
 
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i];
-        const itemName = String(r[nameIdx] || '').trim();
-        if (!itemName) continue;
+    // 1. Primary: Load from Supabase costco_meal_items (sub-20ms)
+    if (sb) {
+      try {
+        const { data: dbItems, error: dbErr } = await sb
+          .from('costco_meal_items')
+          .select('*')
+          .order('sort_order', { ascending: true });
 
-        const tripStr = String(r[tripIdx] || 'Trip 1').trim();
-        const deptStr = String(r[deptIdx] || 'General').trim();
-        const scaleStr = String(r[scaleIdx] || '').trim();
-        const assignStr = String(r[assignIdx] || '').trim();
+        if (!dbErr && dbItems && dbItems.length > 0) {
+          for (const item of dbItems) {
+            deptSet.add(item.department || 'General');
+            groceryItems.push({
+              id: item.id,
+              trip: item.trip || 'Trip 1',
+              department: item.department || 'General',
+              itemName: item.item_name,
+              targetScaleSize: item.target_scale_size || '',
+              mealAssignment: item.meal_assignment || '',
+              isChecked: Boolean(item.is_checked),
+            });
+          }
+        }
+      } catch (sbErr) {
+        console.warn('Supabase costco_meal_items fetch notice:', sbErr);
+      }
+    }
 
-        deptSet.add(deptStr);
-
-        groceryItems.push({
-          id: `item_${i}`,
-          trip: tripStr,
-          department: deptStr,
-          itemName,
-          targetScaleSize: scaleStr,
-          mealAssignment: assignStr,
-          isChecked: false,
+    // 2. Fallback to Google Sheets if Supabase is empty
+    if (groceryItems.length === 0) {
+      try {
+        const sheets = getGoogleSheetsClient();
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'Costco_MealPlan!A1:E100',
         });
+
+        const rows = res.data.values || [];
+        if (rows.length > 1) {
+          const headers = rows[0].map((h: string) => String(h).trim().toLowerCase());
+          const tripIdx = headers.findIndex((h: string) => h.includes('trip') || h.includes('phase'));
+          const deptIdx = headers.findIndex((h: string) => h.includes('dept') || h.includes('department'));
+          const nameIdx = headers.findIndex((h: string) => h.includes('item') || h.includes('name'));
+          const scaleIdx = headers.findIndex((h: string) => h.includes('scale') || h.includes('size'));
+          const assignIdx = headers.findIndex((h: string) => h.includes('target') || h.includes('assignment'));
+
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i];
+            const itemName = String(r[nameIdx] || '').trim();
+            if (!itemName) continue;
+
+            const tripStr = String(r[tripIdx] || 'Trip 1').trim();
+            const deptStr = String(r[deptIdx] || 'General').trim();
+            const scaleStr = String(r[scaleIdx] || '').trim();
+            const assignStr = String(r[assignIdx] || '').trim();
+
+            deptSet.add(deptStr);
+
+            groceryItems.push({
+              id: `item_${i}`,
+              trip: tripStr,
+              department: deptStr,
+              itemName,
+              targetScaleSize: scaleStr,
+              mealAssignment: assignStr,
+              isChecked: false,
+            });
+          }
+        }
+      } catch (sheetsErr) {
+        console.warn('Sheets fallback notice in meals GET:', sheetsErr);
       }
     }
 
@@ -235,5 +271,30 @@ export async function GET(req: NextRequest) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
     console.error('Error fetching meal prep data:', errorMsg);
     return NextResponse.json({ success: false, error: errorMsg }, { status: 500 });
+  }
+}
+
+// POST endpoint to toggle checklist status
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { id, isChecked } = body;
+
+    if (!id || typeof isChecked !== 'boolean') {
+      return NextResponse.json({ error: 'Missing id or isChecked boolean' }, { status: 400 });
+    }
+
+    const sb = supabaseAdmin || supabase;
+    if (sb) {
+      await sb
+        .from('costco_meal_items')
+        .update({ is_checked: isChecked, updated_at: new Date().toISOString() })
+        .eq('id', id);
+    }
+
+    return NextResponse.json({ success: true, id, isChecked });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }

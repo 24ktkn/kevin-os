@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import {
   WorkoutLogEntry,
   MuscleRecoveryStatus,
@@ -39,14 +40,116 @@ export function calculateEstimated1RM(weight: number, reps: number): number {
 
 export async function GET(req: NextRequest) {
   try {
-    const sheets = getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'workout_logs!A1:K3000',
-    });
+    let parsedLogs: WorkoutLogEntry[] = [];
+    const sb = supabaseAdmin || supabase;
 
-    const rows = res.data.values || [];
-    if (rows.length < 2) {
+    // 1. Primary: Load from Supabase workout_logs (sub-20ms)
+    if (sb) {
+      try {
+        const { data: dbRows, error: dbErr } = await sb
+          .from('workout_logs')
+          .select('*')
+          .order('date', { ascending: false });
+
+        if (!dbErr && dbRows && dbRows.length > 0) {
+          parsedLogs = dbRows.map((r, i) => {
+            const exercise = String(r.exercise || '').trim();
+            const weight = parseFloat(String(r.weight_lbs || '0')) || 0;
+            const reps = parseInt(String(r.reps || '0'), 10) || 0;
+            const isCardio = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/.test(exercise.toLowerCase());
+            const effectiveVol = isCardio ? 0 : (weight === 0 ? 175.2 * reps : weight * reps);
+            const muscleGroup = resolveMuscleGroup(exercise);
+
+            return {
+              id: r.id || `${r.date}_${exercise}_${r.set_number}_${i}`,
+              date: String(r.date).trim(),
+              splitDay: r.split_day || 'General Training',
+              exercise,
+              setNumber: parseInt(String(r.set_number || '1'), 10) || 1,
+              weightLbs: weight,
+              reps,
+              estimated1RM: parseFloat(String(r.estimated_1rm || '0')) || calculateEstimated1RM(weight, reps),
+              timestamp: r.timestamp || '',
+              durationMins: parseFloat(String(r.duration_mins || '0')) || 0,
+              gymDurationMins: parseFloat(String(r.gym_duration_mins || '60')) || 60,
+              distanceKm: parseFloat(String(r.distance_km || '0')) || 0,
+              effectiveVolume: Math.round(effectiveVol),
+              muscleGroup,
+            };
+          });
+        }
+      } catch (sbErr) {
+        console.warn('Supabase workout_logs fetch notice:', sbErr);
+      }
+    }
+
+    // 2. Fallback to Google Sheets (safety net during migration)
+    if (parsedLogs.length === 0) {
+      try {
+        const sheets = getGoogleSheetsClient();
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'workout_logs!A1:K3000',
+        });
+
+        const rows = res.data.values || [];
+        if (rows.length > 1) {
+          const headers = rows[0].map((h: string) => String(h).trim().toLowerCase());
+          const dateIdx = headers.indexOf('date');
+          const splitIdx = headers.indexOf('split day');
+          const exeIdx = headers.indexOf('exercise');
+          const setIdx = headers.indexOf('set number');
+          const weightIdx = headers.indexOf('weight (lbs)');
+          const repsIdx = headers.indexOf('reps');
+          const oneRmIdx = headers.indexOf('estimated 1rm');
+          const timeIdx = headers.indexOf('timestamp');
+          const durIdx = headers.indexOf('duration (mins)');
+          const gymDurIdx = headers.indexOf('gym duration (mins)');
+          const distIdx = headers.indexOf('distance (km)');
+
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i];
+            const dateStr = String(r[dateIdx] || '').trim();
+            const exercise = String(r[exeIdx] || '').trim();
+            if (!dateStr || !exercise) continue;
+
+            const weight = parseFloat(String(r[weightIdx] || '0').replace(/,/g, '')) || 0;
+            const reps = parseInt(String(r[repsIdx] || '0').replace(/,/g, ''), 10) || 0;
+            const setNum = parseInt(String(r[setIdx] || '1'), 10) || 1;
+            const splitDay = String(r[splitIdx] || 'General').trim();
+            const raw1RM = parseFloat(String(r[oneRmIdx] || '0')) || calculateEstimated1RM(weight, reps);
+            const gymDur = parseFloat(String(r[gymDurIdx] || '0')) || 0;
+            const dur = parseFloat(String(r[durIdx] || '0')) || 0;
+            const dist = parseFloat(String(r[distIdx] || '0')) || 0;
+
+            const isCardio = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/.test(exercise.toLowerCase());
+            const effectiveVol = isCardio ? 0 : (weight === 0 ? 175.2 * reps : weight * reps);
+            const muscleGroup = resolveMuscleGroup(exercise);
+
+            parsedLogs.push({
+              id: `${dateStr}_${exercise}_${setNum}_${i}`,
+              date: dateStr,
+              splitDay,
+              exercise,
+              setNumber: setNum,
+              weightLbs: weight,
+              reps,
+              estimated1RM: raw1RM,
+              timestamp: String(r[timeIdx] || ''),
+              durationMins: dur,
+              gymDurationMins: gymDur,
+              distanceKm: dist,
+              effectiveVolume: Math.round(effectiveVol),
+              muscleGroup,
+            });
+          }
+        }
+      } catch (sheetsErr) {
+        console.warn('Sheets fallback notice in workout GET:', sheetsErr);
+      }
+    }
+
+    if (parsedLogs.length === 0) {
       return NextResponse.json<WorkoutsResponseData>({
         success: true,
         totalWorkouts: 0,
@@ -59,60 +162,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const headers = rows[0].map((h: string) => String(h).trim().toLowerCase());
-    const dateIdx = headers.indexOf('date');
-    const splitIdx = headers.indexOf('split day');
-    const exeIdx = headers.indexOf('exercise');
-    const setIdx = headers.indexOf('set number');
-    const weightIdx = headers.indexOf('weight (lbs)');
-    const repsIdx = headers.indexOf('reps');
-    const oneRmIdx = headers.indexOf('estimated 1rm');
-    const timeIdx = headers.indexOf('timestamp');
-    const durIdx = headers.indexOf('duration (mins)');
-    const gymDurIdx = headers.indexOf('gym duration (mins)');
-    const distIdx = headers.indexOf('distance (km)');
-
-    const parsedLogs: WorkoutLogEntry[] = [];
-    const now = new Date();
-
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i];
-      const dateStr = String(r[dateIdx] || '').trim();
-      const exercise = String(r[exeIdx] || '').trim();
-      if (!dateStr || !exercise) continue;
-
-      const weight = parseFloat(String(r[weightIdx] || '0').replace(/,/g, '')) || 0;
-      const reps = parseInt(String(r[repsIdx] || '0').replace(/,/g, ''), 10) || 0;
-      const setNum = parseInt(String(r[setIdx] || '1'), 10) || 1;
-      const splitDay = String(r[splitIdx] || 'General').trim();
-      const raw1RM = parseFloat(String(r[oneRmIdx] || '0')) || calculateEstimated1RM(weight, reps);
-      const gymDur = parseFloat(String(r[gymDurIdx] || '0')) || 0;
-      const dur = parseFloat(String(r[durIdx] || '0')) || 0;
-      const dist = parseFloat(String(r[distIdx] || '0')) || 0;
-
-      // Effective volume
-      const isCardio = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/.test(exercise.toLowerCase());
-      const effectiveVol = isCardio ? 0 : (weight === 0 ? 175.2 * reps : weight * reps);
-      const muscleGroup = resolveMuscleGroup(exercise);
-
-      parsedLogs.push({
-        id: `${dateStr}_${exercise}_${setNum}_${i}`,
-        date: dateStr,
-        splitDay,
-        exercise,
-        setNumber: setNum,
-        weightLbs: weight,
-        reps,
-        estimated1RM: raw1RM,
-        timestamp: String(r[timeIdx] || ''),
-        durationMins: dur,
-        gymDurationMins: gymDur,
-        distanceKm: dist,
-        effectiveVolume: Math.round(effectiveVol),
-        muscleGroup,
-      });
-    }
-
     // Sort descending by date, then setNumber
     parsedLogs.sort((a, b) => {
       const cmp = b.date.localeCompare(a.date);
@@ -120,72 +169,65 @@ export async function GET(req: NextRequest) {
       return a.setNumber - b.setNumber;
     });
 
-    // 1. Group by Workout Session (Date + SplitDay)
-    const sessionMap = new Map<string, {
-      date: string;
-      splitDay: string;
-      exercises: Set<string>;
-      setCount: number;
-      totalVolume: number;
-      gymDuration: number;
-    }>();
+    const now = new Date();
 
+    // 1. Group sessions by Date
+    const sessionMap = new Map<string, WorkoutLogEntry[]>();
     for (const log of parsedLogs) {
-      const key = `${log.date}_${log.splitDay}`;
-      if (!sessionMap.has(key)) {
-        sessionMap.set(key, {
-          date: log.date,
-          splitDay: log.splitDay,
-          exercises: new Set<string>(),
-          setCount: 0,
-          totalVolume: 0,
-          gymDuration: log.gymDurationMins || 60,
-        });
-      }
-      const sess = sessionMap.get(key)!;
-      sess.exercises.add(log.exercise);
-      sess.setCount += 1;
-      sess.totalVolume += log.effectiveVolume;
-      if (log.gymDurationMins && log.gymDurationMins > sess.gymDuration) {
-        sess.gymDuration = log.gymDurationMins;
-      }
+      const arr = sessionMap.get(log.date) || [];
+      arr.push(log);
+      sessionMap.set(log.date, arr);
     }
 
-    const recentSessions: WorkoutSessionSummary[] = Array.from(sessionMap.values()).map((s) => ({
-      date: s.date,
-      splitDay: s.splitDay,
-      exerciseCount: s.exercises.size,
-      setCount: s.setCount,
-      totalVolumeLbs: Math.round(s.totalVolume),
-      gymDurationMins: Math.round(s.gymDuration),
-      exercises: Array.from(s.exercises),
-    })).sort((a, b) => b.date.localeCompare(a.date));
+    const totalWorkouts = sessionMap.size;
+    let totalVolumeLbs = 0;
+    let totalDurationMins = 0;
+    const recentSessions: WorkoutSessionSummary[] = [];
 
-    // 2. Compute Total Volume and Average Duration
-    const totalVolumeLbs = recentSessions.reduce((acc, s) => acc + s.totalVolumeLbs, 0);
-    const avgDuration = recentSessions.length > 0
-      ? Math.round(recentSessions.reduce((acc, s) => acc + s.gymDurationMins, 0) / recentSessions.length)
-      : 0;
+    const sortedDates = Array.from(sessionMap.keys()).sort((a, b) => b.localeCompare(a));
 
-    // 3. Compute Muscle Recovery Matrix
-    const targetMuscles = [
+    for (const d of sortedDates) {
+      const sets = sessionMap.get(d) || [];
+      const volume = sets.reduce((sum, s) => sum + s.effectiveVolume, 0);
+      totalVolumeLbs += volume;
+
+      const dur = sets[0]?.gymDurationMins || 60;
+      totalDurationMins += dur;
+
+      const split = sets[0]?.splitDay || 'General Training';
+      const exercises = Array.from(new Set(sets.map((s) => s.exercise)));
+
+      recentSessions.push({
+        date: d,
+        splitDay: split,
+        exerciseCount: exercises.length,
+        setCount: sets.length,
+        totalVolumeLbs: Math.round(volume),
+        gymDurationMins: dur,
+        exercises,
+      });
+    }
+
+    const averageDurationMins = totalWorkouts > 0 ? Math.round(totalDurationMins / totalWorkouts) : 0;
+
+    // 2. Muscle Recovery Matrix
+    const trackedMuscles = [
       'Chest',
       'Back',
-      'Shoulders',
       'Quads',
       'Hamstrings & Glutes',
+      'Shoulders',
       'Biceps',
       'Triceps',
-      'Calves',
       'Abs/Core',
+      'Calves',
     ];
 
-    const muscleRecovery: MuscleRecoveryStatus[] = targetMuscles.map((mg) => {
-      // Find latest log for this muscle group
-      const matchingLogs = parsedLogs.filter((l) => l.muscleGroup === mg);
-      if (matchingLogs.length === 0) {
+    const muscleRecovery: MuscleRecoveryStatus[] = trackedMuscles.map((muscle) => {
+      const setsOfMuscle = parsedLogs.filter((l) => l.muscleGroup === muscle);
+      if (setsOfMuscle.length === 0) {
         return {
-          muscleGroup: mg,
+          muscleGroup: muscle,
           lastTrainedDate: null,
           hoursElapsed: null,
           status: 'fresh',
@@ -193,36 +235,51 @@ export async function GET(req: NextRequest) {
         };
       }
 
-      const latestLog = matchingLogs[0];
-      const latestDate = new Date(latestLog.date + 'T12:00:00');
-      const hoursDiff = Math.max(0, Math.round((now.getTime() - latestDate.getTime()) / (1000 * 60 * 60)));
-
-      let status: 'fresh' | 'recovering' | 'fatigued' = 'fresh';
-      if (hoursDiff < 24) {
-        status = 'fatigued';
-      } else if (hoursDiff <= 72) {
-        status = 'recovering';
+      const mostRecentSet = setsOfMuscle[0]; // parsedLogs is sorted descending by date
+      let hoursElapsed: number | null = null;
+      try {
+        const sDate = new Date(mostRecentSet.date + 'T12:00:00');
+        const diffMs = now.getTime() - sDate.getTime();
+        hoursElapsed = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
+      } catch {
+        hoursElapsed = null;
       }
 
-      const recentExes = Array.from(
-        new Set(matchingLogs.filter((l) => l.date === latestLog.date).map((l) => l.exercise))
-      ).slice(0, 3);
+      let status: 'fresh' | 'recovering' | 'fatigued' = 'fresh';
+      if (hoursElapsed !== null) {
+        if (hoursElapsed < 24) {
+          status = 'fatigued';
+        } else if (hoursElapsed <= 72) {
+          status = 'recovering';
+        } else {
+          status = 'fresh';
+        }
+      }
+
+      const recentExercises = Array.from(
+        new Set(
+          setsOfMuscle
+            .filter((s) => s.date === mostRecentSet.date)
+            .map((s) => s.exercise)
+        )
+      );
 
       return {
-        muscleGroup: mg,
-        lastTrainedDate: latestLog.date,
-        hoursElapsed: hoursDiff,
+        muscleGroup: muscle,
+        lastTrainedDate: mostRecentSet.date,
+        hoursElapsed,
         status,
-        lastExercises: recentExes,
+        lastExercises: recentExercises,
       };
     });
 
-    // 4. Compute Personal Records (PRs) per Exercise
+    // 3. Personal Records (1RM) per Exercise
     const prMap = new Map<string, ExercisePR>();
+
     for (const log of parsedLogs) {
-      if (log.weightLbs <= 0) continue;
-      const current = prMap.get(log.exercise);
-      if (!current || log.estimated1RM > current.bestEstimated1RM) {
+      if (log.weightLbs <= 0 && log.reps <= 0) continue;
+      const currentPR = prMap.get(log.exercise);
+      if (!currentPR || log.estimated1RM > currentPR.bestEstimated1RM) {
         prMap.set(log.exercise, {
           exercise: log.exercise,
           maxWeightLbs: log.weightLbs,
@@ -234,23 +291,23 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const personalRecords = Array.from(prMap.values())
-      .sort((a, b) => b.bestEstimated1RM - a.bestEstimated1RM)
-      .slice(0, 15);
+    const personalRecords = Array.from(prMap.values()).sort(
+      (a, b) => b.bestEstimated1RM - a.bestEstimated1RM
+    );
 
     return NextResponse.json<WorkoutsResponseData>({
       success: true,
-      totalWorkouts: recentSessions.length,
-      totalVolumeLbs,
-      averageDurationMins: avgDuration,
-      recentSessions: recentSessions.slice(0, 20),
+      totalWorkouts,
+      totalVolumeLbs: Math.round(totalVolumeLbs),
+      averageDurationMins,
+      recentSessions: recentSessions.slice(0, 15),
       muscleRecovery,
-      personalRecords,
+      personalRecords: personalRecords.slice(0, 20),
       recentLogs: parsedLogs.slice(0, 50),
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Error fetching workout data:', errorMsg);
-    return NextResponse.json({ success: false, error: errorMsg }, { status: 500 });
+    console.error('Error in workouts GET:', errorMsg);
+    return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }
