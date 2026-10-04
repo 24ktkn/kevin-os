@@ -4,34 +4,41 @@ import { supabase, supabaseAdmin } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
-// Productivity date cutoff: if hour is before 2 AM EDT, treat as previous day
-function getProductivityDateString(tz = 'America/New_York'): string {
+interface BiometricInput {
+  date?: string;
+  steps?: number | string;
+  rhr?: number | string;
+  hrv?: number | string;
+  weight?: number | string;
+  sleep?: number | string;
+  workoutCalories?: number | string;
+  workoutDuration?: number | string;
+  wakeTime?: string;
+  sleepTime?: string;
+  timezone?: string;
+}
+
+// Correct calendar date string for the user's timezone without shifting at midnight
+function getCalendarDateString(customDate?: string, tz = 'America/New_York'): string {
+  if (customDate && /^\d{4}-\d{2}-\d{2}$/.test(String(customDate).trim())) {
+    return String(customDate).trim();
+  }
   const now = new Date();
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: tz || 'America/New_York',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: 'numeric',
-    hour12: false,
   });
 
   const parts = formatter.formatToParts(now);
   const findPart = (t: string) => parts.find((p) => p.type === t)?.value || '';
 
-  let year = parseInt(findPart('year'), 10);
-  let month = parseInt(findPart('month'), 10);
-  let day = parseInt(findPart('day'), 10);
-  const hour = parseInt(findPart('hour'), 10);
+  const year = findPart('year');
+  const month = findPart('month');
+  const day = findPart('day');
 
-  if (hour < 2) {
-    const prev = new Date(year, month - 1, day - 1);
-    year = prev.getFullYear();
-    month = prev.getMonth() + 1;
-    day = prev.getDate();
-  }
-
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
 function formatTimeString(isoString?: string): string {
@@ -115,162 +122,198 @@ async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string
       });
     }
   } catch (err) {
-    console.warn('mirrorBiometricsToSheets warning (non-fatal):', err);
+    console.warn('mirrorBiometricsToSheets notice (non-fatal):', err);
   }
+}
+
+async function processBiometricRecord(body: BiometricInput, sb: any) {
+  const targetDate = getCalendarDateString(body.date, body.timezone);
+
+  // 1. Fetch existing record for targetDate to guard against data loss
+  let existingRecord: any = null;
+  if (sb) {
+    try {
+      const { data: ex } = await sb
+        .from('biometrics')
+        .select('*')
+        .eq('date', targetDate)
+        .maybeSingle();
+      existingRecord = ex;
+    } catch (e) {
+      console.warn('Existing biometrics check notice:', e);
+    }
+  }
+
+  // Incoming steps (steps within a day are strictly cumulative; never downgrade)
+  const incomingSteps = parseInt(String(body.steps ?? 0), 10) || 0;
+  const finalSteps = Math.max(existingRecord?.steps || 0, incomingSteps);
+
+  // Incoming HRV
+  const incomingHrv = parseFloat(String(body.hrv || 0)) || 0;
+  const finalHrv = incomingHrv > 0 ? incomingHrv : (existingRecord?.hrv || 0);
+
+  // Incoming Sleep
+  let incomingSleep = body.sleep !== undefined && body.sleep !== null ? parseFloat(String(body.sleep)) || 0 : 0;
+  if (incomingSleep > 1440) {
+    incomingSleep = incomingSleep / 3600.0; // Converted from seconds
+  } else if (incomingSleep > 24) {
+    incomingSleep = incomingSleep / 60.0; // Converted from minutes
+  }
+
+  // Sleep fallback calculation from wakeTime & sleepTime if incoming sleep was 0
+  if (incomingSleep <= 0 && body.wakeTime && body.sleepTime) {
+    try {
+      const cleanWake = String(body.wakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+      const cleanSleep = String(body.sleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+      let dWake = new Date(cleanWake);
+      let dSleep = new Date(cleanSleep);
+
+      if (isNaN(dWake.getTime()) || isNaN(dSleep.getTime())) {
+        const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+        const mWake = matchTime(cleanWake);
+        const mSleep = matchTime(cleanSleep);
+        if (mWake && mSleep) {
+          let hW = parseInt(mWake[1], 10);
+          if (mWake[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
+          if (mWake[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
+          const mW = parseInt(mWake[2], 10);
+
+          let hS = parseInt(mSleep[1], 10);
+          if (mSleep[3]?.toUpperCase() === 'PM' && hS < 12) hS += 12;
+          if (mSleep[3]?.toUpperCase() === 'AM' && hS === 12) hS = 0;
+          const mS = parseInt(mSleep[2], 10);
+
+          let diffMinutes = (hW * 60 + mW) - (hS * 60 + mS);
+          if (diffMinutes < 0) diffMinutes += 24 * 60; // Spans midnight
+          if (diffMinutes > 0 && diffMinutes < 24 * 60) {
+            incomingSleep = Math.round((diffMinutes / 60) * 10) / 10;
+          }
+        }
+      } else {
+        let diffMs = dWake.getTime() - dSleep.getTime();
+        if (diffMs < 0) diffMs += 24 * 3600 * 1000;
+        if (diffMs > 0 && diffMs < 24 * 3600 * 1000) {
+          incomingSleep = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Preserve existing sleep if incoming is 0
+  let finalSleepHours = existingRecord?.sleep_hours || 0;
+  let finalSleepDuration = existingRecord?.sleep_duration || '0.0h';
+  if (incomingSleep > 0) {
+    finalSleepHours = Math.round(incomingSleep * 10) / 10;
+    finalSleepDuration = `${finalSleepHours.toFixed(1)}h`;
+  }
+
+  // Incoming RHR
+  const incomingRhr = parseFloat(String(body.rhr || 0)) || 0;
+  const finalRhr = incomingRhr > 0 ? incomingRhr : (existingRecord?.rhr || 0);
+
+  // Incoming Bodyweight
+  let incomingWeight = body.weight !== undefined && body.weight !== null ? parseFloat(String(body.weight)) || 0 : 0;
+  let finalWeight = existingRecord?.bodyweight || 175.2;
+  if (incomingWeight > 50 && incomingWeight < 400) {
+    finalWeight = Math.round(incomingWeight * 10) / 10;
+  } else if (!existingRecord?.bodyweight && sb) {
+    const { data: latestWeight } = await sb
+      .from('biometrics')
+      .select('bodyweight')
+      .gt('bodyweight', 50)
+      .lt('bodyweight', 400)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestWeight?.bodyweight) {
+      finalWeight = parseFloat(String(latestWeight.bodyweight));
+    }
+  }
+
+  // Incoming Times
+  const wakeVal = formatTimeString(body.wakeTime);
+  const sleepTimeVal = formatTimeString(body.sleepTime);
+  const finalWake = wakeVal && wakeVal !== 'No data' ? wakeVal : (existingRecord?.wake_time || '');
+  const finalSleepTime = sleepTimeVal && sleepTimeVal !== 'No data' ? sleepTimeVal : (existingRecord?.sleep_time || '');
+
+  // Workouts (strictly cumulative)
+  const incomingCal = parseFloat(String(body.workoutCalories || 0)) || 0;
+  const incomingDur = parseFloat(String(body.workoutDuration || 0)) || 0;
+  const finalCal = Math.max(existingRecord?.workout_calories || 0, incomingCal);
+  const finalDur = Math.max(existingRecord?.workout_duration || 0, incomingDur);
+
+  const mergedRecord = {
+    date: targetDate,
+    steps: finalSteps,
+    hrv: finalHrv,
+    sleep_duration: finalSleepDuration,
+    sleep_hours: finalSleepHours,
+    rhr: finalRhr,
+    bodyweight: finalWeight,
+    wake_time: finalWake,
+    sleep_time: finalSleepTime,
+    workout_calories: finalCal,
+    workout_duration: finalDur,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (sb) {
+    const { error: upsertErr } = await sb
+      .from('biometrics')
+      .upsert(mergedRecord, { onConflict: 'date' });
+    if (upsertErr) {
+      console.error(`Error saving biometrics for ${targetDate}:`, upsertErr);
+    }
+  }
+
+  // Mirror merged record to Google Sheets if available
+  const sheetsRow = [
+    targetDate,
+    String(finalSteps),
+    String(Math.round(finalHrv)),
+    String(finalSleepHours.toFixed(1)),
+    String(Math.round(finalRhr)),
+    String(finalWeight.toFixed(1)),
+    finalWake,
+    finalSleepTime,
+    String(Math.round(finalCal)),
+    String(Math.round(finalDur)),
+  ];
+
+  mirrorBiometricsToSheets(sheetsRow, targetDate).catch(() => {});
+
+  return mergedRecord;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const {
-      steps,
-      rhr,
-      hrv,
-      weight,
-      sleep,
-      workoutCalories,
-      workoutDuration,
-      wakeTime,
-      sleepTime,
-      timezone,
-    } = body;
-
-    const targetDate = getProductivityDateString(timezone);
-
-    const stepsVal = parseInt(String(steps ?? 0), 10) || 0;
-    const hrvVal = parseFloat(String(hrv || 0)) || 0;
-    let sleepHours = sleep !== undefined && sleep !== null ? parseFloat(String(sleep)) || 0 : 0;
-    if (sleepHours > 1440) {
-      sleepHours = sleepHours / 3600.0; // Converted from seconds
-    } else if (sleepHours > 24) {
-      sleepHours = sleepHours / 60.0; // Converted from minutes
-    }
-
-    const wakeVal = formatTimeString(wakeTime);
-    const sleepTimeVal = formatTimeString(sleepTime);
-
-    // Fallback: If sleep is 0 or suspiciously small while wakeTime & sleepTime are provided
-    if (sleepHours <= 0 && wakeTime && sleepTime) {
-      try {
-        const cleanWake = String(wakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
-        const cleanSleep = String(sleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
-        let dWake = new Date(cleanWake);
-        let dSleep = new Date(cleanSleep);
-
-        if (isNaN(dWake.getTime()) || isNaN(dSleep.getTime())) {
-          const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-          const mWake = matchTime(cleanWake);
-          const mSleep = matchTime(cleanSleep);
-          if (mWake && mSleep) {
-            let hW = parseInt(mWake[1], 10);
-            if (mWake[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
-            if (mWake[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
-            const mW = parseInt(mWake[2], 10);
-
-            let hS = parseInt(mSleep[1], 10);
-            if (mSleep[3]?.toUpperCase() === 'PM' && hS < 12) hS += 12;
-            if (mSleep[3]?.toUpperCase() === 'AM' && hS === 12) hS = 0;
-            const mS = parseInt(mSleep[2], 10);
-
-            let diffMinutes = (hW * 60 + mW) - (hS * 60 + mS);
-            if (diffMinutes < 0) diffMinutes += 24 * 60; // Spans midnight
-            if (diffMinutes > 0 && diffMinutes < 24 * 60) {
-              sleepHours = Math.round((diffMinutes / 60) * 10) / 10;
-            }
-          }
-        } else {
-          let diffMs = dWake.getTime() - dSleep.getTime();
-          if (diffMs < 0) diffMs += 24 * 3600 * 1000;
-          if (diffMs > 0 && diffMs < 24 * 3600 * 1000) {
-            sleepHours = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    const sleepDurationStr = `${sleepHours.toFixed(1)}h`;
-    const rhrVal = parseFloat(String(rhr || 0)) || 0;
     const sb = supabaseAdmin || supabase;
-    let weightVal = weight !== undefined && weight !== null ? parseFloat(String(weight)) || 0 : 0;
-    if (weightVal <= 50 || weightVal >= 400) {
-      if (sb) {
-        const { data: latestWeight } = await sb
-          .from('biometrics')
-          .select('bodyweight')
-          .gt('bodyweight', 50)
-          .lt('bodyweight', 400)
-          .order('date', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (latestWeight?.bodyweight) {
-          weightVal = parseFloat(String(latestWeight.bodyweight));
-        } else {
-          weightVal = 175.2;
-        }
-      } else {
-        weightVal = 175.2;
-      }
+
+    // Check if batch sync (array in `records` or body itself is array)
+    const recordsList: BiometricInput[] = Array.isArray(body)
+      ? body
+      : Array.isArray(body.records)
+      ? body.records
+      : [body];
+
+    const results = [];
+    for (const record of recordsList) {
+      const res = await processBiometricRecord(record, sb);
+      results.push(res);
     }
-    const wCalVal = parseFloat(String(workoutCalories || 0)) || 0;
-    const wDurVal = parseFloat(String(workoutDuration || 0)) || 0;
-
-    // 1. Primary: Save to Supabase (immediate sub-20ms response)
-    if (sb) {
-      await sb.from('biometrics').upsert({
-        date: targetDate,
-        steps: stepsVal,
-        hrv: hrvVal,
-        sleep_duration: sleepDurationStr,
-        sleep_hours: sleepHours,
-        rhr: rhrVal,
-        bodyweight: weightVal,
-        wake_time: wakeVal,
-        sleep_time: sleepTimeVal,
-        workout_calories: wCalVal,
-        workout_duration: wDurVal,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'date' });
-    }
-
-    // 2. Background mirror to Google Sheets (non-blocking)
-    const sheetsRow = [
-      targetDate,
-      String(stepsVal),
-      String(Math.round(hrvVal)),
-      String(sleepHours.toFixed(1)),
-      String(Math.round(rhrVal)),
-      String(weightVal.toFixed(1)),
-      wakeVal,
-      sleepTimeVal,
-      String(Math.round(wCalVal)),
-      String(Math.round(wDurVal)),
-    ];
-
-    mirrorBiometricsToSheets(sheetsRow, targetDate).catch((e) => {
-      console.warn('Background Sheets sync failed:', e);
-    });
 
     return NextResponse.json({
       success: true,
       action: 'biometrics_synced',
-      date: targetDate,
-      metrics: {
-        steps: stepsVal,
-        hrv: Math.round(hrvVal),
-        sleep: sleepHours,
-        rhr: Math.round(rhrVal),
-        weight: weightVal,
-        wakeTime: wakeVal,
-        sleepTime: sleepTimeVal,
-        workoutCalories: Math.round(wCalVal),
-        workoutDuration: Math.round(wDurVal),
-      },
+      syncedCount: results.length,
+      metrics: results.length === 1 ? results[0] : results,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Error in health webhook:', errorMsg);
+    console.error('Error in health sync webhook:', errorMsg);
     return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }

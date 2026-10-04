@@ -273,8 +273,14 @@ class HealthManager: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current
+        let todayStr = dateFormatter.string(from: Date())
+
         var payload: [String: Any] = [
             "action": "upload_biometrics",
+            "date": todayStr,
             "timezone": TimeZone.current.identifier,
             "steps": steps,
             "rhr": rhr,
