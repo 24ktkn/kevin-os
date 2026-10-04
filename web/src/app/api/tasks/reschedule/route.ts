@@ -24,7 +24,7 @@ function getPrivateKey(): string {
   return key.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
 }
 
-function cleanTitle(str: string): string {
+export function cleanTitle(str: string): string {
   if (!str) return '';
   return str
     .replace(/\\,/g, ',')
@@ -128,6 +128,60 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const cleanSearchTitle = cleanTitle(itemTitle);
+
+    // Deep Search 1: If targetCalEventId is still missing, search Supabase 'tasks' for matching 'Event' row
+    if (!targetCalEventId && sb && cleanSearchTitle) {
+      try {
+        const { data: eventCandidates } = await sb
+          .from('tasks')
+          .select('*')
+          .eq('type', 'Event')
+          .not('calendar_event_id', 'is', null);
+
+        if (eventCandidates && eventCandidates.length > 0) {
+          const match = eventCandidates.find((r) => {
+            if (!r.title) return false;
+            const ct = cleanTitle(r.title);
+            return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
+          });
+          if (match?.calendar_event_id) {
+            targetCalEventId = match.calendar_event_id;
+            if (match.calendar_name) targetCalendarName = match.calendar_name as CalendarName;
+            if (!targetGoogleTaskId && match.google_task_id) targetGoogleTaskId = match.google_task_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase event candidate lookup error:', err);
+      }
+    }
+
+    // Deep Search 2: If targetGoogleTaskId is still missing, search Supabase 'tasks' for matching 'Task' row
+    if (!targetGoogleTaskId && sb && cleanSearchTitle) {
+      try {
+        const { data: taskCandidates } = await sb
+          .from('tasks')
+          .select('*')
+          .eq('type', 'Task')
+          .not('google_task_id', 'is', null);
+
+        if (taskCandidates && taskCandidates.length > 0) {
+          const match = taskCandidates.find((r) => {
+            if (!r.title) return false;
+            const ct = cleanTitle(r.title);
+            return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
+          });
+          if (match?.google_task_id) {
+            targetGoogleTaskId = match.google_task_id;
+            if (match.calendar_name) targetCalendarName = match.calendar_name as CalendarName;
+            if (!targetCalEventId && match.calendar_event_id) targetCalEventId = match.calendar_event_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase task candidate lookup error:', err);
+      }
+    }
+
     const { hours, minutes, formatted12h } = parseTimeToHoursAndMinutes(newTime);
     const finalDuration = Math.max(0, parseInt(String(durationMins), 10) || 30);
 
@@ -147,7 +201,7 @@ export async function POST(req: NextRequest) {
     // 2. Google Calendar Patch
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const privateKey = getPrivateKey();
-    const targetCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['Kevin Nguyen'];
+    let activeCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['School'] || CALENDAR_MAP['Kevin Nguyen'];
 
     if (clientEmail && privateKey) {
       try {
@@ -158,6 +212,45 @@ export async function POST(req: NextRequest) {
         });
         const calendarApi = google.calendar({ version: 'v3', auth });
 
+        // Deep Search 3: If targetCalEventId is STILL missing, search Google Calendar directly by clean title!
+        if (!targetCalEventId && cleanSearchTitle) {
+          const calCandidates = [
+            activeCalId,
+            ...Object.values(CALENDAR_MAP).filter((c) => c !== activeCalId),
+          ];
+
+          for (const cId of calCandidates) {
+            try {
+              const listRes = await calendarApi.events.list({
+                calendarId: cId,
+                q: cleanSearchTitle.slice(0, 35),
+                singleEvents: true,
+                maxResults: 25,
+              });
+
+              const match = (listRes.data.items || []).find((ev) => {
+                if (!ev.summary) return false;
+                const cs = cleanTitle(ev.summary);
+                return cs === cleanSearchTitle || (cs.length > 5 && (cs.includes(cleanSearchTitle) || cleanSearchTitle.includes(cs)));
+              });
+
+              if (match && match.id) {
+                targetCalEventId = match.id;
+                activeCalId = cId;
+                for (const [cName, mappedId] of Object.entries(CALENDAR_MAP)) {
+                  if (mappedId === cId) {
+                    targetCalendarName = cName as CalendarName;
+                    break;
+                  }
+                }
+                break;
+              }
+            } catch (searchErr) {
+              console.warn(`Calendar search error for ${cId}:`, searchErr);
+            }
+          }
+        }
+
         if (targetCalEventId) {
           try {
             // Check if this event has a recurring parent if scope is 'series'
@@ -165,7 +258,7 @@ export async function POST(req: NextRequest) {
             if (scope === 'series') {
               try {
                 const getRes = await calendarApi.events.get({
-                  calendarId: targetCalId,
+                  calendarId: activeCalId,
                   eventId: targetCalEventId,
                 });
                 if (getRes.data.recurringEventId) {
@@ -177,7 +270,7 @@ export async function POST(req: NextRequest) {
             }
 
             await calendarApi.events.patch({
-              calendarId: targetCalId,
+              calendarId: activeCalId,
               eventId: eventToPatch,
               requestBody: {
                 start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
@@ -186,11 +279,11 @@ export async function POST(req: NextRequest) {
             });
             patchedCalendar = true;
           } catch (calPatchErr) {
-            console.warn(`Direct calendar patch error for event ${targetCalEventId}:`, calPatchErr);
+            console.warn(`Direct calendar patch error for event ${targetCalEventId} on ${activeCalId}:`, calPatchErr);
 
             // Attempt cross-calendar search if ID was mapped to different calendar
             for (const [cName, cId] of Object.entries(CALENDAR_MAP)) {
-              if (cId === targetCalId) continue;
+              if (cId === activeCalId) continue;
               try {
                 await calendarApi.events.patch({
                   calendarId: cId,
@@ -202,6 +295,7 @@ export async function POST(req: NextRequest) {
                 });
                 patchedCalendar = true;
                 targetCalendarName = cName as CalendarName;
+                activeCalId = cId;
                 break;
               } catch {
                 // Ignore and continue
@@ -259,9 +353,8 @@ export async function POST(req: NextRequest) {
               // Try next list candidate
             }
           }
-        } else if (itemTitle) {
+        } else if (cleanSearchTitle) {
           // If no targetGoogleTaskId, search tasklists by clean title
-          const cleanQ = cleanTitle(itemTitle);
           for (const listId of Object.values(TASKLIST_MAP)) {
             try {
               const listRes = await tasksApi.tasks.list({
@@ -272,7 +365,7 @@ export async function POST(req: NextRequest) {
               const match = (listRes.data.items || []).find((t) => {
                 if (!t.title) return false;
                 const ct = cleanTitle(t.title);
-                return ct === cleanQ || (ct.length > 5 && (ct.includes(cleanQ) || cleanQ.includes(ct)));
+                return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
               });
 
               if (match && match.id) {
@@ -298,49 +391,63 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Update Supabase 'tasks' table
+    // 4. Update Supabase 'tasks' table for ALL paired records (both Task and Event rows!)
     let updatedTaskRecord: TaskItem | null = null;
     if (sb) {
       const nowIso = new Date().toISOString();
-      const updatePayload: Record<string, unknown> = {
-        due_date: newDate,
-        due_time: formatted12h,
-        duration_mins: finalDuration,
-        is_completed: false, // moving/rescheduling resets completed status if it was completed
-        updated_at: nowIso,
-      };
+      const idsToUpdate = new Set<string>();
 
-      if (targetCalEventId) updatePayload.calendar_event_id = targetCalEventId;
-      if (targetGoogleTaskId) updatePayload.google_task_id = targetGoogleTaskId;
+      if (resolvedTask?.id) idsToUpdate.add(resolvedTask.id);
 
-      if (resolvedTask?.id) {
-        const { data: updated } = await sb
+      // Find all tasks matching targetCalEventId
+      if (targetCalEventId) {
+        const { data: calMatches } = await sb.from('tasks').select('id').eq('calendar_event_id', targetCalEventId);
+        (calMatches || []).forEach((m) => idsToUpdate.add(m.id));
+      }
+
+      // Find all tasks matching targetGoogleTaskId
+      if (targetGoogleTaskId) {
+        const { data: gMatches } = await sb.from('tasks').select('id').eq('google_task_id', targetGoogleTaskId);
+        (gMatches || []).forEach((m) => idsToUpdate.add(m.id));
+      }
+
+      // Find all tasks matching clean title
+      if (cleanSearchTitle) {
+        const { data: allTasks } = await sb.from('tasks').select('id, title');
+        (allTasks || []).forEach((t) => {
+          if (t.title) {
+            const ct = cleanTitle(t.title);
+            if (ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)))) {
+              idsToUpdate.add(t.id);
+            }
+          }
+        });
+      }
+
+      if (idsToUpdate.size > 0) {
+        const updatePayload: Record<string, unknown> = {
+          due_date: newDate,
+          due_time: formatted12h,
+          duration_mins: finalDuration,
+          is_completed: false, // moving/rescheduling resets completed status if it was completed
+          updated_at: nowIso,
+        };
+
+        if (targetCalEventId) updatePayload.calendar_event_id = targetCalEventId;
+        if (targetGoogleTaskId) updatePayload.google_task_id = targetGoogleTaskId;
+
+        const { data: updatedList } = await sb
           .from('tasks')
           .update(updatePayload)
-          .eq('id', resolvedTask.id)
-          .select()
-          .single();
-        if (updated) updatedTaskRecord = updated as TaskItem;
-      } else if (targetCalEventId) {
-        const { data: updated } = await sb
-          .from('tasks')
-          .update(updatePayload)
-          .eq('calendar_event_id', targetCalEventId)
-          .select()
-          .maybeSingle();
-        if (updated) updatedTaskRecord = updated as TaskItem;
-      } else if (targetGoogleTaskId) {
-        const { data: updated } = await sb
-          .from('tasks')
-          .update(updatePayload)
-          .eq('google_task_id', targetGoogleTaskId)
-          .select()
-          .maybeSingle();
-        if (updated) updatedTaskRecord = updated as TaskItem;
+          .in('id', Array.from(idsToUpdate))
+          .select();
+
+        if (updatedList && updatedList.length > 0) {
+          updatedTaskRecord = (updatedList.find((u) => u.type === 'Task') || updatedList[0]) as TaskItem;
+        }
       }
 
       // 5. Update Supabase 'school_items' table if applicable
-      const cleanSearch = cleanTitle(itemTitle);
       if (schoolUid) {
         await sb
           .from('school_items')
@@ -355,13 +462,13 @@ export async function POST(req: NextRequest) {
           })
           .eq('uid', schoolUid);
         patchedSchool = true;
-      } else if (cleanSearch) {
+      } else if (cleanSearchTitle) {
         const { data: schoolRows } = await sb.from('school_items').select('uid, title');
         if (schoolRows && schoolRows.length > 0) {
           const matchedUids = schoolRows
             .filter((s) => {
               const cs = cleanTitle(s.title);
-              return cs === cleanSearch || (cs.length > 5 && (cs.includes(cleanSearch) || cleanSearch.includes(cs)));
+              return cs === cleanSearchTitle || (cs.length > 5 && (cs.includes(cleanSearchTitle) || cleanSearchTitle.includes(cs)));
             })
             .map((s) => s.uid);
 
