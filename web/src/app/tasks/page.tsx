@@ -170,7 +170,10 @@ export default function MissionControlPage() {
 
       // Also sync completion/unchecking to school_items
       if (target?.title) {
-        const clean = target.title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+        const clean = target.title
+          .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+          .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+          .trim();
         if (clean) {
           await supabase
             .from('school_items')

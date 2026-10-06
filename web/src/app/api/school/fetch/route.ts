@@ -107,13 +107,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Keep events from yesterday onward and sort chronologically
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
+    // Retain events from the start of the current academic year (August 1st)
+    // Med school terms run August - June. This ensures past classes, completed modules,
+    // and assignments from the entire active school year are preserved for the completed tabs.
+    const now = new Date();
+    const currentAcademicYearStart = new Date(
+      now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1,
+      7, // August 1st
+      1,
+      0, 0, 0, 0
+    );
 
     const filteredEvents = events.filter(
-      (e) => new Date(e.dateObj).getTime() >= yesterday.getTime()
+      (e) => new Date(e.dateObj).getTime() >= currentAcademicYearStart.getTime()
     );
     filteredEvents.sort(
       (a, b) => new Date(a.dateObj).getTime() - new Date(b.dateObj).getTime()

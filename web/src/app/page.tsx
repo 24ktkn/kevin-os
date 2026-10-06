@@ -274,7 +274,10 @@ export default function HomePage() {
         .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
         .eq('id', taskId);
 
-      const clean = title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+      const clean = title
+        .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+        .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+        .trim();
       if (clean) {
         await supabase
           .from('school_items')
@@ -316,7 +319,10 @@ export default function HomePage() {
         .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
         .in('id', [eventId, taskId]);
 
-      const clean = title.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').trim();
+      const clean = title
+        .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+        .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+        .trim();
       if (clean) {
         await supabase
           .from('school_items')

@@ -55,6 +55,19 @@ const CALENDAR_MAP: Record<string, string> = {
   'Volunteering': '57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com',
 };
 
+interface DbSchoolRow {
+  uid: string;
+  title: string;
+  category?: string;
+  is_completed?: boolean;
+  is_scheduled?: boolean;
+  scheduled_date?: string;
+  scheduled_time?: string;
+  duration_mins?: number;
+  target_calendar?: string;
+  created_at?: string;
+}
+
 export default function SchoolSyncPage() {
   const [events, setEvents] = useState<SchoolEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +85,7 @@ export default function SchoolSyncPage() {
   const [scheduledItems, setScheduledItems] = useState<
     Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }>
   >({});
+  const [dbSchoolItems, setDbSchoolItems] = useState<DbSchoolRow[]>([]);
 
   // Schedule form state per card
   const [formState, setFormState] = useState<
@@ -121,6 +135,7 @@ export default function SchoolSyncPage() {
         const { data, error: supaErr } = await supabase.from('school_items').select('*');
         if (!supaErr && data) {
           setSupabaseConnected(true);
+          setDbSchoolItems(data as DbSchoolRow[]);
           const newOverrides: Record<string, SchoolCategory> = {};
           const newCompletions: Record<string, boolean> = {};
           const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }> = {};
@@ -158,9 +173,16 @@ export default function SchoolSyncPage() {
 
       if (completedList.length > 0) {
         const cleanStr = (s: string) =>
-          s.replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+          (s || '')
+            .replace(/\\,/g, ',')
+            .replace(/\\/g, '')
+            .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+            .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
 
-        const cleanedCompleted = completedList.map(cleanStr);
+        const cleanedCompleted = completedList.map(cleanStr).filter(Boolean);
         const newCompletions: Record<string, boolean> = {};
 
         for (const ev of currentEvents) {
@@ -168,8 +190,13 @@ export default function SchoolSyncPage() {
           const isMatch =
             completedList.includes(ev.summary) ||
             cleanedCompleted.includes(cleanSummary) ||
-            completedList.some((t) => t.includes(ev.summary) || ev.summary.includes(t)) ||
-            cleanedCompleted.some((t) => t.includes(cleanSummary) || cleanSummary.includes(t));
+            cleanedCompleted.some(
+              (t) =>
+                t === cleanSummary ||
+                (t.length > 5 &&
+                  cleanSummary.length > 5 &&
+                  (t.includes(cleanSummary) || cleanSummary.includes(t)))
+            );
 
           if (isMatch) {
             newCompletions[ev.uid] = true;
@@ -177,8 +204,13 @@ export default function SchoolSyncPage() {
             if (supabase) {
               await supabase
                 .from('school_items')
-                .update({ is_completed: true, updated_at: new Date().toISOString() })
-                .eq('uid', ev.uid);
+                .upsert({
+                  uid: ev.uid,
+                  title: ev.summary,
+                  category: overrides[ev.uid] || ev.category || 'module',
+                  is_completed: true,
+                  updated_at: new Date().toISOString(),
+                });
             }
           }
         }
@@ -449,6 +481,40 @@ export default function SchoolSyncPage() {
       }
     }
 
+    // Safety fallback: ensure any completed item stored in Supabase school_items
+    // that wasn't found in Elentra iCal events is still displayed in the completed tab!
+    const seenUids = new Set(events.map((e) => e.uid));
+    for (const row of dbSchoolItems) {
+      if (row.is_completed && !seenUids.has(row.uid)) {
+        const rowDate = row.scheduled_date || row.created_at || now.toISOString();
+        const enrichedRow: SchoolEvent = {
+          uid: row.uid,
+          summary: row.title,
+          description: '',
+          location: '',
+          dateStr: rowDate,
+          dateObj: rowDate,
+          isAllDay: true,
+          duration: row.duration_mins || 60,
+          category: (row.category as SchoolCategory) || 'module',
+          isCompleted: true,
+          isScheduled: Boolean(row.is_scheduled),
+          scheduledDate: row.scheduled_date,
+          scheduledTime: row.scheduled_time,
+          scheduledDuration: row.duration_mins,
+          scheduledCalendar: row.target_calendar,
+        };
+        if (enrichedRow.category === 'assignment') compAss.push(enrichedRow);
+        else if (enrichedRow.category === 'class') pastCls.push(enrichedRow);
+        else compMods.push(enrichedRow);
+      }
+    }
+
+    // Sort completed lists reverse-chronologically so newly completed items appear at top
+    compMods.sort((a, b) => new Date(b.dateObj).getTime() - new Date(a.dateObj).getTime());
+    compAss.sort((a, b) => new Date(b.dateObj).getTime() - new Date(a.dateObj).getTime());
+    pastCls.sort((a, b) => new Date(b.dateObj).getTime() - new Date(a.dateObj).getTime());
+
     return {
       activeMods,
       activeAss,
@@ -457,7 +523,7 @@ export default function SchoolSyncPage() {
       compAss,
       pastCls,
     };
-  }, [events, overrides, completions, scheduledItems]);
+  }, [events, overrides, completions, scheduledItems, dbSchoolItems]);
 
   const tabs = [
     { label: 'Active Modules', icon: GraduationCap, items: categorized.activeMods, badgeColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' },

@@ -24,6 +24,18 @@ function getPrivateKey(): string {
   return key.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
 }
 
+function cleanTitle(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/\\,/g, ',')
+    .replace(/\\/g, '')
+    .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
+    .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export async function GET() {
   const syncResults = {
     calendarEventsSynced: 0,
@@ -164,6 +176,12 @@ export async function GET() {
       oauth2Client.setCredentials({ refresh_token: refreshToken });
       const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
 
+      let allSchoolRows: { uid: string; title: string; is_completed: boolean }[] = [];
+      if (supabase) {
+        const { data: dbSchool } = await supabase.from('school_items').select('uid, title, is_completed');
+        if (dbSchool) allSchoolRows = dbSchool;
+      }
+
       for (const [calName, listId] of Object.entries(TASKLIST_MAP)) {
         try {
           const res = await tasksApi.tasks.list({
@@ -190,12 +208,30 @@ export async function GET() {
             }
 
             if (supabase) {
-              // 1. If completed, update school_items table
-              if (isDone) {
-                await supabase
-                  .from('school_items')
-                  .update({ is_completed: true, updated_at: new Date().toISOString() })
-                  .ilike('title', `%${taskTitle}%`);
+              // 1. If completed, update school_items table with smart title matching
+              if (isDone && allSchoolRows.length > 0) {
+                const cleanTask = cleanTitle(taskTitle);
+                if (cleanTask) {
+                  const matchedItems = allSchoolRows.filter((row) => {
+                    const cleanRow = cleanTitle(row.title);
+                    return (
+                      cleanRow === cleanTask ||
+                      (cleanRow.length > 5 &&
+                        cleanTask.length > 5 &&
+                        (cleanRow.includes(cleanTask) || cleanTask.includes(cleanRow)))
+                    );
+                  });
+
+                  for (const match of matchedItems) {
+                    if (!match.is_completed) {
+                      match.is_completed = true;
+                      await supabase
+                        .from('school_items')
+                        .update({ is_completed: true, updated_at: new Date().toISOString() })
+                        .eq('uid', match.uid);
+                    }
+                  }
+                }
               }
 
               // 2. Check if this task exists in tasks table by google_task_id or title
@@ -246,6 +282,33 @@ export async function GET() {
                   is_completed: isDone,
                   is_scheduled: false,
                 });
+              }
+
+              // 3. Also update any matching calendar event timeblock in tasks table
+              const cleanTask = cleanTitle(taskTitle);
+              if (cleanTask) {
+                const { data: siblingEvents } = await supabase
+                  .from('tasks')
+                  .select('id, title, due_date')
+                  .eq('type', 'Event');
+
+                if (siblingEvents) {
+                  const evsToUpdate = siblingEvents.filter((ev) => {
+                    const c = cleanTitle(ev.title);
+                    const titleMatches =
+                      c === cleanTask ||
+                      (c.length > 5 && cleanTask.length > 5 && (c.includes(cleanTask) || cleanTask.includes(c)));
+                    const dateMatches = !dateStr || !ev.due_date || ev.due_date === dateStr;
+                    return titleMatches && dateMatches;
+                  });
+
+                  if (evsToUpdate.length > 0) {
+                    await supabase
+                      .from('tasks')
+                      .update({ is_completed: isDone, updated_at: new Date().toISOString() })
+                      .in('id', evsToUpdate.map((e) => e.id));
+                  }
+                }
               }
 
               syncResults.tasksSynced++;
