@@ -21,6 +21,9 @@ import {
   BarChart3,
   ListFilter,
   ChevronDown,
+  Sliders,
+  X,
+  Save,
 } from 'lucide-react';
 import { AnalyticsSummary, DayMetricPoint, MonthRollup } from '../api/health/analytics/route';
 
@@ -35,6 +38,73 @@ export default function HealthTrackerPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [activeMetricTab, setActiveMetricTab] = useState<'sleep' | 'cardio' | 'steps' | 'workout' | 'weight'>('sleep');
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [savingMetrics, setSavingMetrics] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    date: '',
+    sleep: '',
+    sleepTime: '',
+    wakeTime: '',
+    steps: '',
+    rhr: '',
+    hrv: '',
+    weight: '',
+    workoutCalories: '',
+    workoutDuration: '',
+  });
+
+  const openEditModal = () => {
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    const targetPoint = days.find((d) => d.date === todayStr) || days[days.length - 1];
+
+    setEditFormData({
+      date: targetPoint?.date || todayStr,
+      sleep: targetPoint?.sleepHours ? `${targetPoint.sleepHours}` : '',
+      sleepTime: targetPoint?.sleepTime || '',
+      wakeTime: targetPoint?.wakeTime || '',
+      steps: targetPoint?.steps ? `${targetPoint.steps}` : '',
+      rhr: targetPoint?.rhr ? `${targetPoint.rhr}` : '',
+      hrv: targetPoint?.hrv ? `${targetPoint.hrv}` : '',
+      weight: targetPoint?.bodyweight ? `${targetPoint.bodyweight}` : '',
+      workoutCalories: targetPoint?.workoutCalories ? `${targetPoint.workoutCalories}` : '',
+      workoutDuration: targetPoint?.workoutDuration ? `${targetPoint.workoutDuration}` : '',
+    });
+    setShowEditModal(true);
+  };
+
+  const handleSaveMetrics = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingMetrics(true);
+    try {
+      const payload: Record<string, any> = {
+        date: editFormData.date,
+        timezone: 'America/New_York',
+      };
+      if (editFormData.sleep) payload.sleep = editFormData.sleep;
+      if (editFormData.sleepTime) payload.sleepTime = editFormData.sleepTime;
+      if (editFormData.wakeTime) payload.wakeTime = editFormData.wakeTime;
+      if (editFormData.steps) payload.steps = parseInt(editFormData.steps, 10);
+      if (editFormData.rhr) payload.rhr = parseFloat(editFormData.rhr);
+      if (editFormData.hrv) payload.hrv = parseFloat(editFormData.hrv);
+      if (editFormData.weight) payload.weight = parseFloat(editFormData.weight);
+      if (editFormData.workoutCalories) payload.workoutCalories = parseFloat(editFormData.workoutCalories);
+      if (editFormData.workoutDuration) payload.workoutDuration = parseFloat(editFormData.workoutDuration);
+
+      const res = await fetch('/api/health/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setShowEditModal(false);
+        fetchAnalytics(timeframe);
+      }
+    } catch (err) {
+      console.error('Failed to save metrics:', err);
+    } finally {
+      setSavingMetrics(false);
+    }
+  };
 
   const fetchAnalytics = useCallback(async (tf: Timeframe) => {
     try {
@@ -138,6 +208,14 @@ export default function HealthTrackerPage() {
               Yearly (12M)
             </button>
           </div>
+
+          <button
+            onClick={openEditModal}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-cyan-950/40 border border-cyan-500/30 hover:border-cyan-400 text-xs font-medium text-cyan-300 hover:text-white transition shadow-sm"
+          >
+            <Sliders className="h-3.5 w-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Edit Metrics</span>
+          </button>
 
           <button
             onClick={handleRefresh}
@@ -917,6 +995,199 @@ export default function HealthTrackerPage() {
           <p className="text-xs text-zinc-400">
             Ensure your Apple Health shortcut is active and syncing to Kevin-OS.
           </p>
+        </div>
+      )}
+
+      {/* Edit Biometrics Modal */}
+      {showEditModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setShowEditModal(false)}
+        >
+          <div
+            className="bg-[#121218] border border-zinc-700/80 rounded-2xl w-full max-w-lg p-6 space-y-5 shadow-2xl relative max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Sliders className="h-4 w-4 text-cyan-400" />
+                  Edit / Override Biometric Record
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Target Date: <span className="font-mono text-zinc-200">{editFormData.date}</span> • Direct Supabase & Sheets Update
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMetrics} className="space-y-4">
+              {/* Date Input */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={editFormData.date}
+                  onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  required
+                />
+              </div>
+
+              {/* Sleep Architecture Group */}
+              <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                  <Moon className="h-3.5 w-3.5" /> Sleep Architecture
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Duration (Hours or 6h 43m)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 6.7 or 6h 43m"
+                      value={editFormData.sleep}
+                      onChange={(e) => setEditFormData({ ...editFormData, sleep: e.target.value })}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Fell Asleep (Bedtime)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 10:48 PM"
+                      value={editFormData.sleepTime}
+                      onChange={(e) => setEditFormData({ ...editFormData, sleepTime: e.target.value })}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Woke Up Time</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 5:44 AM"
+                      value={editFormData.wakeTime}
+                      onChange={(e) => setEditFormData({ ...editFormData, wakeTime: e.target.value })}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Cardiovascular & Steps Group */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <TrendingUp className="h-3 w-3 text-emerald-400" /> Steps
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 8500"
+                    value={editFormData.steps}
+                    onChange={(e) => setEditFormData({ ...editFormData, steps: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <Heart className="h-3 w-3 text-rose-400" /> RHR (BPM)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 55"
+                    value={editFormData.rhr}
+                    onChange={(e) => setEditFormData({ ...editFormData, rhr: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <Activity className="h-3 w-3 text-cyan-400" /> HRV (MS)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 82"
+                    value={editFormData.hrv}
+                    onChange={(e) => setEditFormData({ ...editFormData, hrv: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Weight & Workouts Group */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <Scale className="h-3 w-3 text-cyan-400" /> Weight (lbs)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g. 172.8"
+                    value={editFormData.weight}
+                    onChange={(e) => setEditFormData({ ...editFormData, weight: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <Flame className="h-3 w-3 text-amber-400" /> Workout Cal
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 420"
+                    value={editFormData.workoutCalories}
+                    onChange={(e) => setEditFormData({ ...editFormData, workoutCalories: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1">
+                    <Zap className="h-3 w-3 text-amber-400" /> Workout Mins
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 55"
+                    value={editFormData.workoutDuration}
+                    onChange={(e) => setEditFormData({ ...editFormData, workoutDuration: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Action Buttons */}
+              <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingMetrics}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold text-black bg-cyan-400 hover:bg-cyan-300 shadow-md transition disabled:opacity-50"
+                >
+                  {savingMetrics ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  <span>Save to Supabase</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

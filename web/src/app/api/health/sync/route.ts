@@ -153,11 +153,36 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   const finalHrv = incomingHrv > 0 ? incomingHrv : (existingRecord?.hrv || 0);
 
   // Incoming Sleep
-  let incomingSleep = body.sleep !== undefined && body.sleep !== null ? parseFloat(String(body.sleep)) || 0 : 0;
-  if (incomingSleep > 1440) {
-    incomingSleep = incomingSleep / 3600.0; // Converted from seconds
-  } else if (incomingSleep > 24) {
-    incomingSleep = incomingSleep / 60.0; // Converted from minutes
+  let incomingSleep = 0;
+  if (body.sleep !== undefined && body.sleep !== null && body.sleep !== '') {
+    const rawSleepStr = String(body.sleep).trim().toLowerCase();
+    if (rawSleepStr.includes('h') || rawSleepStr.includes('m')) {
+      let hours = 0;
+      let minutes = 0;
+      if (rawSleepStr.includes('h')) {
+        const parts = rawSleepStr.split('h');
+        hours = parseFloat(parts[0].trim()) || 0;
+        if (parts[1]?.includes('m')) {
+          minutes = parseFloat(parts[1].replace('m', '').trim()) || 0;
+        }
+      } else if (rawSleepStr.includes('m')) {
+        minutes = parseFloat(rawSleepStr.replace('m', '').trim()) || 0;
+      }
+      incomingSleep = hours + minutes / 60;
+    } else if (rawSleepStr.includes(':')) {
+      const parts = rawSleepStr.split(':');
+      const h = parseFloat(parts[0].trim()) || 0;
+      const m = parseFloat(parts[1]?.trim() || '0') || 0;
+      incomingSleep = h + m / 60;
+    } else {
+      incomingSleep = parseFloat(rawSleepStr) || 0;
+    }
+
+    if (incomingSleep > 1440) {
+      incomingSleep = incomingSleep / 3600.0; // Converted from seconds
+    } else if (incomingSleep > 24) {
+      incomingSleep = incomingSleep / 60.0; // Converted from minutes
+    }
   }
 
   // Sleep fallback calculation from wakeTime & sleepTime if incoming sleep was 0
