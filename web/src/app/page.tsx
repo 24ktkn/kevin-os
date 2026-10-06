@@ -176,6 +176,12 @@ export default function HomePage() {
     setRefreshing(true);
     await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
     setRefreshing(false);
+
+    // Background sync with Google Calendar & Google Tasks to pull in any external updates
+    fetch('/api/tasks/sync')
+      .then((res) => res.json())
+      .then(() => fetchTodayTasks())
+      .catch((err) => console.warn('Homepage background task sync error:', err));
   }, [fetchHealth, fetchHabits, fetchTodayTasks]);
 
   useEffect(() => {

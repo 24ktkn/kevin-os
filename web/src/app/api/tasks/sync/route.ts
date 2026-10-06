@@ -149,6 +149,35 @@ export async function GET() {
                   is_completed: eventAlreadyPassed,
                 });
               }
+
+              // Bidirectional cross-linking: link calendar_event_id to matching Task row if exists
+              const cleanEv = cleanTitle(ev.summary);
+              if (cleanEv) {
+                const { data: matchingTasks } = await supabase
+                  .from('tasks')
+                  .select('id, title, google_task_id')
+                  .eq('type', 'Task')
+                  .eq('due_date', dateStr);
+
+                const matchedTask = matchingTasks?.find((tk) => {
+                  const c = cleanTitle(tk.title);
+                  return c === cleanEv || (c.length > 5 && (c.includes(cleanEv) || cleanEv.includes(c)));
+                });
+
+                if (matchedTask) {
+                  await supabase
+                    .from('tasks')
+                    .update({ calendar_event_id: ev.id })
+                    .eq('id', matchedTask.id);
+                  if (matchedTask.google_task_id) {
+                    await supabase
+                      .from('tasks')
+                      .update({ google_task_id: matchedTask.google_task_id })
+                      .eq('calendar_event_id', ev.id);
+                  }
+                }
+              }
+
               syncResults.calendarEventsSynced++;
             }
           }
