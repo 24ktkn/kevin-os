@@ -266,6 +266,66 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     if (upsertErr) {
       console.error(`Error saving biometrics for ${targetDate}:`, upsertErr);
     }
+
+    // Cross-system habit automation: If workout is recorded (>= 20 mins or >= 150 cals), auto-check Gym Workout
+    if (finalDur >= 20 || finalCal >= 150) {
+      try {
+        const { data: existingHabit } = await sb
+          .from('habits')
+          .select('*')
+          .eq('date', targetDate)
+          .maybeSingle();
+
+        if (!existingHabit || !existingHabit.gym_workout) {
+          await sb.from('habits').upsert({
+            date: targetDate,
+            wake_up_on_time: existingHabit?.wake_up_on_time ?? false,
+            gym_workout: true,
+            journaling: existingHabit?.journaling ?? false,
+            anki: existingHabit?.anki ?? false,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'date' });
+        }
+      } catch (hErr) {
+        console.warn('Auto-sync gym habit warning:', hErr);
+      }
+    }
+
+    // Cross-system habit automation: If wake time is recorded and <= 8:00 AM, auto-check Wake Up On Time
+    if (finalWake && finalWake !== 'No data') {
+      try {
+        const timeMatch = finalWake.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+        if (timeMatch) {
+          let hour = parseInt(timeMatch[1], 10);
+          const minute = parseInt(timeMatch[2], 10);
+          const ampm = (timeMatch[3] || 'AM').toUpperCase();
+          if (ampm === 'PM' && hour < 12) hour += 12;
+          if (ampm === 'AM' && hour === 12) hour = 0;
+          const wakeMins = hour * 60 + minute;
+          const targetMins = 8 * 60; // 8:00 AM target
+          if (wakeMins <= targetMins) {
+            const { data: existingHabit } = await sb
+              .from('habits')
+              .select('*')
+              .eq('date', targetDate)
+              .maybeSingle();
+
+            if (!existingHabit || !existingHabit.wake_up_on_time) {
+              await sb.from('habits').upsert({
+                date: targetDate,
+                wake_up_on_time: true,
+                gym_workout: existingHabit?.gym_workout ?? false,
+                journaling: existingHabit?.journaling ?? false,
+                anki: existingHabit?.anki ?? false,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'date' });
+            }
+          }
+        }
+      } catch (wErr) {
+        console.warn('Auto-sync wake habit warning:', wErr);
+      }
+    }
   }
 
   // Mirror merged record to Google Sheets if available

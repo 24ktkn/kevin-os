@@ -47,7 +47,7 @@ function getProductivityDate(): { dateStr: string; year: number; month: number; 
 }
 
 // Background mirror helper to Google Sheets
-async function mirrorHabitToSheets(todayStr: string, habit: string, completed: boolean) {
+async function mirrorHabitToSheets(targetDate: string, habit: string, completed: boolean) {
   try {
     const sheets = getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
@@ -64,7 +64,7 @@ async function mirrorHabitToSheets(todayStr: string, habit: string, completed: b
 
     let rowIndex = -1;
     for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][dateIdx]).trim() === todayStr) {
+      if (String(rows[i][dateIdx]).trim() === targetDate) {
         rowIndex = i + 1;
         break;
       }
@@ -78,7 +78,7 @@ async function mirrorHabitToSheets(todayStr: string, habit: string, completed: b
         requestBody: { values: [[valToSet]] },
       });
     } else {
-      const newRow = [todayStr, 'FALSE', 'FALSE', 'FALSE', 'FALSE'];
+      const newRow = [targetDate, 'FALSE', 'FALSE', 'FALSE', 'FALSE'];
       newRow[colIdx] = valToSet;
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
@@ -211,7 +211,10 @@ export async function GET() {
       };
     }
 
-    // 6. Build 30-Day Completeness Velocity
+    // 6. Build 30-Day Completeness Velocity (tied directly to today's local productivity date)
+    const [tYear, tMonth, tDay] = todayStr.split('-').map(Number);
+    const todayBase = new Date(tYear, tMonth - 1, tDay);
+
     const velocity30Days: Array<{
       date: string;
       dayLabel: string;
@@ -222,9 +225,12 @@ export async function GET() {
       total: number;
     }> = [];
     for (let i = 29; i >= 0; i--) {
-      const pastDate = new Date();
-      pastDate.setDate(pastDate.getDate() - i);
-      const dStr = pastDate.toISOString().split('T')[0];
+      const pastDate = new Date(todayBase);
+      pastDate.setDate(todayBase.getDate() - i);
+      const dYear = pastDate.getFullYear();
+      const dMonth = String(pastDate.getMonth() + 1).padStart(2, '0');
+      const dDay = String(pastDate.getDate()).padStart(2, '0');
+      const dStr = `${dYear}-${dMonth}-${dDay}`;
       const rec = rawHistory[dStr] || {
         'Wake Up On Time': false,
         'Gym Workout': false,
@@ -249,7 +255,6 @@ export async function GET() {
 
     const habitsData = HABITS_LIST.map((habitName) => {
       const dbCol = HABIT_DB_MAP[habitName] as keyof HabitRecord;
-      let streak = 0;
       let totalDays = 0;
       let totalCompleted = 0;
 
@@ -262,16 +267,20 @@ export async function GET() {
         if (isDone) totalCompleted++;
       }
 
-      // Calculate streak backwards from today
-      const sortedDates = Object.keys(completionMap).sort();
-      for (let i = sortedDates.length - 1; i >= 0; i--) {
-        const d = sortedDates[i];
-        if (completionMap[d]) {
+      // Calculate continuous streak backwards day-by-day from today
+      let streak = 0;
+      if (completionMap[todayStr]) {
+        streak++;
+      }
+      const checkDate = new Date(todayBase);
+      checkDate.setDate(checkDate.getDate() - 1);
+
+      while (true) {
+        const checkStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`;
+        if (completionMap[checkStr]) {
           streak++;
+          checkDate.setDate(checkDate.getDate() - 1);
         } else {
-          if (d === todayStr) {
-            continue; // Today hasn't ended yet
-          }
           break;
         }
       }
@@ -338,7 +347,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { habit, completed } = body;
+    const { habit, completed, date } = body;
 
     if (!habit || typeof completed !== 'boolean') {
       return NextResponse.json({ error: 'Missing habit name or completed boolean' }, { status: 400 });
@@ -350,39 +359,42 @@ export async function POST(request: Request) {
     }
 
     const { dateStr: todayStr } = getProductivityDate();
+    const targetDate = (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date).trim()))
+      ? String(date).trim()
+      : todayStr;
 
     // 1. Primary: Save to Supabase (immediate sub-20ms response)
     const sb = supabaseAdmin || supabase;
     if (sb) {
       try {
-        const { data: existing } = await sb.from('habits').select('*').eq('date', todayStr).single();
-        if (existing) {
-          await sb
-            .from('habits')
-            .update({
-              [dbCol]: completed,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('date', todayStr);
-        } else {
-          await sb.from('habits').insert({
-            date: todayStr,
-            wake_up_on_time: false,
-            gym_workout: false,
-            journaling: false,
-            anki: false,
-            [dbCol]: completed,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
+        const { data: existing } = await sb
+          .from('habits')
+          .select('*')
+          .eq('date', targetDate)
+          .maybeSingle();
+
+        const payload: Record<string, any> = {
+          date: targetDate,
+          wake_up_on_time: existing?.wake_up_on_time ?? false,
+          gym_workout: existing?.gym_workout ?? false,
+          journaling: existing?.journaling ?? false,
+          anki: existing?.anki ?? false,
+          [dbCol]: completed,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (!existing) {
+          payload.created_at = new Date().toISOString();
         }
+
+        await sb.from('habits').upsert(payload, { onConflict: 'date' });
       } catch (sbErr) {
         console.warn('Supabase habit update warning (e.g. column not yet in schema):', sbErr);
       }
     }
 
     // 2. Background mirror to Google Sheets (non-blocking)
-    mirrorHabitToSheets(todayStr, habit, completed).catch((e) => {
+    mirrorHabitToSheets(targetDate, habit, completed).catch((e) => {
       console.warn('Background Sheets sync failed:', e);
     });
 
@@ -390,7 +402,7 @@ export async function POST(request: Request) {
       success: true,
       habit,
       completed,
-      date: todayStr,
+      date: targetDate,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

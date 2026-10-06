@@ -13,6 +13,8 @@ import {
   TrendingUp,
   Award,
   RefreshCw,
+  X,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface HabitDay {
@@ -76,6 +78,11 @@ export default function HabitsPage() {
   const [todayStr, setTodayStr] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [updatingHabit, setUpdatingHabit] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState<{
+    dateStr: string;
+    dayNum: number;
+    isFuture: boolean;
+  } | null>(null);
 
   // Calendar Heatmap Controls
   const [selectedFilter, setSelectedFilter] = useState<string>('All Habits (Combined Count)');
@@ -103,54 +110,61 @@ export default function HabitsPage() {
     fetchHabits();
   }, [fetchHabits]);
 
-  // Toggle Habit Completion with Optimistic UI
-  const handleToggleHabit = async (habitName: string, currentStatus: boolean) => {
+  // Toggle Habit Completion for any date with Optimistic UI & Atomic Supabase Persistence
+  const handleToggleHabitForDate = async (habitName: string, targetDate: string, currentStatus: boolean) => {
     const nextStatus = !currentStatus;
-    setUpdatingHabit(habitName);
+    setUpdatingHabit(`${habitName}-${targetDate}`);
 
-    // Optimistic update
-    setHabits((prev) =>
-      prev.map((h) => {
-        if (h.name === habitName) {
-          const newStreak = nextStatus ? h.streak + 1 : Math.max(0, h.streak - 1);
-          return { ...h, completedToday: nextStatus, streak: newStreak };
-        }
-        return h;
-      })
-    );
+    // Optimistically update rawHistory for that date
+    setRawHistory((prev) => {
+      const cur = prev[targetDate] || {
+        'Wake Up On Time': false,
+        'Gym Workout': false,
+        'Journaling': false,
+        'Anki': false,
+        total: 0,
+      };
+      const updated = { ...cur, [habitName]: nextStatus };
+      updated.total =
+        (updated['Wake Up On Time'] ? 1 : 0) +
+        (updated['Gym Workout'] ? 1 : 0) +
+        (updated['Journaling'] ? 1 : 0) +
+        (updated['Anki'] ? 1 : 0);
+      return { ...prev, [targetDate]: updated };
+    });
 
-    // Update rawHistory optimistically
-    if (todayStr) {
-      setRawHistory((prev) => {
-        const cur = prev[todayStr] || {
-          'Wake Up On Time': false,
-          'Gym Workout': false,
-          'Journaling': false,
-          'Anki': false,
-          total: 0,
-        };
-        const updated = { ...cur, [habitName]: nextStatus };
-        updated.total =
-          (updated['Wake Up On Time'] ? 1 : 0) +
-          (updated['Gym Workout'] ? 1 : 0) +
-          (updated['Journaling'] ? 1 : 0) +
-          (updated['Anki'] ? 1 : 0);
-        return { ...prev, [todayStr]: updated };
-      });
+    // If targetDate is today, also update top cards
+    if (targetDate === todayStr) {
+      setHabits((prev) =>
+        prev.map((h) => {
+          if (h.name === habitName) {
+            const newStreak = nextStatus ? h.streak + 1 : Math.max(0, h.streak - 1);
+            return { ...h, completedToday: nextStatus, streak: newStreak };
+          }
+          return h;
+        })
+      );
     }
 
     try {
       await fetch('/api/habits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ habit: habitName, completed: nextStatus }),
+        body: JSON.stringify({ habit: habitName, completed: nextStatus, date: targetDate }),
       });
+      // Soft re-sync stats in background to keep totals and streaks exact
+      fetchHabits();
     } catch (err) {
       console.error('Failed to persist habit:', err);
       fetchHabits(); // rollback on error
     } finally {
       setUpdatingHabit(null);
     }
+  };
+
+  const handleToggleHabit = (habitName: string, currentStatus: boolean) => {
+    if (!todayStr) return;
+    handleToggleHabitForDate(habitName, todayStr, currentStatus);
   };
 
   // Month Navigation
@@ -232,6 +246,11 @@ export default function HabitsPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-400 font-medium">
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+            <span>Supabase Permanent Ledger Active</span>
+          </div>
+
           <button
             onClick={() => {
               setLoading(true);
@@ -554,7 +573,16 @@ export default function HabitsPage() {
                 return (
                   <div
                     key={c.dateStr}
-                    className={`h-16 sm:h-20 rounded-xl border p-2 flex flex-col justify-between transition-all duration-150 group relative ${tileBg}`}
+                    onClick={() => {
+                      if (!c.isFuture && c.dayNum > 0) {
+                        setSelectedDay({ dateStr: c.dateStr, dayNum: c.dayNum, isFuture: c.isFuture });
+                      }
+                    }}
+                    className={`h-16 sm:h-20 rounded-xl border p-2 flex flex-col justify-between transition-all duration-150 group relative ${
+                      !c.isFuture && c.dayNum > 0
+                        ? 'cursor-pointer hover:border-cyan-400 hover:scale-[1.02] shadow-sm'
+                        : 'cursor-default'
+                    } ${tileBg}`}
                   >
                     {/* Hover Info Tooltip */}
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 whitespace-nowrap bg-black/90 border border-zinc-700 text-white text-[11px] p-2 rounded-lg shadow-2xl">
@@ -565,6 +593,7 @@ export default function HabitsPage() {
                         <div>✍️ Journal: {c.record?.['Journaling'] ? '✓ Done' : '✕ Missed'}</div>
                         <div>🎴 Anki: {c.record?.['Anki'] ? '✓ Done' : '✕ Missed'}</div>
                       </div>
+                      <div className="text-[9px] text-cyan-400 mt-1 font-semibold">Click to inspect / edit</div>
                     </div>
 
                     <div className="flex items-center justify-between">
@@ -606,6 +635,124 @@ export default function HabitsPage() {
           </div>
         </section>
       </main>
+
+      {/* Day Inspector Modal */}
+      {selectedDay && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setSelectedDay(null)}
+        >
+          <div
+            className="bg-[#121218] border border-zinc-700/80 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <CalendarIcon className="h-4 w-4 text-cyan-400" />
+                    {new Date(
+                      parseInt(selectedDay.dateStr.split('-')[0], 10),
+                      parseInt(selectedDay.dateStr.split('-')[1], 10) - 1,
+                      parseInt(selectedDay.dateStr.split('-')[2], 10)
+                    ).toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </h3>
+                  {selectedDay.dateStr === todayStr && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-semibold">
+                      TODAY
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Target Ledger: <span className="text-zinc-200 font-mono">{selectedDay.dateStr}</span> • Instant Supabase Sync
+                </p>
+              </div>
+
+              <button
+                onClick={() => setSelectedDay(null)}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Habit Toggle Checklist for this specific day */}
+            <div className="space-y-2.5">
+              {[
+                { name: 'Wake Up On Time', icon: '⏰' },
+                { name: 'Gym Workout', icon: '💪' },
+                { name: 'Journaling', icon: '✍️' },
+                { name: 'Anki', icon: '🎴' },
+              ].map(({ name, icon }) => {
+                const dayRec = rawHistory[selectedDay.dateStr];
+                const isCompleted = Boolean(dayRec && dayRec[name as keyof RawHistoryRecord]);
+                const isUpdating = updatingHabit === `${name}-${selectedDay.dateStr}`;
+
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => handleToggleHabitForDate(name, selectedDay.dateStr, isCompleted)}
+                    disabled={isUpdating}
+                    className={`w-full flex items-center justify-between p-3.5 rounded-xl border transition-all text-left ${
+                      isCompleted
+                        ? 'bg-emerald-950/25 border-emerald-500/40 text-white'
+                        : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg">{icon}</span>
+                      <div>
+                        <div className="text-xs font-semibold">{name}</div>
+                        <div className="text-[10px] text-zinc-400">
+                          {isCompleted ? '✓ Completed for this date' : '✕ Missed / Incomplete'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isUpdating && <RefreshCw className="h-3.5 w-3.5 animate-spin text-cyan-400" />}
+                      <div
+                        className={`h-6 w-6 rounded-full flex items-center justify-center transition-all ${
+                          isCompleted
+                            ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/30'
+                            : 'border-2 border-zinc-700 text-transparent'
+                        }`}
+                      >
+                        {isCompleted ? (
+                          <CheckCircle2 className="h-4 w-4 stroke-[2.5]" />
+                        ) : (
+                          <Circle className="h-4 w-4" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Supabase Guarantee Footer */}
+            <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-500">
+              <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                Permanent Supabase Storage
+              </span>
+              <button
+                onClick={() => setSelectedDay(null)}
+                className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition text-xs font-medium"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
