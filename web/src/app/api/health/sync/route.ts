@@ -11,10 +11,18 @@ interface BiometricInput {
   hrv?: number | string;
   weight?: number | string;
   sleep?: number | string;
+  sleepDuration?: number | string;
+  sleep_duration?: number | string;
+  sleepHours?: number | string;
+  sleep_hours?: number | string;
   workoutCalories?: number | string;
+  workout_calories?: number | string;
   workoutDuration?: number | string;
+  workout_duration?: number | string;
   wakeTime?: string;
+  wake_time?: string;
   sleepTime?: string;
+  sleep_time?: string;
   timezone?: string;
 }
 
@@ -145,17 +153,24 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   }
 
   // Incoming steps (steps within a day are strictly cumulative; never downgrade)
-  const incomingSteps = parseInt(String(body.steps ?? 0), 10) || 0;
+  const incomingSteps = parseInt(String(body.steps ?? (body as any).Steps ?? 0), 10) || 0;
   const finalSteps = Math.max(existingRecord?.steps || 0, incomingSteps);
 
   // Incoming HRV
-  const incomingHrv = parseFloat(String(body.hrv || 0)) || 0;
+  const incomingHrv = parseFloat(String(body.hrv ?? (body as any).HRV ?? 0)) || 0;
   const finalHrv = incomingHrv > 0 ? incomingHrv : (existingRecord?.hrv || 0);
 
-  // Incoming Sleep
+  // Incoming Sleep (support aliases: sleep, sleepDuration, sleep_duration, sleepHours, sleep_hours)
+  const rawSleep =
+    body.sleep ??
+    (body as any).sleepDuration ??
+    (body as any).sleep_duration ??
+    (body as any).sleepHours ??
+    (body as any).sleep_hours;
+
   let incomingSleep = 0;
-  if (body.sleep !== undefined && body.sleep !== null && body.sleep !== '') {
-    const rawSleepStr = String(body.sleep).trim().toLowerCase();
+  if (rawSleep !== undefined && rawSleep !== null && rawSleep !== '') {
+    const rawSleepStr = String(rawSleep).trim().toLowerCase();
     if (rawSleepStr.includes('h') || rawSleepStr.includes('m')) {
       let hours = 0;
       let minutes = 0;
@@ -185,11 +200,14 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     }
   }
 
+  const rawWakeTime = body.wakeTime ?? (body as any).wake_time;
+  const rawSleepTime = body.sleepTime ?? (body as any).sleep_time;
+
   // Sleep fallback calculation from wakeTime & sleepTime if incoming sleep was 0
-  if (incomingSleep <= 0 && body.wakeTime && body.sleepTime) {
+  if (incomingSleep <= 0 && rawWakeTime && rawSleepTime) {
     try {
-      const cleanWake = String(body.wakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
-      const cleanSleep = String(body.sleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+      const cleanWake = String(rawWakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
+      const cleanSleep = String(rawSleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
       let dWake = new Date(cleanWake);
       let dSleep = new Date(cleanSleep);
 
@@ -235,11 +253,12 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   }
 
   // Incoming RHR
-  const incomingRhr = parseFloat(String(body.rhr || 0)) || 0;
+  const incomingRhr = parseFloat(String(body.rhr ?? (body as any).RHR ?? 0)) || 0;
   const finalRhr = incomingRhr > 0 ? incomingRhr : (existingRecord?.rhr || 0);
 
   // Incoming Bodyweight
-  let incomingWeight = body.weight !== undefined && body.weight !== null ? parseFloat(String(body.weight)) || 0 : 0;
+  const rawWeightInput = body.weight ?? (body as any).bodyweight ?? (body as any).body_weight;
+  let incomingWeight = rawWeightInput !== undefined && rawWeightInput !== null ? parseFloat(String(rawWeightInput)) || 0 : 0;
   let finalWeight = existingRecord?.bodyweight || 175.2;
   if (incomingWeight > 50 && incomingWeight < 400) {
     finalWeight = Math.round(incomingWeight * 10) / 10;
@@ -258,14 +277,56 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   }
 
   // Incoming Times
-  const wakeVal = formatTimeString(body.wakeTime);
-  const sleepTimeVal = formatTimeString(body.sleepTime);
+  let wakeVal = formatTimeString(rawWakeTime);
+  let sleepTimeVal = formatTimeString(rawSleepTime);
+
+  // Anomaly check: if effective sleep is substantial (>= 2h), but wakeVal and sleepTimeVal are within 45 minutes
+  // of each other (e.g. 5:36 AM to 5:44 AM), this is an iOS shortcut artifact where the LAST micro-interval of sleep
+  // was fetched instead of the earliest sleep interval. We reconstruct the real bedtime: wakeTime - sleepDuration.
+  const effectiveSleep = incomingSleep > 0 ? incomingSleep : (existingRecord?.sleep_hours || 0);
+  if (effectiveSleep >= 2.0 && wakeVal && sleepTimeVal) {
+    try {
+      const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      const mW = matchTime(wakeVal);
+      const mS = matchTime(sleepTimeVal);
+      if (mW && mS) {
+        let hW = parseInt(mW[1], 10);
+        if (mW[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
+        if (mW[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
+        const minW = hW * 60 + parseInt(mW[2], 10);
+
+        let hS = parseInt(mS[1], 10);
+        if (mS[3]?.toUpperCase() === 'PM' && hS < 12) hS += 12;
+        if (mS[3]?.toUpperCase() === 'AM' && hS === 12) hS = 0;
+        const minS = hS * 60 + parseInt(mS[2], 10);
+
+        let diff = minW - minS;
+        if (diff < 0) diff += 24 * 60;
+
+        if (diff < 45) {
+          // Detected micro-interval! Auto-reconstruct real bedtime from wakeTime - effectiveSleep
+          let bedtimeMinutes = minW - Math.round(effectiveSleep * 60);
+          while (bedtimeMinutes < 0) bedtimeMinutes += 24 * 60;
+          const bH = Math.floor(bedtimeMinutes / 60) % 24;
+          const bM = bedtimeMinutes % 60;
+          const ampm = bH >= 12 ? 'PM' : 'AM';
+          const displayH = bH % 12 === 0 ? 12 : bH % 12;
+          const correctedBedtime = `${displayH}:${String(bM).padStart(2, '0')} ${ampm}`;
+          console.warn(`[Health Sync] Micro-interval bedtime detected (${sleepTimeVal} -> ${wakeVal} = ${diff}m diff, with ${effectiveSleep}h duration). Auto-corrected bedtime to ${correctedBedtime}`);
+          sleepTimeVal = correctedBedtime;
+        }
+      }
+    } catch (anomalyErr) {
+      console.warn('Micro-interval bedtime check warning:', anomalyErr);
+    }
+  }
+
   const finalWake = wakeVal && wakeVal !== 'No data' ? wakeVal : (existingRecord?.wake_time || '');
   const finalSleepTime = sleepTimeVal && sleepTimeVal !== 'No data' ? sleepTimeVal : (existingRecord?.sleep_time || '');
 
   // Workouts (strictly cumulative)
-  const incomingCal = parseFloat(String(body.workoutCalories || 0)) || 0;
-  const incomingDur = parseFloat(String(body.workoutDuration || 0)) || 0;
+  const incomingCal = parseFloat(String(body.workoutCalories ?? (body as any).workout_calories ?? 0)) || 0;
+  const incomingDur = parseFloat(String(body.workoutDuration ?? (body as any).workout_duration ?? 0)) || 0;
   const finalCal = Math.max(existingRecord?.workout_calories || 0, incomingCal);
   const finalDur = Math.max(existingRecord?.workout_duration || 0, incomingDur);
 
