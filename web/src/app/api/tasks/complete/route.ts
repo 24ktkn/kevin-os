@@ -79,9 +79,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Setup Google Tasks API client
-    const clientId = process.env.GOOGLE_TASKS_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_TASKS_CLIENT_SECRET;
-    const refreshToken = process.env.GOOGLE_TASKS_REFRESH_TOKEN;
+    const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
+    const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
+    const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
+    const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
 
     let patched = false;
     let patchError: string | null = null;

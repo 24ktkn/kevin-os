@@ -120,9 +120,10 @@ export async function POST(req: NextRequest) {
 
     // 2. Insert Google Task unless skipTask is true or it's a standalone event without explicit task
     const shouldCreateTask = !isStandaloneEvent && !skipTask;
-    const clientId = process.env.GOOGLE_TASKS_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_TASKS_CLIENT_SECRET;
-    const refreshToken = process.env.GOOGLE_TASKS_REFRESH_TOKEN;
+    const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
+    const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
+    const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
+    const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
 
     if (shouldCreateTask && clientId && clientSecret && refreshToken) {
       try {
