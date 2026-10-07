@@ -321,6 +321,30 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     }
   }
 
+  // If sleep time is missing but effectiveSleep and wakeVal exist, compute bedtime from wake - duration
+  if (effectiveSleep >= 2.0 && wakeVal && (!sleepTimeVal || sleepTimeVal === 'No data')) {
+    try {
+      const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      const mW = matchTime(wakeVal);
+      if (mW) {
+        let hW = parseInt(mW[1], 10);
+        if (mW[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
+        if (mW[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
+        const minW = hW * 60 + parseInt(mW[2], 10);
+
+        let bedtimeMinutes = minW - Math.round(effectiveSleep * 60);
+        while (bedtimeMinutes < 0) bedtimeMinutes += 24 * 60;
+        const bH = Math.floor(bedtimeMinutes / 60) % 24;
+        const bM = bedtimeMinutes % 60;
+        const ampm = bH >= 12 ? 'PM' : 'AM';
+        const displayH = bH % 12 === 0 ? 12 : bH % 12;
+        sleepTimeVal = `${displayH}:${String(bM).padStart(2, '0')} ${ampm}`;
+      }
+    } catch (e) {
+      console.warn('Auto bedtime reconstruction warning:', e);
+    }
+  }
+
   const finalWake = wakeVal && wakeVal !== 'No data' ? wakeVal : (existingRecord?.wake_time || '');
   const finalSleepTime = sleepTimeVal && sleepTimeVal !== 'No data' ? sleepTimeVal : (existingRecord?.sleep_time || '');
 
