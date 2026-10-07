@@ -57,6 +57,13 @@ export async function GET() {
 
       const calendarApi = google.calendar({ version: 'v3', auth });
 
+      let allSchoolForCalendar: { uid: string; title: string }[] = [];
+      const sbInit = supabaseAdmin || supabase;
+      if (sbInit) {
+        const { data: dbSchool } = await sbInit.from('school_items').select('uid, title');
+        if (dbSchool) allSchoolForCalendar = dbSchool;
+      }
+
       const now = new Date();
       const timeMin = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const timeMax = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -185,6 +192,33 @@ export async function GET() {
                       .update({ is_completed: true })
                       .eq('calendar_event_id', ev.id);
                   }
+                }
+              }
+
+              // Cross-sync to school_items: update scheduled date and time from Google Calendar
+              if (allSchoolForCalendar.length > 0 && cleanEv) {
+                const matchedSchool = allSchoolForCalendar.filter((row) => {
+                  const cleanRow = cleanTitle(row.title);
+                  return (
+                    cleanRow === cleanEv ||
+                    (cleanRow.length > 5 &&
+                      cleanEv.length > 5 &&
+                      (cleanRow.includes(cleanEv) || cleanEv.includes(cleanRow)))
+                  );
+                });
+
+                for (const match of matchedSchool) {
+                  await sb
+                    .from('school_items')
+                    .update({
+                      is_scheduled: true,
+                      scheduled_date: dateStr,
+                      scheduled_time: timeStr || '10:00 AM',
+                      duration_mins: durationMins || 60,
+                      target_calendar: calName,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('uid', match.uid);
                 }
               }
 

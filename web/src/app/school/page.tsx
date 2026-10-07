@@ -263,11 +263,33 @@ export default function SchoolSyncPage() {
                 calendar: matched.calendar_name || 'School',
                 isTaskOnly: matched.type === 'Task',
               };
+
+              // Keep school_items in sync with latest due_date & due_time from tasks
+              if (supabase) {
+                supabase
+                  .from('school_items')
+                  .update({
+                    is_scheduled: true,
+                    scheduled_date: matched.due_date,
+                    scheduled_time: matched.due_time || '10:00 AM',
+                    duration_mins: matched.duration_mins || 60,
+                    target_calendar: matched.calendar_name || 'School',
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('uid', ev.uid)
+                  .then();
+              }
             }
           }
 
           if (Object.keys(newSchedFromDb).length > 0) {
-            setScheduledItems((prev) => ({ ...newSchedFromDb, ...prev }));
+            setScheduledItems((prev) => {
+              const merged = { ...prev, ...newSchedFromDb };
+              try {
+                localStorage.setItem('kevin_school_scheduled', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
           }
         }
       }
