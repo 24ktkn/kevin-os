@@ -43,6 +43,8 @@ export async function GET() {
     errors: [] as string[],
   };
 
+  const calendarMovedTaskIds = new Set<string>();
+
   // 1. Sync Google Calendars via Service Account
   try {
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
@@ -58,10 +60,45 @@ export async function GET() {
       const calendarApi = google.calendar({ version: 'v3', auth });
 
       let allSchoolForCalendar: { uid: string; title: string }[] = [];
+      let allDbTasks: {
+        id: string;
+        title: string;
+        due_date?: string;
+        due_time?: string;
+        google_task_id?: string;
+        calendar_event_id?: string;
+        is_completed?: boolean;
+        calendar_name?: string;
+        notes?: string;
+      }[] = [];
+
       const sbInit = supabaseAdmin || supabase;
       if (sbInit) {
         const { data: dbSchool } = await sbInit.from('school_items').select('uid, title');
         if (dbSchool) allSchoolForCalendar = dbSchool;
+
+        const { data: dbTasks } = await sbInit
+          .from('tasks')
+          .select('id, title, due_date, due_time, google_task_id, calendar_event_id, is_completed, calendar_name, notes')
+          .eq('type', 'Task');
+        if (dbTasks) allDbTasks = dbTasks;
+      }
+
+      // Initialize Google Tasks client early to patch tasks when calendar events are moved
+      const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
+      const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
+      const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
+      const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
+
+      let sharedTasksApi: any = null;
+      if (clientId && clientSecret && refreshToken) {
+        try {
+          const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+          oauth2Client.setCredentials({ refresh_token: refreshToken });
+          sharedTasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
+        } catch (e) {
+          console.warn('Early tasksApi init notice:', e);
+        }
       }
 
       const now = new Date();
@@ -160,31 +197,131 @@ export async function GET() {
                 });
               }
 
-              // Bidirectional cross-linking: link calendar_event_id to matching Task row if exists
+              // Bidirectional cross-linking & Auto-reschedule Google Task when Calendar Event moves
               const cleanEv = cleanTitle(ev.summary);
               if (cleanEv) {
-                const { data: matchingTasks } = await sb
-                  .from('tasks')
-                  .select('id, title, google_task_id, is_completed')
-                  .eq('type', 'Task')
-                  .eq('due_date', dateStr);
-
-                const matchedTask = matchingTasks?.find((tk) => {
-                  const c = cleanTitle(tk.title);
-                  return c === cleanEv || (c.length > 5 && (c.includes(cleanEv) || cleanEv.includes(c)));
-                });
+                // Match task: first by already-linked calendar_event_id, then by title
+                let matchedTask = allDbTasks.find((tk) => tk.calendar_event_id === ev.id);
+                if (!matchedTask) {
+                  matchedTask = allDbTasks.find((tk) => {
+                    const c = cleanTitle(tk.title);
+                    return c === cleanEv || (c.length > 5 && (c.includes(cleanEv) || cleanEv.includes(c)));
+                  });
+                }
 
                 if (matchedTask) {
-                  await sb
-                    .from('tasks')
-                    .update({ calendar_event_id: ev.id })
-                    .eq('id', matchedTask.id);
+                  const dateChanged = matchedTask.due_date !== dateStr;
+                  const timeChanged = Boolean(timeStr && matchedTask.due_time !== timeStr);
+                  const needsLink = matchedTask.calendar_event_id !== ev.id;
+
+                  if (dateChanged || timeChanged || needsLink) {
+                    await sb
+                      .from('tasks')
+                      .update({
+                        calendar_event_id: ev.id,
+                        due_date: dateStr,
+                        due_time: timeStr || matchedTask.due_time || '',
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq('id', matchedTask.id);
+
+                    // Track task so Section 2 (Google Tasks sync) does not revert the date
+                    calendarMovedTaskIds.add(matchedTask.id);
+                    if (matchedTask.google_task_id) {
+                      calendarMovedTaskIds.add(matchedTask.google_task_id);
+                    }
+
+                    matchedTask.calendar_event_id = ev.id;
+                    matchedTask.due_date = dateStr;
+                    if (timeStr) matchedTask.due_time = timeStr;
+
+                    // If date or time changed on Google Calendar, push the update to Google Tasks!
+                    if ((dateChanged || timeChanged) && sharedTasksApi) {
+                      const targetTaskListId =
+                        TASKLIST_MAP[calName] ||
+                        TASKLIST_MAP[matchedTask.calendar_name || ''] ||
+                        TASKLIST_MAP['Kevin Nguyen'];
+
+                      let updatedNotes = matchedTask.notes || '';
+                      if (timeStr) {
+                        const schedTag = `⏰ Scheduled: ${timeStr} (${durationMins || 30}m)`;
+                        if (updatedNotes.includes('⏰ Scheduled:')) {
+                          updatedNotes = updatedNotes.replace(/⏰ Scheduled:[^\n]+/g, schedTag);
+                        } else if (updatedNotes) {
+                          updatedNotes = `${schedTag}\n\n${updatedNotes}`;
+                        } else {
+                          updatedNotes = schedTag;
+                        }
+                      }
+
+                      if (matchedTask.google_task_id) {
+                        const listCandidates = [
+                          targetTaskListId,
+                          ...Object.values(TASKLIST_MAP).filter((l) => l !== targetTaskListId),
+                        ];
+
+                        for (const listId of listCandidates) {
+                          try {
+                            await sharedTasksApi.tasks.patch({
+                              tasklist: listId,
+                              task: matchedTask.google_task_id,
+                              requestBody: {
+                                due: `${dateStr}T00:00:00.000Z`,
+                                notes: updatedNotes,
+                              },
+                            });
+                            break;
+                          } catch {
+                            // Try next list candidate
+                          }
+                        }
+                      } else {
+                        // If google_task_id was not yet linked, search tasklists by title
+                        for (const listId of Object.values(TASKLIST_MAP)) {
+                          try {
+                            const listRes = await sharedTasksApi.tasks.list({
+                              tasklist: listId,
+                              showCompleted: false,
+                              maxResults: 50,
+                            });
+                            const gMatch = (listRes.data.items || []).find((tk: any) => {
+                              if (!tk.title) return false;
+                              const ct = cleanTitle(tk.title);
+                              return ct === cleanEv || (ct.length > 5 && (ct.includes(cleanEv) || cleanEv.includes(ct)));
+                            });
+                            if (gMatch && gMatch.id) {
+                              matchedTask.google_task_id = gMatch.id;
+                              calendarMovedTaskIds.add(gMatch.id);
+                              await sb
+                                .from('tasks')
+                                .update({ google_task_id: gMatch.id })
+                                .eq('id', matchedTask.id);
+
+                              await sharedTasksApi.tasks.patch({
+                                tasklist: listId,
+                                task: gMatch.id,
+                                requestBody: {
+                                  due: `${dateStr}T00:00:00.000Z`,
+                                  notes: updatedNotes,
+                                },
+                              });
+                              break;
+                            }
+                          } catch {
+                            // ignore
+                          }
+                        }
+                      }
+                    }
+                  }
+
                   if (matchedTask.google_task_id) {
                     await sb
                       .from('tasks')
                       .update({ google_task_id: matchedTask.google_task_id })
                       .eq('calendar_event_id', ev.id);
                   }
+
                   // If matching Task is completed, ensure Event is also marked completed
                   if (matchedTask.is_completed) {
                     await sb
@@ -331,19 +468,29 @@ export async function GET() {
               }
 
               if (existingId) {
+                const isMovedByCalendar =
+                  calendarMovedTaskIds.has(existingId) ||
+                  (item.id ? calendarMovedTaskIds.has(item.id) : false);
+
+                const taskUpdatePayload: Record<string, unknown> = {
+                  title: taskTitle,
+                  type: 'Task',
+                  calendar_name: calName,
+                  is_completed: isDone,
+                  google_task_id: item.id,
+                  duration_mins: 0,
+                  updated_at: new Date().toISOString(),
+                };
+
+                // Only overwrite due_date if it wasn't just updated by Google Calendar event sync
+                if (!isMovedByCalendar && dateStr) {
+                  taskUpdatePayload.due_date = dateStr;
+                }
+
                 // Update this task row
                 await sb
                   .from('tasks')
-                  .update({
-                    title: taskTitle,
-                    type: 'Task',
-                    calendar_name: calName,
-                    due_date: dateStr || undefined,
-                    is_completed: isDone,
-                    google_task_id: item.id,
-                    duration_mins: 0,
-                    updated_at: new Date().toISOString(),
-                  })
+                  .update(taskUpdatePayload)
                   .eq('id', existingId);
 
                 // If completed, update ALL matching tasks with this google_task_id (including duplicate rows)
