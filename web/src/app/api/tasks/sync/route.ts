@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { isEventPast } from '@/lib/date-utils';
 
 const CALENDAR_MAP: Record<string, string> = {
@@ -101,61 +101,64 @@ export async function GET() {
 
             if (!dateStr) continue;
 
-            if (supabase) {
-              // Upsert event by calendar_event_id
-              const { data: existing } = await supabase
+            const sb = supabaseAdmin || supabase;
+            if (sb) {
+              // Upsert event by calendar_event_id (safe against duplicate rows)
+              const { data: existingRows } = await sb
                 .from('tasks')
-                .select('id')
+                .select('id, is_completed')
                 .eq('calendar_event_id', ev.id)
-                .maybeSingle();
+                .order('created_at', { ascending: false });
 
+              const existing = existingRows?.[0];
               const eventAlreadyPassed = isEventPast(dateStr, timeStr, durationMins);
 
-              if (existing) {
-                const updatePayload: Record<string, unknown> = {
-                  title: ev.summary,
-                  type: 'Event',
-                  calendar_name: calName,
-                  due_date: dateStr,
-                  due_time: timeStr,
-                  duration_mins: durationMins,
-                  location: ev.location || '',
-                  notes: ev.description || '',
-                  is_scheduled: true,
-                  updated_at: new Date().toISOString(),
-                };
-                if (eventAlreadyPassed) {
-                  updatePayload.is_completed = true;
-                } else {
-                  updatePayload.is_completed = false;
-                }
+              const updatePayload: Record<string, unknown> = {
+                title: ev.summary,
+                type: 'Event',
+                calendar_name: calName,
+                due_date: dateStr,
+                due_time: timeStr,
+                duration_mins: durationMins,
+                location: ev.location || '',
+                notes: ev.description || '',
+                is_scheduled: true,
+                updated_at: new Date().toISOString(),
+              };
 
-                await supabase
+              // Preserve completed status if already marked completed
+              if (existing?.is_completed) {
+                updatePayload.is_completed = true;
+              } else if (eventAlreadyPassed) {
+                updatePayload.is_completed = true;
+              } else {
+                updatePayload.is_completed = false;
+              }
+
+              if (existing) {
+                await sb
                   .from('tasks')
                   .update(updatePayload)
-                  .eq('id', existing.id);
+                  .eq('calendar_event_id', ev.id);
+
+                // Clean up any extra duplicate rows with same calendar_event_id
+                if (existingRows && existingRows.length > 1) {
+                  const duplicateIds = existingRows.slice(1).map((r) => r.id);
+                  await sb.from('tasks').delete().in('id', duplicateIds);
+                }
               } else {
-                await supabase.from('tasks').insert({
-                  title: ev.summary,
-                  type: 'Event',
-                  calendar_name: calName,
-                  due_date: dateStr,
-                  due_time: timeStr,
-                  duration_mins: durationMins,
-                  location: ev.location || '',
-                  notes: ev.description || '',
+                await sb.from('tasks').insert({
+                  ...updatePayload,
                   calendar_event_id: ev.id,
-                  is_scheduled: true,
-                  is_completed: eventAlreadyPassed,
                 });
               }
 
               // Bidirectional cross-linking: link calendar_event_id to matching Task row if exists
               const cleanEv = cleanTitle(ev.summary);
               if (cleanEv) {
-                const { data: matchingTasks } = await supabase
+                const { data: matchingTasks } = await sb
                   .from('tasks')
-                  .select('id, title, google_task_id')
+                  .select('id, title, google_task_id, is_completed')
                   .eq('type', 'Task')
                   .eq('due_date', dateStr);
 
@@ -165,14 +168,21 @@ export async function GET() {
                 });
 
                 if (matchedTask) {
-                  await supabase
+                  await sb
                     .from('tasks')
                     .update({ calendar_event_id: ev.id })
                     .eq('id', matchedTask.id);
                   if (matchedTask.google_task_id) {
-                    await supabase
+                    await sb
                       .from('tasks')
                       .update({ google_task_id: matchedTask.google_task_id })
+                      .eq('calendar_event_id', ev.id);
+                  }
+                  // If matching Task is completed, ensure Event is also marked completed
+                  if (matchedTask.is_completed) {
+                    await sb
+                      .from('tasks')
+                      .update({ is_completed: true })
                       .eq('calendar_event_id', ev.id);
                   }
                 }
@@ -195,6 +205,7 @@ export async function GET() {
   const completedTitles: string[] = [];
 
   // 2. Sync Google Tasks (if refresh token is valid)
+  const sb = supabaseAdmin || supabase;
   try {
     const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
     const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
@@ -207,8 +218,8 @@ export async function GET() {
       const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
 
       let allSchoolRows: { uid: string; title: string; is_completed: boolean }[] = [];
-      if (supabase) {
-        const { data: dbSchool } = await supabase.from('school_items').select('uid, title, is_completed');
+      if (sb) {
+        const { data: dbSchool } = await sb.from('school_items').select('uid, title, is_completed');
         if (dbSchool) allSchoolRows = dbSchool;
       }
 
@@ -237,7 +248,7 @@ export async function GET() {
               dateStr = item.due.split('T')[0];
             }
 
-            if (supabase) {
+            if (sb) {
               // 1. If completed, update school_items table with smart title matching
               if (isDone && allSchoolRows.length > 0) {
                 const cleanTask = cleanTitle(taskTitle);
@@ -255,7 +266,7 @@ export async function GET() {
                   for (const match of matchedItems) {
                     if (!match.is_completed) {
                       match.is_completed = true;
-                      await supabase
+                      await sb
                         .from('school_items')
                         .update({ is_completed: true, updated_at: new Date().toISOString() })
                         .eq('uid', match.uid);
@@ -264,29 +275,30 @@ export async function GET() {
                 }
               }
 
-              // 2. Check if this task exists in tasks table by google_task_id or title
+              // 2. Check if this task exists in tasks table by google_task_id or title (avoid maybeSingle duplicate error)
               let existingId: string | null = null;
               if (item.id) {
-                const { data: byId } = await supabase
+                const { data: byId } = await sb
                   .from('tasks')
                   .select('id')
                   .eq('google_task_id', item.id)
-                  .maybeSingle();
-                if (byId) existingId = byId.id;
+                  .limit(1);
+                if (byId && byId.length > 0) existingId = byId[0].id;
               }
 
               if (!existingId) {
-                const { data: byTitle } = await supabase
+                const { data: byTitle } = await sb
                   .from('tasks')
                   .select('id')
                   .eq('title', taskTitle)
                   .eq('type', 'Task')
-                  .maybeSingle();
-                if (byTitle) existingId = byTitle.id;
+                  .limit(1);
+                if (byTitle && byTitle.length > 0) existingId = byTitle[0].id;
               }
 
               if (existingId) {
-                await supabase
+                // Update this task row
+                await sb
                   .from('tasks')
                   .update({
                     title: taskTitle,
@@ -299,8 +311,19 @@ export async function GET() {
                     updated_at: new Date().toISOString(),
                   })
                   .eq('id', existingId);
+
+                // If completed, update ALL matching tasks with this google_task_id (including duplicate rows)
+                if (item.id) {
+                  await sb
+                    .from('tasks')
+                    .update({
+                      is_completed: isDone,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('google_task_id', item.id);
+                }
               } else {
-                await supabase.from('tasks').insert({
+                await sb.from('tasks').insert({
                   title: taskTitle,
                   type: 'Task',
                   calendar_name: calName,
@@ -317,7 +340,7 @@ export async function GET() {
               // 3. Also update any matching calendar event timeblock in tasks table
               const cleanTask = cleanTitle(taskTitle);
               if (cleanTask) {
-                const { data: siblingEvents } = await supabase
+                const { data: siblingEvents } = await sb
                   .from('tasks')
                   .select('id, title, due_date')
                   .eq('type', 'Event');
@@ -333,7 +356,7 @@ export async function GET() {
                   });
 
                   if (evsToUpdate.length > 0) {
-                    await supabase
+                    await sb
                       .from('tasks')
                       .update({ is_completed: isDone, updated_at: new Date().toISOString() })
                       .in('id', evsToUpdate.map((e) => e.id));
@@ -344,10 +367,16 @@ export async function GET() {
               syncResults.tasksSynced++;
             }
           }
-        } catch (err) {
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          syncResults.errors.push(`Tasklist ${calName} (${listId}): ${msg}`);
           console.warn(`Tasklist ${listId} sync skipped or failed:`, err);
         }
       }
+    } else {
+      syncResults.errors.push(
+        `Google Tasks credentials missing (clientId: ${!!clientId}, clientSecret: ${!!clientSecret}, refreshToken: ${!!refreshToken})`
+      );
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -355,9 +384,9 @@ export async function GET() {
   }
 
   // 3. Auto-sweep all past events in database to is_completed = true
-  if (supabase) {
+  if (sb) {
     try {
-      const { data: activeEvents } = await supabase
+      const { data: activeEvents } = await sb
         .from('tasks')
         .select('id, due_date, due_time, duration_mins')
         .eq('type', 'Event')
@@ -369,7 +398,7 @@ export async function GET() {
           .map((e) => e.id);
 
         if (pastIds.length > 0) {
-          await supabase
+          await sb
             .from('tasks')
             .update({ is_completed: true, updated_at: new Date().toISOString() })
             .in('id', pastIds);
