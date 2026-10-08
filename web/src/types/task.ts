@@ -33,6 +33,7 @@ export interface RescheduleRequest {
   newTime?: string; // e.g. "10:00 AM" or "14:30"
   durationMins?: number;
   scope?: 'instance' | 'series';
+  createTimeblock?: boolean;
 }
 
 export interface RescheduleResponse {
@@ -44,4 +45,19 @@ export interface RescheduleResponse {
   patchedSchool?: boolean;
   error?: string;
 }
+
+export interface DeleteTaskRequest {
+  taskId?: string;
+  calendarEventId?: string;
+  googleTaskId?: string;
+  calendarName?: CalendarName;
+  title?: string;
+}
+
+export interface DeleteTaskResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
 

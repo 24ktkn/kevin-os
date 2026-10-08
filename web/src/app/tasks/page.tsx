@@ -19,6 +19,7 @@ import {
   RotateCcw,
   CalendarClock,
   Repeat,
+  Trash2,
 } from 'lucide-react';
 import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
@@ -56,14 +57,27 @@ export default function MissionControlPage() {
   const [newTaskRepeat, setNewTaskRepeat] = useState<RepeatOption>('None');
   const [submittingTask, setSubmittingTask] = useState(false);
   const [reschedulingTask, setReschedulingTask] = useState<TaskItem | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<TaskItem | null>(null);
+  const [deletingTask, setDeletingTask] = useState(false);
 
   const handleRescheduleSuccess = (rescheduled: {
     newDate: string;
     newTime: string;
     durationMins: number;
     updatedTask?: TaskItem;
+    deleted?: boolean;
   }) => {
     if (!reschedulingTask) return;
+    if (rescheduled.deleted) {
+      setTasks((prev) => {
+        const next = prev.filter((t) => t.id !== reschedulingTask.id);
+        localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+        return next;
+      });
+      fetchTasks();
+      setReschedulingTask(null);
+      return;
+    }
     setTasks((prev) => {
       const next = prev.map((t) =>
         t.id === reschedulingTask.id || (rescheduled.updatedTask && t.id === rescheduled.updatedTask.id)
@@ -81,6 +95,39 @@ export default function MissionControlPage() {
       return next;
     });
     setReschedulingTask(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!taskToDelete) return;
+    setDeletingTask(true);
+    const targetId = taskToDelete.id;
+
+    // Optimistic UI update
+    setTasks((prev) => {
+      const next = prev.filter((t) => t.id !== targetId);
+      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      await fetch('/api/tasks/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: taskToDelete.id,
+          calendarEventId: taskToDelete.calendar_event_id,
+          googleTaskId: taskToDelete.google_task_id,
+          calendarName: taskToDelete.calendar_name,
+          title: taskToDelete.title,
+        }),
+      });
+      await fetchTasks();
+    } catch (err) {
+      console.error('Delete error:', err);
+    } finally {
+      setDeletingTask(false);
+      setTaskToDelete(null);
+    }
   };
 
   // Fetch tasks from Supabase (with localStorage fallback)
@@ -713,17 +760,30 @@ export default function MissionControlPage() {
                       )}
                     </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setReschedulingTask(task);
-                      }}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 border border-zinc-800 hover:border-cyan-500/30 transition cursor-pointer shrink-0"
-                      title="Reschedule / Shift Timeblock"
-                    >
-                      <CalendarClock className="h-3 w-3" />
-                      <span>Reschedule</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReschedulingTask(task);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 border border-zinc-800 hover:border-cyan-500/30 transition cursor-pointer"
+                        title="Reschedule / Shift Timeblock"
+                      >
+                        <CalendarClock className="h-3 w-3" />
+                        <span>Reschedule</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTaskToDelete(task);
+                        }}
+                        className="p-1 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/30 transition cursor-pointer"
+                        title="Permanently delete this item"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -967,6 +1027,63 @@ export default function MissionControlPage() {
           item={reschedulingTask}
           onSuccess={handleRescheduleSuccess}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {taskToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-800 bg-[#121218] p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-rose-400">
+              <div className="h-9 w-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Delete Item</h3>
+                <p className="text-[11px] text-zinc-400">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+              <div className="font-semibold text-white line-clamp-2">{taskToDelete.title}</div>
+              <div className="text-[11px] text-zinc-400 mt-1">
+                {taskToDelete.calendar_name} • {taskToDelete.due_date || 'No Date'}
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              This will permanently delete this item from Google Calendar, Google Tasks, and Mission Control.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setTaskToDelete(null)}
+                disabled={deletingTask}
+                className="px-3 py-1.5 rounded-xl border border-zinc-700 text-xs text-zinc-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deletingTask}
+                className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {deletingTask ? (
+                  <>
+                    <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete Permanently</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

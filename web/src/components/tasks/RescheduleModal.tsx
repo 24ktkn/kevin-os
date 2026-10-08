@@ -13,6 +13,7 @@ import {
   Repeat,
   ArrowRight,
   Zap,
+  Trash2,
 } from 'lucide-react';
 import { CalendarName, RescheduleRequest, RescheduleResponse, TaskItem } from '@/types/task';
 
@@ -38,6 +39,7 @@ interface RescheduleModalProps {
     newTime: string;
     durationMins: number;
     updatedTask?: TaskItem;
+    deleted?: boolean;
   }) => void;
 }
 
@@ -47,6 +49,9 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
   const [selectedDuration, setSelectedDuration] = useState<number>(30);
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarName>('Kevin Nguyen');
   const [recurrenceScope, setRecurrenceScope] = useState<'instance' | 'series'>('instance');
+  const [addTimeblock, setAddTimeblock] = useState<boolean>(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [deleting, setDeleting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
@@ -59,6 +64,8 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
       setSelectedDuration(item.duration_mins && item.duration_mins > 0 ? item.duration_mins : 30);
       setSelectedCalendar(item.calendar_name || 'Kevin Nguyen');
       setRecurrenceScope('instance');
+      setAddTimeblock(!Boolean(item.calendar_event_id || item.type === 'Event'));
+      setShowDeleteConfirm(false);
       setErrorMsg('');
       setSuccessMsg('');
     }
@@ -101,6 +108,7 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
         newTime: selectedTime,
         durationMins: selectedDuration,
         scope: recurrenceScope,
+        createTimeblock: !isTimeblocked ? addTimeblock : true,
       };
 
       const res = await fetch('/api/tasks/reschedule', {
@@ -134,6 +142,53 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
       setErrorMsg(msg);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!item) return;
+
+    setDeleting(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      const res = await fetch('/api/tasks/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: item.id,
+          calendarEventId: item.calendar_event_id,
+          googleTaskId: item.google_task_id,
+          calendarName: selectedCalendar,
+          title: item.title,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete item');
+      }
+
+      setSuccessMsg(data.message || 'Item deleted successfully');
+      if (onSuccess) {
+        onSuccess({
+          newDate: selectedDate,
+          newTime: selectedTime,
+          durationMins: selectedDuration,
+          deleted: true,
+        });
+      }
+
+      setTimeout(() => {
+        onClose();
+      }, 500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown delete error';
+      setErrorMsg(msg);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -262,6 +317,29 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
             ))}
           </div>
 
+          {/* Add Timeblock Option (if item has no calendar timeblock yet) */}
+          {!isTimeblocked && (
+            <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-800/50 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-cyan-400" /> Add Google Calendar Timeblock
+                </div>
+                <p className="text-[11px] text-zinc-400">
+                  Creates an event block on your {selectedCalendar} calendar alongside the task.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={addTimeblock}
+                  onChange={(e) => setAddTimeblock(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500"></div>
+              </label>
+            </div>
+          )}
+
           {/* Duration & Calendar Destination */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -341,7 +419,7 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
           {/* Destinations Sync Checklist Badges */}
           <div className="p-2.5 rounded-xl bg-zinc-900/50 border border-zinc-800/80 flex flex-wrap items-center gap-2 text-[10px]">
             <span className="text-zinc-500 font-semibold uppercase">Will Sync Across:</span>
-            {isTimeblocked && (
+            {(isTimeblocked || addTimeblock) && (
               <span className="px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
                 <CheckCircle2 className="h-2.5 w-2.5" /> Google Calendar [{selectedCalendar}]
               </span>
@@ -376,33 +454,83 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
             </div>
           )}
 
+          {/* Delete Warning Confirmation Prompt */}
+          {showDeleteConfirm && (
+            <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-xs text-rose-300 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                <span>Permanently delete across Google Calendar, Tasks, and Database?</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1 shadow-md shadow-rose-900/30 transition cursor-pointer disabled:opacity-50"
+                >
+                  {deleting ? (
+                    <RotateCcw className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                  <span>Delete</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="px-2 py-1 rounded-lg text-zinc-400 hover:text-zinc-200 text-xs border border-zinc-700/80 hover:bg-zinc-800/60 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || !selectedDate}
-              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold shadow-md shadow-cyan-500/20 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {submitting ? (
-                <>
-                  <RotateCcw className="h-3.5 w-3.5 animate-spin" />
-                  <span>Rescheduling...</span>
-                </>
-              ) : (
-                <>
-                  <span>Save & Sync Cloud</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </>
+          <div className="flex items-center justify-between gap-2 pt-3 border-t border-zinc-800">
+            <div>
+              {!showDeleteConfirm && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={submitting || deleting}
+                  className="px-3 py-1.5 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/30 transition text-xs font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Permanently delete this task/event"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete Item</span>
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={submitting || deleting}
+                className="px-3.5 py-1.5 rounded-xl border border-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || deleting || !selectedDate}
+                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold shadow-md shadow-cyan-500/20 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Rescheduling...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Save & Sync Cloud</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>

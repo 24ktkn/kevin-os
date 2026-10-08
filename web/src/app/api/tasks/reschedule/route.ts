@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
       newTime,
       durationMins = 30,
       scope = 'instance',
+      createTimeblock,
     } = body;
 
     if (!newDate) {
@@ -302,6 +303,50 @@ export async function POST(req: NextRequest) {
               }
             }
           }
+        } else if (createTimeblock || (createTimeblock !== false && newTime)) {
+          // If no calendar timeblock exists and timeblock creation is requested, insert brand new event
+          try {
+            const calSummary = targetCalendarName === 'School'
+              ? `🎓 [Task] ${itemTitle.trim()}`
+              : itemTitle.trim();
+
+            const insertRes = await calendarApi.events.insert({
+              calendarId: activeCalId,
+              requestBody: {
+                summary: calSummary,
+                description: currentNotes || '',
+                start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
+                end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
+              },
+            });
+
+            if (insertRes.data.id) {
+              targetCalEventId = insertRes.data.id;
+              patchedCalendar = true;
+
+              // Insert companion 'Event' row in Supabase so Agenda displays it immediately
+              if (sb) {
+                await sb.from('tasks').insert({
+                  id: crypto.randomUUID(),
+                  title: calSummary,
+                  type: 'Event',
+                  calendar_name: targetCalendarName,
+                  due_date: newDate,
+                  due_time: formatted12h,
+                  duration_mins: finalDuration,
+                  is_completed: false,
+                  is_scheduled: true,
+                  calendar_event_id: targetCalEventId,
+                  google_task_id: targetGoogleTaskId,
+                  notes: currentNotes || '',
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            }
+          } catch (calInsertErr) {
+            console.error('Failed to create new calendar timeblock in reschedule:', calInsertErr);
+          }
         }
       } catch (authErr) {
         console.warn('Calendar service account error:', authErr);
@@ -434,7 +479,10 @@ export async function POST(req: NextRequest) {
           updated_at: nowIso,
         };
 
-        if (targetCalEventId) updatePayload.calendar_event_id = targetCalEventId;
+        if (targetCalEventId) {
+          updatePayload.calendar_event_id = targetCalEventId;
+          updatePayload.is_scheduled = true;
+        }
         if (targetGoogleTaskId) updatePayload.google_task_id = targetGoogleTaskId;
 
         const { data: updatedList } = await sb
