@@ -453,6 +453,7 @@ export async function GET() {
                   .from('tasks')
                   .select('id')
                   .eq('google_task_id', item.id)
+                  .eq('type', 'Task')
                   .limit(1);
                 if (byId && byId.length > 0) existingId = byId[0].id;
               }
@@ -494,11 +495,11 @@ export async function GET() {
                   .eq('id', existingId);
 
                 // If completed, update ALL matching tasks with this google_task_id (including duplicate rows)
-                if (item.id) {
+                if (item.id && isDone) {
                   await sb
                     .from('tasks')
                     .update({
-                      is_completed: isDone,
+                      is_completed: true,
                       updated_at: new Date().toISOString(),
                     })
                     .eq('google_task_id', item.id);
@@ -536,10 +537,10 @@ export async function GET() {
                     return titleMatches && dateMatches;
                   });
 
-                  if (evsToUpdate.length > 0) {
+                  if (evsToUpdate.length > 0 && isDone) {
                     await sb
                       .from('tasks')
-                      .update({ is_completed: isDone, updated_at: new Date().toISOString() })
+                      .update({ is_completed: true, updated_at: new Date().toISOString() })
                       .in('id', evsToUpdate.map((e) => e.id));
                   }
                 }
