@@ -24,12 +24,13 @@ import {
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { CalendarName } from '@/types/task';
 import { supabase } from '@/lib/supabase';
+import { getTodayDateStr } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 function formatScheduledDate(dateStr?: string): string {
   if (!dateStr) return '';
   try {
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const today = getTodayDateStr();
     const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
     if (dateStr === today) {
@@ -117,15 +118,28 @@ export default function SchoolSyncPage() {
 
   // Load from Supabase (with fallback to localStorage)
   const loadStoredData = useCallback(async () => {
+    const todayStr = getTodayDateStr();
     try {
       const storedOverrides = localStorage.getItem('kevin_school_overrides');
       if (storedOverrides) setOverrides(JSON.parse(storedOverrides));
 
       const storedCompletions = localStorage.getItem('kevin_school_completions');
-      if (storedCompletions) setCompletions(JSON.parse(storedCompletions));
+      const parsedCompletions: Record<string, boolean> = storedCompletions ? JSON.parse(storedCompletions) : {};
+      if (storedCompletions) setCompletions(parsedCompletions);
 
       const storedScheduled = localStorage.getItem('kevin_school_scheduled');
-      if (storedScheduled) setScheduledItems(JSON.parse(storedScheduled));
+      if (storedScheduled) {
+        const parsedSched = JSON.parse(storedScheduled) as Record<
+          string,
+          { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }
+        >;
+        for (const [uid, info] of Object.entries(parsedSched)) {
+          if (!parsedCompletions[uid] && info.date && info.date < todayStr) {
+            parsedSched[uid] = { ...info, date: todayStr };
+          }
+        }
+        setScheduledItems(parsedSched);
+      }
     } catch {
       // ignore
     }
@@ -139,23 +153,44 @@ export default function SchoolSyncPage() {
           const newOverrides: Record<string, SchoolCategory> = {};
           const newCompletions: Record<string, boolean> = {};
           const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }> = {};
+          const rolloverUids: string[] = [];
 
           for (const row of data) {
             if (row.category) newOverrides[row.uid] = row.category as SchoolCategory;
             if (typeof row.is_completed === 'boolean') newCompletions[row.uid] = row.is_completed;
             if (row.is_scheduled && row.scheduled_date) {
+              const effectiveDate =
+                !row.is_completed && row.scheduled_date < todayStr ? todayStr : row.scheduled_date;
+              if (effectiveDate !== row.scheduled_date) {
+                rolloverUids.push(row.uid);
+              }
               newScheduled[row.uid] = {
-                date: row.scheduled_date,
+                date: effectiveDate,
                 time: row.scheduled_time || '10:00 AM',
                 duration: row.duration_mins || 0,
                 calendar: row.target_calendar || 'School',
+                isTaskOnly: !row.duration_mins || row.duration_mins === 0,
               };
             }
           }
 
+          if (rolloverUids.length > 0) {
+            supabase
+              .from('school_items')
+              .update({ scheduled_date: todayStr, updated_at: new Date().toISOString() })
+              .in('uid', rolloverUids)
+              .then();
+          }
+
           setOverrides((prev) => ({ ...prev, ...newOverrides }));
           setCompletions((prev) => ({ ...prev, ...newCompletions }));
-          setScheduledItems((prev) => ({ ...prev, ...newScheduled }));
+          setScheduledItems((prev) => {
+            const merged = { ...prev, ...newScheduled };
+            try {
+              localStorage.setItem('kevin_school_scheduled', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
       } catch {
         // Table might not exist yet
@@ -226,6 +261,7 @@ export default function SchoolSyncPage() {
 
       // Also discover and sync scheduled items from tasks table in Supabase
       if (supabase) {
+        const todayStr = getTodayDateStr();
         const cleanStr = (s: string) =>
           s
             .replace(/\\,/g, ',')
@@ -238,8 +274,8 @@ export default function SchoolSyncPage() {
 
         const { data: dbTasks } = await supabase
           .from('tasks')
-          .select('title, due_date, due_time, duration_mins, calendar_name, is_scheduled, type')
-          .eq('is_scheduled', true);
+          .select('title, due_date, due_time, duration_mins, calendar_name, is_scheduled, is_completed, type')
+          .or('is_scheduled.eq.true,type.eq.Task');
 
         if (dbTasks && dbTasks.length > 0) {
           const newSchedFromDb: Record<
@@ -256,12 +292,15 @@ export default function SchoolSyncPage() {
             });
 
             if (matched && matched.due_date) {
+              const effectiveDate =
+                !matched.is_completed && matched.due_date < todayStr ? todayStr : matched.due_date;
+
               newSchedFromDb[ev.uid] = {
-                date: matched.due_date,
+                date: effectiveDate,
                 time: matched.due_time || '10:00 AM',
                 duration: matched.duration_mins || 60,
                 calendar: matched.calendar_name || 'School',
-                isTaskOnly: matched.type === 'Task',
+                isTaskOnly: matched.type === 'Task' && !matched.is_scheduled,
               };
 
               // Keep school_items in sync with latest due_date & due_time from tasks
@@ -270,7 +309,7 @@ export default function SchoolSyncPage() {
                   .from('school_items')
                   .update({
                     is_scheduled: true,
-                    scheduled_date: matched.due_date,
+                    scheduled_date: effectiveDate,
                     scheduled_time: matched.due_time || '10:00 AM',
                     duration_mins: matched.duration_mins || 60,
                     target_calendar: matched.calendar_name || 'School',

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
-import { isEventPast } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
@@ -47,7 +47,7 @@ export default function MissionControlPage() {
   // New item form state (Task vs Event)
   const [modalMode, setModalMode] = useState<'Task' | 'Event'>('Task');
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskDate, setNewTaskDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newTaskDate, setNewTaskDate] = useState(() => getTodayDateStr());
   const [newTaskTime, setNewTaskTime] = useState('10:00 AM');
   const [newTaskDuration, setNewTaskDuration] = useState(30);
   const [newTaskCalendar, setNewTaskCalendar] = useState<CalendarName>('Kevin Nguyen');
@@ -148,26 +148,47 @@ export default function MissionControlPage() {
           .order('due_date', { ascending: true });
 
         if (!error && data) {
+          const todayStr = getTodayDateStr();
           const rawTasks = data as TaskItem[];
           const pastEventIds: string[] = [];
+          const rolloverTaskIds: string[] = [];
 
           const processed = rawTasks.map((t) => {
-            if (!t.is_completed && t.type === 'Event' && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
+            const isTaskOrTaskBlock = t.type === 'Task' || isTaskEventTitle(t.title);
+
+            // Auto-sweep only standalone non-task events whose time window has passed
+            if (!t.is_completed && !isTaskOrTaskBlock && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
               pastEventIds.push(t.id);
               return { ...t, is_completed: true };
             }
+
+            // Auto-rollover incomplete tasks and task timeblocks from past dates to today
+            if (!t.is_completed && isTaskOrTaskBlock && t.due_date && t.due_date < todayStr) {
+              rolloverTaskIds.push(t.id);
+              return { ...t, due_date: todayStr };
+            }
+
             return t;
           });
 
           setTasks(processed);
           localStorage.setItem('kevin_os_tasks', JSON.stringify(processed));
 
-          // Auto-sweep past events in database
+          // Auto-sweep past standalone events in database
           if (pastEventIds.length > 0) {
             supabase
               .from('tasks')
               .update({ is_completed: true, updated_at: new Date().toISOString() })
               .in('id', pastEventIds)
+              .then();
+          }
+
+          // Persist rolled-over task due_date to todayStr in database
+          if (rolloverTaskIds.length > 0) {
+            supabase
+              .from('tasks')
+              .update({ due_date: todayStr, updated_at: new Date().toISOString() })
+              .in('id', rolloverTaskIds)
               .then();
           }
         }
@@ -285,6 +306,7 @@ export default function MissionControlPage() {
         if (data.item) {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
+        await fetchTasks();
         setActiveTab('upcoming');
       } else if (createTimeblock) {
         // 2b. Timeblocked Task with Google Calendar
@@ -305,6 +327,7 @@ export default function MissionControlPage() {
         if (data.item) {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
+        await fetchTasks();
       } else {
         // 2c. Standalone Task (Google Tasks & Supabase)
         try {
@@ -326,12 +349,13 @@ export default function MissionControlPage() {
           if (data.item) {
             setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
           }
+          await fetchTasks();
         } catch {
           if (supabase) {
             await supabase.from('tasks').insert([taskItem]);
           }
         }
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = getTodayDateStr();
         if (taskItem.due_date && taskItem.due_date <= todayStr) {
           setActiveTab('today');
         } else {
@@ -386,7 +410,7 @@ export default function MissionControlPage() {
 
   // Section categorizations
   const { upcomingEvents, todayTasks, backlogTasks, completedEvents, completedTasks } = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayDateStr();
 
     const today: TaskItem[] = [];
     const upcoming: TaskItem[] = [];

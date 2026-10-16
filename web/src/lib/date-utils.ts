@@ -3,6 +3,29 @@
  */
 
 /**
+ * Returns today's date string (YYYY-MM-DD) in America/New_York timezone.
+ */
+export function getTodayDateStr(): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(new Date());
+}
+
+/**
+ * Checks if a calendar event summary represents a Task timeblock (e.g. "🎓 [Task] ..." or "[Task] ...").
+ * Task timeblocks should only complete when the task is checked off, and roll over to today if incomplete.
+ */
+export function isTaskEventTitle(title?: string): boolean {
+  if (!title) return false;
+  const trimmed = title.trim();
+  return /^🎓\s*\[Task\]/i.test(trimmed) || /^\[Task\]/i.test(trimmed);
+}
+
+/**
  * Checks whether an event with a given due_date and due_time has already ended in the past.
  * Uses Eastern Time (EDT/EST, America/New_York).
  */

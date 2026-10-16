@@ -174,8 +174,8 @@ export async function POST(req: NextRequest) {
         createdItem = data || item;
       }
 
-      if (taskId && !isStandaloneEvent) {
-        await sb.from('tasks').insert({
+      if (!isStandaloneEvent && !skipTask) {
+        const taskRow: Record<string, unknown> = {
           id: crypto.randomUUID(),
           title: title,
           type: 'Task',
@@ -192,7 +192,11 @@ export async function POST(req: NextRequest) {
           is_completed: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        });
+        };
+        const { data: insertedTask } = await sb.from('tasks').insert([taskRow]).select().single();
+        if (!createdItem) {
+          createdItem = insertedTask || taskRow;
+        }
       }
     }
 

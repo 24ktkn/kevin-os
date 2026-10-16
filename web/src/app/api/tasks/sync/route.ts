@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
-import { isEventPast } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle } from '@/lib/date-utils';
 
 const CALENDAR_MAP: Record<string, string> = {
   'Kevin Nguyen': '24ktkn@gmail.com',
@@ -40,9 +40,11 @@ export async function GET() {
   const syncResults = {
     calendarEventsSynced: 0,
     tasksSynced: 0,
+    tasksRolledOver: 0,
     errors: [] as string[],
   };
 
+  const todayStr = getTodayDateStr();
   const calendarMovedTaskIds = new Set<string>();
 
   // 1. Sync Google Calendars via Service Account
@@ -59,7 +61,7 @@ export async function GET() {
 
       const calendarApi = google.calendar({ version: 'v3', auth });
 
-      let allSchoolForCalendar: { uid: string; title: string }[] = [];
+      let allSchoolForCalendar: { uid: string; title: string; is_completed?: boolean }[] = [];
       let allDbTasks: {
         id: string;
         title: string;
@@ -74,7 +76,7 @@ export async function GET() {
 
       const sbInit = supabaseAdmin || supabase;
       if (sbInit) {
-        const { data: dbSchool } = await sbInit.from('school_items').select('uid, title');
+        const { data: dbSchool } = await sbInit.from('school_items').select('uid, title, is_completed');
         if (dbSchool) allSchoolForCalendar = dbSchool;
 
         const { data: dbTasks } = await sbInit
@@ -147,15 +149,73 @@ export async function GET() {
 
             const sb = supabaseAdmin || supabase;
             if (sb) {
-              // Upsert event by calendar_event_id (safe against duplicate rows)
+              const cleanEv = cleanTitle(ev.summary);
+              const isTaskBlock = isTaskEventTitle(ev.summary);
+
+              // Match task: first by already-linked calendar_event_id, then by title (only for Task blocks)
+              let matchedTask = allDbTasks.find((tk) => tk.calendar_event_id === ev.id);
+              if (!matchedTask && isTaskBlock && cleanEv) {
+                matchedTask = allDbTasks.find((tk) => {
+                  const c = cleanTitle(tk.title);
+                  return c === cleanEv || (c.length > 5 && (c.includes(cleanEv) || cleanEv.includes(c)));
+                });
+              }
+
+              // Upsert event by calendar_event_id AND type = 'Event' (never overwrite/delete Task rows!)
               const { data: existingRows } = await sb
                 .from('tasks')
                 .select('id, is_completed')
                 .eq('calendar_event_id', ev.id)
+                .eq('type', 'Event')
                 .order('created_at', { ascending: false });
 
               const existing = existingRows?.[0];
               const eventAlreadyPassed = isEventPast(dateStr, timeStr, durationMins);
+
+              // Determine if this item is completed
+              let isItemCompleted = false;
+              if (isTaskBlock || matchedTask) {
+                // Task timeblocks ONLY complete when checked off (never auto-completed by clock!)
+                isItemCompleted = Boolean(matchedTask ? matchedTask.is_completed : existing?.is_completed);
+
+                // Auto-transfer uncompleted past task timeblocks to todayStr!
+                if (!isItemCompleted && dateStr < todayStr) {
+                  dateStr = todayStr;
+                  syncResults.tasksRolledOver++;
+
+                  // Also roll the Google Calendar event forward to todayStr so Google Calendar stays in sync
+                  if (ev.start?.dateTime && ev.end?.dateTime) {
+                    try {
+                      const startOrig = new Date(ev.start.dateTime);
+                      const nyParts = new Intl.DateTimeFormat('en-US', {
+                        timeZone: 'America/New_York',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      }).formatToParts(startOrig);
+                      const h = parseInt(nyParts.find((p) => p.type === 'hour')?.value || '10', 10) % 24;
+                      const m = parseInt(nyParts.find((p) => p.type === 'minute')?.value || '0', 10);
+                      const endTotal = h * 60 + m + (durationMins || 60);
+                      const endH = Math.floor(endTotal / 60) % 24;
+                      const endM = endTotal % 60;
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      await calendarApi.events.patch({
+                        calendarId: calId,
+                        eventId: ev.id,
+                        requestBody: {
+                          start: { dateTime: `${todayStr}T${pad(h)}:${pad(m)}:00-04:00`, timeZone: 'America/New_York' },
+                          end: { dateTime: `${todayStr}T${pad(endH)}:${pad(endM)}:00-04:00`, timeZone: 'America/New_York' },
+                        },
+                      });
+                    } catch (calRollErr) {
+                      console.warn('Calendar rollover patch notice:', calRollErr);
+                    }
+                  }
+                }
+              } else {
+                // Standalone Calendar Event (e.g. Workout, Lecture, Appointment): auto-completes when time passes
+                isItemCompleted = Boolean(existing?.is_completed || eventAlreadyPassed);
+              }
 
               const updatePayload: Record<string, unknown> = {
                 title: ev.summary,
@@ -167,25 +227,17 @@ export async function GET() {
                 location: ev.location || '',
                 notes: ev.description || '',
                 is_scheduled: true,
+                is_completed: isItemCompleted,
                 updated_at: new Date().toISOString(),
               };
-
-              // Preserve completed status if already marked completed
-              if (existing?.is_completed) {
-                updatePayload.is_completed = true;
-              } else if (eventAlreadyPassed) {
-                updatePayload.is_completed = true;
-              } else {
-                updatePayload.is_completed = false;
-              }
 
               if (existing) {
                 await sb
                   .from('tasks')
                   .update(updatePayload)
-                  .eq('calendar_event_id', ev.id);
+                  .eq('id', existing.id);
 
-                // Clean up any extra duplicate rows with same calendar_event_id
+                // Clean up any extra duplicate Event rows with same calendar_event_id
                 if (existingRows && existingRows.length > 1) {
                   const duplicateIds = existingRows.slice(1).map((r) => r.id);
                   await sb.from('tasks').delete().in('id', duplicateIds);
@@ -197,138 +249,157 @@ export async function GET() {
                 });
               }
 
+              // If this is a Task timeblock ("🎓 [Task] ...") but has no companion Task row in DB, create one!
+              if (isTaskBlock && !matchedTask) {
+                const cleanTaskTitle = ev.summary
+                  .replace(/^🎓\s*\[Task\]\s*/i, '')
+                  .replace(/^\[Task\]\s*/i, '')
+                  .trim();
+                const newTaskId = crypto.randomUUID();
+                const newTaskRow = {
+                  id: newTaskId,
+                  title: cleanTaskTitle || ev.summary,
+                  type: 'Task',
+                  calendar_name: calName,
+                  due_date: dateStr,
+                  due_time: timeStr,
+                  duration_mins: durationMins,
+                  location: ev.location || '',
+                  notes: ev.description || '',
+                  calendar_event_id: ev.id,
+                  is_completed: isItemCompleted,
+                  is_scheduled: true,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                };
+                await sb.from('tasks').insert(newTaskRow);
+                matchedTask = newTaskRow;
+                allDbTasks.push(newTaskRow);
+              }
+
               // Bidirectional cross-linking & Auto-reschedule Google Task when Calendar Event moves
-              const cleanEv = cleanTitle(ev.summary);
-              if (cleanEv) {
-                // Match task: first by already-linked calendar_event_id, then by title
-                let matchedTask = allDbTasks.find((tk) => tk.calendar_event_id === ev.id);
-                if (!matchedTask) {
-                  matchedTask = allDbTasks.find((tk) => {
-                    const c = cleanTitle(tk.title);
-                    return c === cleanEv || (c.length > 5 && (c.includes(cleanEv) || cleanEv.includes(c)));
-                  });
-                }
+              if (cleanEv && matchedTask) {
+                const targetTaskDate = !matchedTask.is_completed && dateStr < todayStr ? todayStr : dateStr;
+                const dateChanged = matchedTask.due_date !== targetTaskDate;
+                const timeChanged = Boolean(timeStr && matchedTask.due_time !== timeStr);
+                const needsLink = matchedTask.calendar_event_id !== ev.id;
 
-                if (matchedTask) {
-                  const dateChanged = matchedTask.due_date !== dateStr;
-                  const timeChanged = Boolean(timeStr && matchedTask.due_time !== timeStr);
-                  const needsLink = matchedTask.calendar_event_id !== ev.id;
+                if (dateChanged || timeChanged || needsLink) {
+                  await sb
+                    .from('tasks')
+                    .update({
+                      calendar_event_id: ev.id,
+                      due_date: targetTaskDate,
+                      due_time: timeStr || matchedTask.due_time || '',
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', matchedTask.id);
 
-                  if (dateChanged || timeChanged || needsLink) {
-                    await sb
-                      .from('tasks')
-                      .update({
-                        calendar_event_id: ev.id,
-                        due_date: dateStr,
-                        due_time: timeStr || matchedTask.due_time || '',
-                        updated_at: new Date().toISOString(),
-                      })
-                      .eq('id', matchedTask.id);
+                  // Track task so Section 2 (Google Tasks sync) does not revert the date
+                  calendarMovedTaskIds.add(matchedTask.id);
+                  if (matchedTask.google_task_id) {
+                    calendarMovedTaskIds.add(matchedTask.google_task_id);
+                  }
 
-                    // Track task so Section 2 (Google Tasks sync) does not revert the date
-                    calendarMovedTaskIds.add(matchedTask.id);
-                    if (matchedTask.google_task_id) {
-                      calendarMovedTaskIds.add(matchedTask.google_task_id);
+                  matchedTask.calendar_event_id = ev.id;
+                  matchedTask.due_date = targetTaskDate;
+                  if (timeStr) matchedTask.due_time = timeStr;
+
+                  // If date or time changed on Google Calendar, push the update to Google Tasks!
+                  if ((dateChanged || timeChanged) && sharedTasksApi) {
+                    const targetTaskListId =
+                      TASKLIST_MAP[calName] ||
+                      TASKLIST_MAP[matchedTask.calendar_name || ''] ||
+                      TASKLIST_MAP['Kevin Nguyen'];
+
+                    let updatedNotes = matchedTask.notes || '';
+                    if (timeStr) {
+                      const schedTag = `⏰ Scheduled: ${timeStr} (${durationMins || 30}m)`;
+                      if (updatedNotes.includes('⏰ Scheduled:')) {
+                        updatedNotes = updatedNotes.replace(/⏰ Scheduled:[^\n]+/g, schedTag);
+                      } else if (updatedNotes) {
+                        updatedNotes = `${schedTag}\n\n${updatedNotes}`;
+                      } else {
+                        updatedNotes = schedTag;
+                      }
                     }
 
-                    matchedTask.calendar_event_id = ev.id;
-                    matchedTask.due_date = dateStr;
-                    if (timeStr) matchedTask.due_time = timeStr;
+                    if (matchedTask.google_task_id) {
+                      const listCandidates = [
+                        targetTaskListId,
+                        ...Object.values(TASKLIST_MAP).filter((l) => l !== targetTaskListId),
+                      ];
 
-                    // If date or time changed on Google Calendar, push the update to Google Tasks!
-                    if ((dateChanged || timeChanged) && sharedTasksApi) {
-                      const targetTaskListId =
-                        TASKLIST_MAP[calName] ||
-                        TASKLIST_MAP[matchedTask.calendar_name || ''] ||
-                        TASKLIST_MAP['Kevin Nguyen'];
-
-                      let updatedNotes = matchedTask.notes || '';
-                      if (timeStr) {
-                        const schedTag = `⏰ Scheduled: ${timeStr} (${durationMins || 30}m)`;
-                        if (updatedNotes.includes('⏰ Scheduled:')) {
-                          updatedNotes = updatedNotes.replace(/⏰ Scheduled:[^\n]+/g, schedTag);
-                        } else if (updatedNotes) {
-                          updatedNotes = `${schedTag}\n\n${updatedNotes}`;
-                        } else {
-                          updatedNotes = schedTag;
+                      for (const listId of listCandidates) {
+                        try {
+                          await sharedTasksApi.tasks.patch({
+                            tasklist: listId,
+                            task: matchedTask.google_task_id,
+                            requestBody: {
+                              due: `${targetTaskDate}T00:00:00.000Z`,
+                              notes: updatedNotes,
+                            },
+                          });
+                          break;
+                        } catch {
+                          // Try next list candidate
                         }
                       }
+                    } else {
+                      // If google_task_id was not yet linked, search tasklists by title
+                      for (const listId of Object.values(TASKLIST_MAP)) {
+                        try {
+                          const listRes = await sharedTasksApi.tasks.list({
+                            tasklist: listId,
+                            showCompleted: false,
+                            maxResults: 50,
+                          });
+                          const gMatch = (listRes.data.items || []).find((tk: any) => {
+                            if (!tk.title) return false;
+                            const ct = cleanTitle(tk.title);
+                            return ct === cleanEv || (ct.length > 5 && (ct.includes(cleanEv) || cleanEv.includes(ct)));
+                          });
+                          if (gMatch && gMatch.id) {
+                            matchedTask.google_task_id = gMatch.id;
+                            calendarMovedTaskIds.add(gMatch.id);
+                            await sb
+                              .from('tasks')
+                              .update({ google_task_id: gMatch.id })
+                              .eq('id', matchedTask.id);
 
-                      if (matchedTask.google_task_id) {
-                        const listCandidates = [
-                          targetTaskListId,
-                          ...Object.values(TASKLIST_MAP).filter((l) => l !== targetTaskListId),
-                        ];
-
-                        for (const listId of listCandidates) {
-                          try {
                             await sharedTasksApi.tasks.patch({
                               tasklist: listId,
-                              task: matchedTask.google_task_id,
+                              task: gMatch.id,
                               requestBody: {
-                                due: `${dateStr}T00:00:00.000Z`,
+                                due: `${targetTaskDate}T00:00:00.000Z`,
                                 notes: updatedNotes,
                               },
                             });
                             break;
-                          } catch {
-                            // Try next list candidate
                           }
-                        }
-                      } else {
-                        // If google_task_id was not yet linked, search tasklists by title
-                        for (const listId of Object.values(TASKLIST_MAP)) {
-                          try {
-                            const listRes = await sharedTasksApi.tasks.list({
-                              tasklist: listId,
-                              showCompleted: false,
-                              maxResults: 50,
-                            });
-                            const gMatch = (listRes.data.items || []).find((tk: any) => {
-                              if (!tk.title) return false;
-                              const ct = cleanTitle(tk.title);
-                              return ct === cleanEv || (ct.length > 5 && (ct.includes(cleanEv) || cleanEv.includes(ct)));
-                            });
-                            if (gMatch && gMatch.id) {
-                              matchedTask.google_task_id = gMatch.id;
-                              calendarMovedTaskIds.add(gMatch.id);
-                              await sb
-                                .from('tasks')
-                                .update({ google_task_id: gMatch.id })
-                                .eq('id', matchedTask.id);
-
-                              await sharedTasksApi.tasks.patch({
-                                tasklist: listId,
-                                task: gMatch.id,
-                                requestBody: {
-                                  due: `${dateStr}T00:00:00.000Z`,
-                                  notes: updatedNotes,
-                                },
-                              });
-                              break;
-                            }
-                          } catch {
-                            // ignore
-                          }
+                        } catch {
+                          // ignore
                         }
                       }
                     }
                   }
+                }
 
-                  if (matchedTask.google_task_id) {
-                    await sb
-                      .from('tasks')
-                      .update({ google_task_id: matchedTask.google_task_id })
-                      .eq('calendar_event_id', ev.id);
-                  }
+                if (matchedTask.google_task_id) {
+                  await sb
+                    .from('tasks')
+                    .update({ google_task_id: matchedTask.google_task_id })
+                    .eq('calendar_event_id', ev.id)
+                    .eq('type', 'Event');
+                }
 
-                  // If matching Task is completed, ensure Event is also marked completed
-                  if (matchedTask.is_completed) {
-                    await sb
-                      .from('tasks')
-                      .update({ is_completed: true })
-                      .eq('calendar_event_id', ev.id);
-                  }
+                // If matching Task is completed, ensure Event is also marked completed
+                if (matchedTask.is_completed) {
+                  await sb
+                    .from('tasks')
+                    .update({ is_completed: true })
+                    .eq('calendar_event_id', ev.id)
+                    .eq('type', 'Event');
                 }
               }
 
@@ -345,11 +416,12 @@ export async function GET() {
                 });
 
                 for (const match of matchedSchool) {
+                  const effectiveSchoolDate = !match.is_completed && dateStr < todayStr ? todayStr : dateStr;
                   await sb
                     .from('school_items')
                     .update({
                       is_scheduled: true,
-                      scheduled_date: dateStr,
+                      scheduled_date: effectiveSchoolDate,
                       scheduled_time: timeStr || '10:00 AM',
                       duration_mins: durationMins || 60,
                       target_calendar: calName,
@@ -417,6 +489,25 @@ export async function GET() {
             let dateStr = '';
             if (item.due) {
               dateStr = item.due.split('T')[0];
+            }
+
+            // Auto-rollover incomplete tasks from past dates to todayStr
+            if (!isDone && (!dateStr || dateStr < todayStr)) {
+              const wasOverdueInGoogle = Boolean(dateStr && dateStr < todayStr);
+              dateStr = todayStr;
+              if (wasOverdueInGoogle && item.id) {
+                try {
+                  await tasksApi.tasks.patch({
+                    tasklist: listId,
+                    task: item.id,
+                    requestBody: {
+                      due: `${todayStr}T00:00:00.000Z`,
+                    },
+                  });
+                } catch (rollTaskErr) {
+                  console.warn('Failed to roll over Google Task due date to today:', rollTaskErr);
+                }
+              }
             }
 
             if (sb) {
@@ -509,7 +600,7 @@ export async function GET() {
                   title: taskTitle,
                   type: 'Task',
                   calendar_name: calName,
-                  due_date: dateStr || new Date().toISOString().split('T')[0],
+                  due_date: dateStr || todayStr,
                   due_time: '',
                   duration_mins: 0,
                   notes: item.notes || '',
@@ -529,6 +620,7 @@ export async function GET() {
 
                 if (siblingEvents) {
                   const evsToUpdate = siblingEvents.filter((ev) => {
+                    if (!isTaskEventTitle(ev.title)) return false;
                     const c = cleanTitle(ev.title);
                     const titleMatches =
                       c === cleanTask ||
@@ -565,18 +657,18 @@ export async function GET() {
     syncResults.errors.push(`Google Tasks sync: ${msg}`);
   }
 
-  // 3. Auto-sweep all past events in database to is_completed = true
+  // 3. Auto-sweep all past standalone events in database to is_completed = true (never auto-complete task timeblocks)
   if (sb) {
     try {
       const { data: activeEvents } = await sb
         .from('tasks')
-        .select('id, due_date, due_time, duration_mins')
+        .select('id, title, due_date, due_time, duration_mins')
         .eq('type', 'Event')
         .eq('is_completed', false);
 
       if (activeEvents && activeEvents.length > 0) {
         const pastIds = activeEvents
-          .filter((e) => isEventPast(e.due_date, e.due_time, e.duration_mins))
+          .filter((e) => !isTaskEventTitle(e.title) && isEventPast(e.due_date, e.due_time, e.duration_mins))
           .map((e) => e.id);
 
         if (pastIds.length > 0) {
@@ -586,8 +678,78 @@ export async function GET() {
             .in('id', pastIds);
         }
       }
+
+      // Reset any future standalone events that were previously marked completed by mistake
+      const { data: futureCompletedEvents } = await sb
+        .from('tasks')
+        .select('id, title, due_date')
+        .eq('type', 'Event')
+        .eq('is_completed', true)
+        .gt('due_date', todayStr);
+
+      if (futureCompletedEvents && futureCompletedEvents.length > 0) {
+        const toResetIds = futureCompletedEvents
+          .filter((e) => !isTaskEventTitle(e.title))
+          .map((e) => e.id);
+        if (toResetIds.length > 0) {
+          await sb
+            .from('tasks')
+            .update({ is_completed: false, updated_at: new Date().toISOString() })
+            .in('id', toResetIds);
+        }
+      }
     } catch (sweepErr) {
       console.warn('Past events sweep error:', sweepErr);
+    }
+
+    // 4. Universal Daily Rollover: Transfer any incomplete tasks (or task timeblocks) from past days to todayStr
+    try {
+      const { data: overdueRows } = await sb
+        .from('tasks')
+        .select('id, title, type, due_date')
+        .eq('is_completed', false)
+        .lt('due_date', todayStr);
+
+      if (overdueRows && overdueRows.length > 0) {
+        const rolloverIds = overdueRows
+          .filter((r) => r.type === 'Task' || isTaskEventTitle(r.title))
+          .map((r) => r.id);
+
+        if (rolloverIds.length > 0) {
+          await sb
+            .from('tasks')
+            .update({
+              due_date: todayStr,
+              updated_at: new Date().toISOString(),
+            })
+            .in('id', rolloverIds);
+        }
+      }
+
+      // Also roll over any incomplete scheduled school_items with scheduled_date < todayStr
+      const { data: overdueSchool } = await sb
+        .from('school_items')
+        .select('uid, scheduled_date')
+        .eq('is_completed', false)
+        .lt('scheduled_date', todayStr);
+
+      if (overdueSchool && overdueSchool.length > 0) {
+        const validUids = overdueSchool
+          .filter((s) => Boolean(s.scheduled_date))
+          .map((s) => s.uid);
+
+        if (validUids.length > 0) {
+          await sb
+            .from('school_items')
+            .update({
+              scheduled_date: todayStr,
+              updated_at: new Date().toISOString(),
+            })
+            .in('uid', validUids);
+        }
+      }
+    } catch (rolloverErr) {
+      console.warn('Universal daily rollover error:', rolloverErr);
     }
   }
 

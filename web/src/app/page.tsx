@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { TaskItem, CalendarName } from '@/types/task';
-import { isEventPast } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle } from '@/lib/date-utils';
 import { groupTodayAgendaItems, UnifiedAgendaItem } from '@/lib/agenda-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
@@ -121,29 +121,50 @@ export default function HomePage() {
 
   const [reschedulingItem, setReschedulingItem] = useState<UnifiedAgendaItem | null>(null);
 
-  // Fetch Today's Tasks & Events from Supabase with Option A auto-sweep
+  // Fetch Today's Tasks & Events from Supabase with auto-rollover for incomplete tasks
   const fetchTodayTasks = useCallback(async () => {
     try {
       if (supabase) {
-        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+        const todayStr = getTodayDateStr();
         const { data, error } = await supabase
           .from('tasks')
           .select('*')
-          .eq('due_date', todayStr)
+          .or(`due_date.eq.${todayStr},and(is_completed.eq.false,due_date.lte.${todayStr})`)
           .order('due_time', { ascending: true, nullsFirst: false });
 
         if (!error && data) {
           const raw = data as TaskItem[];
           const pastEventIds: string[] = [];
+          const rolloverTaskIds: string[] = [];
+          const processed: TaskItem[] = [];
 
-          // Option A: Auto-sweep past events to completed
-          const processed = raw.map((t) => {
-            if (!t.is_completed && t.type === 'Event' && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
-              pastEventIds.push(t.id);
-              return { ...t, is_completed: true };
+          for (const t of raw) {
+            const isTaskOrTaskBlock = t.type === 'Task' || isTaskEventTitle(t.title);
+
+            // Standalone non-task events from past days: mark completed and exclude from today's agenda
+            if (!isTaskOrTaskBlock && t.due_date < todayStr) {
+              if (!t.is_completed) {
+                pastEventIds.push(t.id);
+              }
+              continue;
             }
-            return t;
-          });
+
+            // Today's standalone non-task events whose time window has passed: mark completed
+            if (!t.is_completed && !isTaskOrTaskBlock && isEventPast(t.due_date, t.due_time, t.duration_mins)) {
+              pastEventIds.push(t.id);
+              processed.push({ ...t, is_completed: true });
+              continue;
+            }
+
+            // Incomplete tasks or task timeblocks from past days: automatically roll over to today
+            if (!t.is_completed && isTaskOrTaskBlock && t.due_date < todayStr) {
+              rolloverTaskIds.push(t.id);
+              processed.push({ ...t, due_date: todayStr });
+              continue;
+            }
+
+            processed.push(t);
+          }
 
           setTodayTasks(processed);
 
@@ -152,6 +173,14 @@ export default function HomePage() {
               .from('tasks')
               .update({ is_completed: true, updated_at: new Date().toISOString() })
               .in('id', pastEventIds)
+              .then();
+          }
+
+          if (rolloverTaskIds.length > 0) {
+            supabase
+              .from('tasks')
+              .update({ due_date: todayStr, updated_at: new Date().toISOString() })
+              .in('id', rolloverTaskIds)
               .then();
           }
         }
