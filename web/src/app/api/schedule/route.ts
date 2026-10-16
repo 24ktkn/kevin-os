@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { computeStartEndIso } from '@/lib/date-utils';
+import {
+  CALENDAR_MAP,
+  TASKLIST_MAP,
+  getGoogleCalendarClient,
+  getGoogleTasksClient,
+} from '@/lib/google-calendar';
 
-const CALENDAR_MAP: Record<string, string> = {
-  'Kevin Nguyen': '24ktkn@gmail.com',
-  'Family': 'family05668227215423587251@group.calendar.google.com',
-  'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
-  'Volunteering': '57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com',
-};
-
-const TASKLIST_MAP: Record<string, string> = {
-  'Kevin Nguyen': '@default',
-  'Family': 'Um85a3gwMVZqTXN4X0M3Wg',
-  'School': 'ZGRiT21qM2ZCbVRWOVBlMQ',
-  'Volunteering': 'bUtfd3ZxU0Y3RFUyM2x2dQ',
+const RRULE_MAP: Record<string, string> = {
+  'Daily': 'RRULE:FREQ=DAILY',
+  'Weekly': 'RRULE:FREQ=WEEKLY',
+  'Monthly': 'RRULE:FREQ=MONTHLY',
+  'Every Weekday (Mon-Fri)': 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
 };
 
 export async function POST(req: NextRequest) {
@@ -43,116 +42,78 @@ export async function POST(req: NextRequest) {
     const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['Kevin Nguyen'] || TASKLIST_MAP['School'];
 
     const eventTime = time ? time.trim() : '10:00 AM';
-
-    const RRULE_MAP: Record<string, string> = {
-      'Daily': 'RRULE:FREQ=DAILY',
-      'Weekly': 'RRULE:FREQ=WEEKLY',
-      'Monthly': 'RRULE:FREQ=MONTHLY',
-      'Every Weekday (Mon-Fri)': 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
-    };
     const rrule = recurrenceRule || (repeat && RRULE_MAP[repeat] ? RRULE_MAP[repeat] : null);
 
-    // Parse time supporting both "10:00 AM" / "02:30 PM" and 24h formats
-    const cleaned = eventTime.toLowerCase();
-    const isPm = cleaned.includes('pm');
-    const isAm = cleaned.includes('am');
-    const parts = cleaned.replace(/am|pm/g, '').trim().split(':');
-    let hours = parseInt(parts[0], 10) || 0;
-    const minutes = parseInt(parts[1], 10) || 0;
-    if (isPm && hours < 12) hours += 12;
-    if (isAm && hours === 12) hours = 0;
-
-    const [y, m, d] = date.split('-').map((v: string) => parseInt(v, 10));
-    const startDt = new Date(y, m - 1, d, hours, minutes, 0);
-    const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
-
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const formatLocalIso = (dt: Date) =>
-      `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
-
-    const startIso = formatLocalIso(startDt);
-    const endIso = formatLocalIso(endDt);
+    const { startDateTime, endDateTime } = computeStartEndIso(date, eventTime, durationMins);
 
     let calendarEventId: string | null = null;
     let calendarError: string | null = null;
     let taskId: string | null = null;
     let taskError: string | null = null;
 
-    // 1. Insert Google Calendar Event unless skipCalendar is true
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-
     const eventSummary = isStandaloneEvent ? title.trim() : `🎓 [Task] ${title.trim()}`;
-
-    if (!skipCalendar && clientEmail && rawPrivateKey) {
-      try {
-        const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
-        const jwtClient = new google.auth.JWT({
-          email: clientEmail,
-          key: privateKey,
-          scopes: ['https://www.googleapis.com/auth/calendar'],
-        });
-
-        const calendarApi = google.calendar({ version: 'v3', auth: jwtClient });
-
-        const calReqBody: Record<string, unknown> = {
-          summary: eventSummary,
-          description: description || '',
-          location: location || '',
-          start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
-          end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
-        };
-        if (rrule) {
-          calReqBody.recurrence = [rrule];
-        }
-
-        const calRes = await calendarApi.events.insert({
-          calendarId: targetCalId,
-          requestBody: calReqBody,
-        });
-
-        calendarEventId = calRes.data.id || null;
-      } catch (calErr: unknown) {
-        calendarError = calErr instanceof Error ? calErr.message : 'Calendar insertion error';
-        console.error('Calendar error:', calendarError);
-      }
-    }
-
-    // 2. Insert Google Task unless skipTask is true or it's a standalone event without explicit task
     const shouldCreateTask = !isStandaloneEvent && !skipTask;
-    const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
-    const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
-    const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
-    const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
 
-    if (shouldCreateTask && clientId && clientSecret && refreshToken) {
-      try {
-        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
-        oauth2Client.setCredentials({ refresh_token: refreshToken });
-        const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
+    const calendarApi = getGoogleCalendarClient();
+    const { tasksApi, hasCredentials } = getGoogleTasksClient();
 
-        const taskRes = await tasksApi.tasks.insert({
-          tasklist: targetTaskListId,
-          requestBody: {
-            title,
-            notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
-            due: `${date}T00:00:00.000Z`,
-          },
-        });
+    // 1 & 2. Run Google Calendar insert and Google Tasks insert in parallel
+    await Promise.all([
+      (async () => {
+        if (skipCalendar || !calendarApi) return;
+        try {
+          const calReqBody: Record<string, unknown> = {
+            summary: eventSummary,
+            description: description || '',
+            location: location || '',
+            start: { dateTime: startDateTime, timeZone: 'America/New_York' },
+            end: { dateTime: endDateTime, timeZone: 'America/New_York' },
+          };
+          if (rrule) {
+            calReqBody.recurrence = [rrule];
+          }
 
-        taskId = taskRes.data.id || null;
-      } catch (tErr: unknown) {
-        taskError = tErr instanceof Error ? tErr.message : 'Tasks insertion error';
-        console.error('Google Tasks error:', taskError);
-      }
-    }
+          const calRes = await calendarApi.events.insert({
+            calendarId: targetCalId,
+            requestBody: calReqBody,
+          });
+
+          calendarEventId = calRes.data.id || null;
+        } catch (calErr: unknown) {
+          calendarError = calErr instanceof Error ? calErr.message : 'Calendar insertion error';
+          console.error('Calendar error:', calendarError);
+        }
+      })(),
+
+      (async () => {
+        if (!shouldCreateTask || !tasksApi || !hasCredentials) return;
+        try {
+          const taskRes = await tasksApi.tasks.insert({
+            tasklist: targetTaskListId,
+            requestBody: {
+              title: title.trim(),
+              notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
+              due: `${date}T00:00:00.000Z`,
+            },
+          });
+
+          taskId = taskRes.data.id || null;
+        } catch (tErr: unknown) {
+          taskError = tErr instanceof Error ? tErr.message : 'Tasks insertion error';
+          console.error('Google Tasks error:', taskError);
+        }
+      })(),
+    ]);
 
     const sb = supabaseAdmin || supabase;
     let createdItem = null;
 
     if (sb) {
+      const nowIso = new Date().toISOString();
+      const rowsToInsert: Record<string, unknown>[] = [];
+
       if (isStandaloneEvent || calendarEventId) {
-        const item: Record<string, unknown> = {
+        rowsToInsert.push({
           id: crypto.randomUUID(),
           title: eventSummary,
           type: 'Event',
@@ -167,22 +128,20 @@ export async function POST(req: NextRequest) {
           recurrence_rule: rrule || null,
           is_scheduled: true,
           is_completed: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        const { data } = await sb.from('tasks').insert([item]).select().single();
-        createdItem = data || item;
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
       }
 
-      if (!isStandaloneEvent && !skipTask) {
-        const taskRow: Record<string, unknown> = {
+      if (shouldCreateTask) {
+        rowsToInsert.push({
           id: crypto.randomUUID(),
-          title: title,
+          title: title.trim(),
           type: 'Task',
           calendar_name: calCat || 'School',
           due_date: date,
-          due_time: eventTime,
-          duration_mins: durationMins,
+          due_time: skipCalendar ? '' : eventTime,
+          duration_mins: skipCalendar ? 0 : durationMins,
           location: location || '',
           notes: description || '',
           google_task_id: taskId,
@@ -190,13 +149,14 @@ export async function POST(req: NextRequest) {
           recurrence_rule: rrule || null,
           is_scheduled: Boolean(calendarEventId),
           is_completed: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        const { data: insertedTask } = await sb.from('tasks').insert([taskRow]).select().single();
-        if (!createdItem) {
-          createdItem = insertedTask || taskRow;
-        }
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      }
+
+      if (rowsToInsert.length > 0) {
+        const { data: insertedRows } = await sb.from('tasks').insert(rowsToInsert).select();
+        createdItem = (insertedRows && insertedRows[0]) || rowsToInsert[0];
       }
     }
 

@@ -26,19 +26,18 @@ import {
   ScheduledCommitItem,
 } from '@/types/ai';
 import { CalendarName } from '@/types/task';
+import { getTodayDateStr } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 const CALENDAR_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  'Kevin Nguyen': { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20' },
-  'School': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
-  'Family': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
-  'Volunteering': { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
+  'School': { bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
+  'Kevin Nguyen': { bg: 'bg-blue-500/15', text: 'text-blue-400', border: 'border-blue-500/30' },
+  'Family': { bg: 'bg-rose-500/15', text: 'text-rose-400', border: 'border-rose-500/30' },
+  'Volunteering': { bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30' },
 };
 
 export default function AISchedulerPage() {
-  const [targetDate, setTargetDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
-  });
+  const [targetDate, setTargetDate] = useState<string>(() => getTodayDateStr());
 
   const [loadingContext, setLoadingContext] = useState(true);
   const [busyBlocks, setBusyBlocks] = useState<CalendarBusyBlock[]>([]);
@@ -59,6 +58,8 @@ export default function AISchedulerPage() {
   const [lastCommittedItems, setLastCommittedItems] = useState<ScheduledCommitItem[]>([]);
   const [undoing, setUndoing] = useState(false);
   const [reschedulingBlock, setReschedulingBlock] = useState<{
+    id?: string;
+    calendar_event_id?: string;
     title: string;
     due_date: string;
     due_time: string;
@@ -66,8 +67,8 @@ export default function AISchedulerPage() {
   } | null>(null);
 
   const handleNudgeTask = (idx: number, deltaMins: number) => {
-    setProposedTasks((prev) =>
-      prev.map((t, i) => {
+    setProposedTasks((prev) => {
+      const next = prev.map((t, i) => {
         if (i !== idx) return t;
         const [hStr, mStr] = (t.startTime24h || '09:00').split(':');
         let totalMins = parseInt(hStr, 10) * 60 + parseInt(mStr || '0', 10) + deltaMins;
@@ -93,8 +94,10 @@ export default function AISchedulerPage() {
           startTimeFormatted: format12(newH, newM),
           endTimeFormatted: format12(endH, endM),
         };
-      })
-    );
+      });
+      next.sort((a, b) => (a.startTime24h || '').localeCompare(b.startTime24h || ''));
+      return next;
+    });
   };
 
   // 1. Fetch Calendar Context & Backlog
@@ -553,6 +556,7 @@ export default function AISchedulerPage() {
                         <button
                           onClick={() =>
                             setReschedulingBlock({
+                              calendar_event_id: b.id,
                               title: b.title,
                               due_date: targetDate,
                               due_time: b.startTime,
@@ -585,6 +589,7 @@ export default function AISchedulerPage() {
           isOpen={Boolean(reschedulingBlock)}
           onClose={() => setReschedulingBlock(null)}
           item={{
+            calendar_event_id: reschedulingBlock.calendar_event_id,
             title: reschedulingBlock.title,
             due_date: reschedulingBlock.due_date,
             due_time: reschedulingBlock.due_time,

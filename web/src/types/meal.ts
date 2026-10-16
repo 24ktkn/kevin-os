@@ -48,5 +48,7 @@ export interface MealsResponseData {
   groceryItems: CostcoGroceryItem[];
   departments: string[];
   weeklyPlan: MealPlanWeek;
+  allWeeks?: MealPlanWeek[];
   recipes: HighProteinRecipe[];
+  error?: string;
 }

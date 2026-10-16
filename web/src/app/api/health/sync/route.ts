@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { getGoogleSheetsClient, SPREADSHEET_ID, mirrorHabitToSheets } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { getCalendarDateString, parseSleepDuration } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +11,8 @@ interface BiometricInput {
   rhr?: number | string;
   hrv?: number | string;
   weight?: number | string;
+  bodyweight?: number | string;
+  body_weight?: number | string;
   sleep?: number | string;
   sleepDuration?: number | string;
   sleep_duration?: number | string;
@@ -24,29 +27,7 @@ interface BiometricInput {
   sleepTime?: string;
   sleep_time?: string;
   timezone?: string;
-}
-
-// Correct calendar date string for the user's timezone without shifting at midnight
-function getCalendarDateString(customDate?: string, tz = 'America/New_York'): string {
-  if (customDate && /^\d{4}-\d{2}-\d{2}$/.test(String(customDate).trim())) {
-    return String(customDate).trim();
-  }
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz || 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-
-  const parts = formatter.formatToParts(now);
-  const findPart = (t: string) => parts.find((p) => p.type === t)?.value || '';
-
-  const year = findPart('year');
-  const month = findPart('month');
-  const day = findPart('day');
-
-  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  [key: string]: unknown;
 }
 
 function formatTimeString(isoString?: string): string {
@@ -134,82 +115,66 @@ async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string
   }
 }
 
-async function processBiometricRecord(body: BiometricInput, sb: any) {
+async function processBiometricRecord(
+  body: BiometricInput,
+  sb: ReturnType<typeof createSupabaseTypeHelper>,
+  skipSheetsMirror = false
+) {
   const targetDate = getCalendarDateString(body.date, body.timezone);
 
-  // 1. Fetch existing record for targetDate to guard against data loss
-  let existingRecord: any = null;
+  // 1. Fetch existing biometrics row, latest valid bodyweight, and existing habits row in 1 parallel round-trip
+  let existingRecord: Record<string, any> | null = null;
+  let existingHabit: Record<string, any> | null = null;
+  let latestDbWeight = 175.2;
+
   if (sb) {
-    try {
-      const { data: ex } = await sb
+    const [bioRes, weightRes, habitRes] = await Promise.all([
+      sb.from('biometrics').select('*').eq('date', targetDate).maybeSingle(),
+      sb
         .from('biometrics')
-        .select('*')
-        .eq('date', targetDate)
-        .maybeSingle();
-      existingRecord = ex;
-    } catch (e) {
-      console.warn('Existing biometrics check notice:', e);
+        .select('bodyweight')
+        .gt('bodyweight', 50)
+        .lt('bodyweight', 400)
+        .order('date', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      sb.from('habits').select('*').eq('date', targetDate).maybeSingle(),
+    ]);
+    existingRecord = bioRes.data;
+    existingHabit = habitRes.data;
+    if (weightRes.data?.bodyweight) {
+      latestDbWeight = parseFloat(String(weightRes.data.bodyweight)) || 175.2;
     }
   }
 
-  // Incoming steps (steps within a day are strictly cumulative; never downgrade)
-  const incomingSteps = parseInt(String(body.steps ?? (body as any).Steps ?? 0), 10) || 0;
+  // Incoming steps (cumulative within a day)
+  const incomingSteps = parseInt(String(body.steps ?? body.Steps ?? 0), 10) || 0;
   const finalSteps = Math.max(existingRecord?.steps || 0, incomingSteps);
 
   // Incoming HRV
-  const incomingHrv = parseFloat(String(body.hrv ?? (body as any).HRV ?? 0)) || 0;
+  const incomingHrv = parseFloat(String(body.hrv ?? body.HRV ?? 0)) || 0;
   const finalHrv = incomingHrv > 0 ? incomingHrv : (existingRecord?.hrv || 0);
 
   // Incoming Sleep (support aliases: sleep, sleepDuration, sleep_duration, sleepHours, sleep_hours)
   const rawSleep =
     body.sleep ??
-    (body as any).sleepDuration ??
-    (body as any).sleep_duration ??
-    (body as any).sleepHours ??
-    (body as any).sleep_hours;
+    body.sleepDuration ??
+    body.sleep_duration ??
+    body.sleepHours ??
+    body.sleep_hours;
 
-  let incomingSleep = 0;
-  if (rawSleep !== undefined && rawSleep !== null && rawSleep !== '') {
-    const rawSleepStr = String(rawSleep).trim().toLowerCase();
-    if (rawSleepStr.includes('h') || rawSleepStr.includes('m')) {
-      let hours = 0;
-      let minutes = 0;
-      if (rawSleepStr.includes('h')) {
-        const parts = rawSleepStr.split('h');
-        hours = parseFloat(parts[0].trim()) || 0;
-        if (parts[1]?.includes('m')) {
-          minutes = parseFloat(parts[1].replace('m', '').trim()) || 0;
-        }
-      } else if (rawSleepStr.includes('m')) {
-        minutes = parseFloat(rawSleepStr.replace('m', '').trim()) || 0;
-      }
-      incomingSleep = hours + minutes / 60;
-    } else if (rawSleepStr.includes(':')) {
-      const parts = rawSleepStr.split(':');
-      const h = parseFloat(parts[0].trim()) || 0;
-      const m = parseFloat(parts[1]?.trim() || '0') || 0;
-      incomingSleep = h + m / 60;
-    } else {
-      incomingSleep = parseFloat(rawSleepStr) || 0;
-    }
+  let incomingSleep = parseSleepDuration(rawSleep).hours;
 
-    if (incomingSleep > 1440) {
-      incomingSleep = incomingSleep / 3600.0; // Converted from seconds
-    } else if (incomingSleep > 24) {
-      incomingSleep = incomingSleep / 60.0; // Converted from minutes
-    }
-  }
-
-  const rawWakeTime = body.wakeTime ?? (body as any).wake_time;
-  const rawSleepTime = body.sleepTime ?? (body as any).sleep_time;
+  const rawWakeTime = (body.wakeTime ?? body.wake_time) as string | undefined;
+  const rawSleepTime = (body.sleepTime ?? body.sleep_time) as string | undefined;
 
   // Sleep fallback calculation from wakeTime & sleepTime if incoming sleep was 0
   if (incomingSleep <= 0 && rawWakeTime && rawSleepTime) {
     try {
       const cleanWake = String(rawWakeTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
       const cleanSleep = String(rawSleepTime).replace(/\u202f/g, ' ').replace(/\s+at\s+/i, ' ').trim();
-      let dWake = new Date(cleanWake);
-      let dSleep = new Date(cleanSleep);
+      const dWake = new Date(cleanWake);
+      const dSleep = new Date(cleanSleep);
 
       if (isNaN(dWake.getTime()) || isNaN(dSleep.getTime())) {
         const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
@@ -219,15 +184,15 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
           let hW = parseInt(mWake[1], 10);
           if (mWake[3]?.toUpperCase() === 'PM' && hW < 12) hW += 12;
           if (mWake[3]?.toUpperCase() === 'AM' && hW === 12) hW = 0;
-          const mW = parseInt(mWake[2], 10);
+          const minW = hW * 60 + parseInt(mWake[2], 10);
 
           let hS = parseInt(mSleep[1], 10);
           if (mSleep[3]?.toUpperCase() === 'PM' && hS < 12) hS += 12;
           if (mSleep[3]?.toUpperCase() === 'AM' && hS === 12) hS = 0;
-          const mS = parseInt(mSleep[2], 10);
+          const minS = hS * 60 + parseInt(mSleep[2], 10);
 
-          let diffMinutes = (hW * 60 + mW) - (hS * 60 + mS);
-          if (diffMinutes < 0) diffMinutes += 24 * 60; // Spans midnight
+          let diffMinutes = minW - minS;
+          if (diffMinutes < 0) diffMinutes += 24 * 60;
           if (diffMinutes > 0 && diffMinutes < 24 * 60) {
             incomingSleep = Math.round((diffMinutes / 60) * 10) / 10;
           }
@@ -244,7 +209,6 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     }
   }
 
-  // Preserve existing sleep if incoming is 0
   let finalSleepHours = existingRecord?.sleep_hours || 0;
   let finalSleepDuration = existingRecord?.sleep_duration || '0.0h';
   if (incomingSleep > 0) {
@@ -253,36 +217,26 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   }
 
   // Incoming RHR
-  const incomingRhr = parseFloat(String(body.rhr ?? (body as any).RHR ?? 0)) || 0;
+  const incomingRhr = parseFloat(String(body.rhr ?? body.RHR ?? 0)) || 0;
   const finalRhr = incomingRhr > 0 ? incomingRhr : (existingRecord?.rhr || 0);
 
   // Incoming Bodyweight
-  const rawWeightInput = body.weight ?? (body as any).bodyweight ?? (body as any).body_weight;
-  let incomingWeight = rawWeightInput !== undefined && rawWeightInput !== null ? parseFloat(String(rawWeightInput)) || 0 : 0;
-  let finalWeight = existingRecord?.bodyweight || 175.2;
+  const rawWeightInput = body.weight ?? body.bodyweight ?? body.body_weight;
+  const incomingWeight =
+    rawWeightInput !== undefined && rawWeightInput !== null ? parseFloat(String(rawWeightInput)) || 0 : 0;
+  let finalWeight =
+    existingRecord?.bodyweight && existingRecord.bodyweight > 50
+      ? Number(existingRecord.bodyweight)
+      : latestDbWeight;
   if (incomingWeight > 50 && incomingWeight < 400) {
     finalWeight = Math.round(incomingWeight * 10) / 10;
-  } else if (!existingRecord?.bodyweight && sb) {
-    const { data: latestWeight } = await sb
-      .from('biometrics')
-      .select('bodyweight')
-      .gt('bodyweight', 50)
-      .lt('bodyweight', 400)
-      .order('date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestWeight?.bodyweight) {
-      finalWeight = parseFloat(String(latestWeight.bodyweight));
-    }
   }
 
   // Incoming Times
-  let wakeVal = formatTimeString(rawWakeTime);
+  const wakeVal = formatTimeString(rawWakeTime);
   let sleepTimeVal = formatTimeString(rawSleepTime);
 
-  // Anomaly check: if effective sleep is substantial (>= 2h), but wakeVal and sleepTimeVal are within 45 minutes
-  // of each other (e.g. 5:36 AM to 5:44 AM), this is an iOS shortcut artifact where the LAST micro-interval of sleep
-  // was fetched instead of the earliest sleep interval. We reconstruct the real bedtime: wakeTime - sleepDuration.
+  // Micro-interval bedtime anomaly check (reconstruct bedtime = wakeTime - sleepDuration if < 45m apart)
   const effectiveSleep = incomingSleep > 0 ? incomingSleep : (existingRecord?.sleep_hours || 0);
   if (effectiveSleep >= 2.0 && wakeVal && sleepTimeVal) {
     try {
@@ -304,24 +258,21 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
         if (diff < 0) diff += 24 * 60;
 
         if (diff < 45) {
-          // Detected micro-interval! Auto-reconstruct real bedtime from wakeTime - effectiveSleep
           let bedtimeMinutes = minW - Math.round(effectiveSleep * 60);
           while (bedtimeMinutes < 0) bedtimeMinutes += 24 * 60;
           const bH = Math.floor(bedtimeMinutes / 60) % 24;
           const bM = bedtimeMinutes % 60;
           const ampm = bH >= 12 ? 'PM' : 'AM';
           const displayH = bH % 12 === 0 ? 12 : bH % 12;
-          const correctedBedtime = `${displayH}:${String(bM).padStart(2, '0')} ${ampm}`;
-          console.warn(`[Health Sync] Micro-interval bedtime detected (${sleepTimeVal} -> ${wakeVal} = ${diff}m diff, with ${effectiveSleep}h duration). Auto-corrected bedtime to ${correctedBedtime}`);
-          sleepTimeVal = correctedBedtime;
+          sleepTimeVal = `${displayH}:${String(bM).padStart(2, '0')} ${ampm}`;
         }
       }
-    } catch (anomalyErr) {
-      console.warn('Micro-interval bedtime check warning:', anomalyErr);
+    } catch {
+      // ignore
     }
   }
 
-  // If sleep time is missing but effectiveSleep and wakeVal exist, compute bedtime from wake - duration
+  // Reconstruct bedtime if missing when wakeVal and effectiveSleep exist
   if (effectiveSleep >= 2.0 && wakeVal && (!sleepTimeVal || sleepTimeVal === 'No data')) {
     try {
       const matchTime = (t: string) => t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
@@ -340,8 +291,8 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
         const displayH = bH % 12 === 0 ? 12 : bH % 12;
         sleepTimeVal = `${displayH}:${String(bM).padStart(2, '0')} ${ampm}`;
       }
-    } catch (e) {
-      console.warn('Auto bedtime reconstruction warning:', e);
+    } catch {
+      // ignore
     }
   }
 
@@ -349,11 +300,12 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
   const finalSleepTime = sleepTimeVal && sleepTimeVal !== 'No data' ? sleepTimeVal : (existingRecord?.sleep_time || '');
 
   // Workouts (strictly cumulative)
-  const incomingCal = parseFloat(String(body.workoutCalories ?? (body as any).workout_calories ?? 0)) || 0;
-  const incomingDur = parseFloat(String(body.workoutDuration ?? (body as any).workout_duration ?? 0)) || 0;
+  const incomingCal = parseFloat(String(body.workoutCalories ?? body.workout_calories ?? 0)) || 0;
+  const incomingDur = parseFloat(String(body.workoutDuration ?? body.workout_duration ?? 0)) || 0;
   const finalCal = Math.max(existingRecord?.workout_calories || 0, incomingCal);
   const finalDur = Math.max(existingRecord?.workout_duration || 0, incomingDur);
 
+  const nowIso = new Date().toISOString();
   const mergedRecord = {
     date: targetDate,
     steps: finalSteps,
@@ -366,79 +318,58 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     sleep_time: finalSleepTime,
     workout_calories: finalCal,
     workout_duration: finalDur,
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso,
   };
 
   if (sb) {
-    const { error: upsertErr } = await sb
-      .from('biometrics')
-      .upsert(mergedRecord, { onConflict: 'date' });
-    if (upsertErr) {
-      console.error(`Error saving biometrics for ${targetDate}:`, upsertErr);
-    }
+    // Evaluate both habit automations together so we perform at most 1 habits upsert in parallel with biometrics upsert
+    const autoGym = finalDur >= 20 || finalCal >= 150;
+    let autoWake = false;
 
-    // Cross-system habit automation: If workout is recorded (>= 20 mins or >= 150 cals), auto-check Gym Workout
-    if (finalDur >= 20 || finalCal >= 150) {
-      try {
-        const { data: existingHabit } = await sb
-          .from('habits')
-          .select('*')
-          .eq('date', targetDate)
-          .maybeSingle();
-
-        if (!existingHabit || !existingHabit.gym_workout) {
-          await sb.from('habits').upsert({
-            date: targetDate,
-            wake_up_on_time: existingHabit?.wake_up_on_time ?? false,
-            gym_workout: true,
-            journaling: existingHabit?.journaling ?? false,
-            anki: existingHabit?.anki ?? false,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'date' });
-        }
-      } catch (hErr) {
-        console.warn('Auto-sync gym habit warning:', hErr);
-      }
-    }
-
-    // Cross-system habit automation: If wake time is recorded and <= 8:00 AM, auto-check Wake Up On Time
     if (finalWake && finalWake !== 'No data') {
-      try {
-        const timeMatch = finalWake.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-        if (timeMatch) {
-          let hour = parseInt(timeMatch[1], 10);
-          const minute = parseInt(timeMatch[2], 10);
-          const ampm = (timeMatch[3] || 'AM').toUpperCase();
-          if (ampm === 'PM' && hour < 12) hour += 12;
-          if (ampm === 'AM' && hour === 12) hour = 0;
-          const wakeMins = hour * 60 + minute;
-          const targetMins = 8 * 60; // 8:00 AM target
-          if (wakeMins <= targetMins) {
-            const { data: existingHabit } = await sb
-              .from('habits')
-              .select('*')
-              .eq('date', targetDate)
-              .maybeSingle();
-
-            if (!existingHabit || !existingHabit.wake_up_on_time) {
-              await sb.from('habits').upsert({
-                date: targetDate,
-                wake_up_on_time: true,
-                gym_workout: existingHabit?.gym_workout ?? false,
-                journaling: existingHabit?.journaling ?? false,
-                anki: existingHabit?.anki ?? false,
-                updated_at: new Date().toISOString(),
-              }, { onConflict: 'date' });
-            }
-          }
+      const timeMatch = finalWake.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+      if (timeMatch) {
+        let hour = parseInt(timeMatch[1], 10);
+        const minute = parseInt(timeMatch[2], 10);
+        const explicitAmPm = timeMatch[3]?.toUpperCase();
+        if (explicitAmPm === 'PM' && hour < 12) hour += 12;
+        if (explicitAmPm === 'AM' && hour === 12) hour = 0;
+        const wakeMins = hour * 60 + minute;
+        if (wakeMins <= 8 * 60) {
+          autoWake = true;
         }
-      } catch (wErr) {
-        console.warn('Auto-sync wake habit warning:', wErr);
       }
     }
+
+    const needsGymUpdate = autoGym && (!existingHabit || !existingHabit.gym_workout);
+    const needsWakeUpdate = autoWake && (!existingHabit || !existingHabit.wake_up_on_time);
+
+    await Promise.all([
+      sb.from('biometrics').upsert(mergedRecord, { onConflict: 'date' }),
+
+      (async () => {
+        if (!needsGymUpdate && !needsWakeUpdate) return;
+        const habitPayload: Record<string, unknown> = {
+          date: targetDate,
+          wake_up_on_time: needsWakeUpdate ? true : Boolean(existingHabit?.wake_up_on_time),
+          gym_workout: needsGymUpdate ? true : Boolean(existingHabit?.gym_workout),
+          journaling: Boolean(existingHabit?.journaling),
+          anki: Boolean(existingHabit?.anki),
+          updated_at: nowIso,
+        };
+
+        const { error: hErr } = await sb.from('habits').upsert(habitPayload, { onConflict: 'date' });
+        if (hErr && hErr.code === '42703') {
+          const { anki: _omit, ...fallbackPayload } = habitPayload;
+          await sb.from('habits').upsert(fallbackPayload, { onConflict: 'date' });
+        }
+
+        if (needsGymUpdate) mirrorHabitToSheets(targetDate, 'Gym Workout', true).catch(() => {});
+        if (needsWakeUpdate) mirrorHabitToSheets(targetDate, 'Wake Up On Time', true).catch(() => {});
+      })(),
+    ]);
   }
 
-  // Mirror merged record to Google Sheets if available
   const sheetsRow = [
     targetDate,
     String(finalSteps),
@@ -452,9 +383,15 @@ async function processBiometricRecord(body: BiometricInput, sb: any) {
     String(Math.round(finalDur)),
   ];
 
-  mirrorBiometricsToSheets(sheetsRow, targetDate).catch(() => {});
+  if (!skipSheetsMirror) {
+    mirrorBiometricsToSheets(sheetsRow, targetDate).catch(() => {});
+  }
 
-  return mergedRecord;
+  return { mergedRecord, sheetsRow, targetDate };
+}
+
+function createSupabaseTypeHelper() {
+  return supabaseAdmin || supabase;
 }
 
 export async function POST(req: NextRequest) {
@@ -462,17 +399,24 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const sb = supabaseAdmin || supabase;
 
-    // Check if batch sync (array in `records` or body itself is array)
     const recordsList: BiometricInput[] = Array.isArray(body)
       ? body
       : Array.isArray(body.records)
-      ? body.records
-      : [body];
+        ? body.records
+        : [body];
 
+    const isBatch = recordsList.length > 1;
     const results = [];
+    let lastProcessed: { sheetsRow: string[]; targetDate: string } | null = null;
+
     for (const record of recordsList) {
-      const res = await processBiometricRecord(record, sb);
-      results.push(res);
+      const { mergedRecord, sheetsRow, targetDate } = await processBiometricRecord(record, sb, isBatch);
+      results.push(mergedRecord);
+      lastProcessed = { sheetsRow, targetDate };
+    }
+
+    if (isBatch && lastProcessed) {
+      mirrorBiometricsToSheets(lastProcessed.sheetsRow, lastProcessed.targetDate).catch(() => {});
     }
 
     return NextResponse.json({

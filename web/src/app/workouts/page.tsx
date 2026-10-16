@@ -34,6 +34,7 @@ export default function WorkoutsPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvText, setCsvText] = useState<string>('');
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // 1RM Calculator Interactive State
@@ -62,17 +63,21 @@ export default function WorkoutsPage() {
     fetchData();
   }, [fetchData]);
 
+  const loadCsvFile = (file: File) => {
+    setCsvFile(file);
+    setUploadMessage(null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setCsvText(String(event.target?.result || ''));
+    };
+    reader.readAsText(file);
+  };
+
   // Handle File Input
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setCsvFile(file);
-      setUploadMessage(null);
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setCsvText(String(event.target?.result || ''));
-      };
-      reader.readAsText(file);
+      loadCsvFile(file);
     }
   };
 
@@ -363,7 +368,24 @@ export default function WorkoutsPage() {
           </div>
 
           {/* Drag & Drop Zone */}
-          <div className="p-8 rounded-2xl border-2 border-dashed border-zinc-700/80 hover:border-cyan-500/80 bg-[#14141B] transition-all flex flex-col items-center justify-center text-center space-y-4">
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) loadCsvFile(file);
+            }}
+            className={`p-8 rounded-2xl border-2 border-dashed transition-all flex flex-col items-center justify-center text-center space-y-4 ${
+              isDragging
+                ? 'border-cyan-400 bg-cyan-950/20'
+                : 'border-zinc-700/80 hover:border-cyan-500/80 bg-[#14141B]'
+            }`}
+          >
             <div className="h-14 w-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-inner">
               <FileSpreadsheet className="h-7 w-7" />
             </div>

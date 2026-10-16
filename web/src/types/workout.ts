@@ -51,4 +51,5 @@ export interface WorkoutsResponseData {
   muscleRecovery: MuscleRecoveryStatus[];
   personalRecords: ExercisePR[];
   recentLogs: WorkoutLogEntry[];
+  error?: string;
 }

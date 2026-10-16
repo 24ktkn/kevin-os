@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   UtensilsCrossed,
   ShoppingCart,
@@ -76,6 +76,11 @@ export default function MealsPage() {
     } catch {
       // ignore
     }
+    fetch('/api/meals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clearAll: true }),
+    }).catch(() => {});
   };
 
   // Fetch Meals & Costco Data
@@ -87,6 +92,17 @@ export default function MealsPage() {
       if (json.success) {
         setData(json);
         setSelectedWeek(json.activeWeek);
+        if (Array.isArray(json.groceryItems)) {
+          setCheckedItems((prev) => {
+            const merged = { ...prev };
+            for (const g of json.groceryItems as CostcoGroceryItem[]) {
+              if (typeof g.isChecked === 'boolean' && g.isChecked) {
+                merged[g.id] = true;
+              }
+            }
+            return merged;
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to load meal data:', err);
@@ -99,23 +115,35 @@ export default function MealsPage() {
     fetchData();
   }, [fetchData]);
 
-  // Filter grocery items by selected trip
-  const filteredGroceries = (data?.groceryItems || []).filter((item) =>
-    selectedTrip === 'Trip 1'
-      ? item.trip.toLowerCase().includes('1')
-      : item.trip.toLowerCase().includes('2')
-  );
+  // Filter grocery items by selected trip (memoized)
+  const filteredGroceries = useMemo(() => {
+    return (data?.groceryItems || []).filter((item) =>
+      selectedTrip === 'Trip 1'
+        ? item.trip.toLowerCase().includes('1')
+        : item.trip.toLowerCase().includes('2')
+    );
+  }, [data?.groceryItems, selectedTrip]);
 
-  // Group by department
-  const groupedDepartments = filteredGroceries.reduce<Record<string, CostcoGroceryItem[]>>((acc, item) => {
-    const dept = item.department || 'General';
-    if (!acc[dept]) acc[dept] = [];
-    acc[dept].push(item);
-    return acc;
-  }, {});
+  // Group by department (memoized)
+  const groupedDepartments = useMemo(() => {
+    return filteredGroceries.reduce<Record<string, CostcoGroceryItem[]>>((acc, item) => {
+      const dept = item.department || 'General';
+      if (!acc[dept]) acc[dept] = [];
+      acc[dept].push(item);
+      return acc;
+    }, {});
+  }, [filteredGroceries]);
 
   const totalGroceryCount = filteredGroceries.length;
-  const checkedGroceryCount = filteredGroceries.filter((item) => checkedItems[item.id]).length;
+  const checkedGroceryCount = useMemo(
+    () => filteredGroceries.filter((item) => checkedItems[item.id]).length,
+    [filteredGroceries, checkedItems]
+  );
+
+  const displayedWeekPlan: MealPlanWeek | undefined = useMemo(() => {
+    if (!data) return undefined;
+    return data.allWeeks?.find((w) => w.weekNumber === selectedWeek) || data.weeklyPlan;
+  }, [data, selectedWeek]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#0A0A0D] text-white p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto w-full">
@@ -372,8 +400,8 @@ export default function MealsPage() {
 
           {/* Daily Schedule Cards */}
           <div className="space-y-3">
-            {data && data.weeklyPlan ? (
-              data.weeklyPlan.schedule.map((day, idx) => (
+            {displayedWeekPlan ? (
+              displayedWeekPlan.schedule.map((day, idx) => (
                 <div
                   key={idx}
                   className="p-4 rounded-xl bg-[#14141B] border border-zinc-800/80 hover:border-zinc-700/80 transition space-y-3"

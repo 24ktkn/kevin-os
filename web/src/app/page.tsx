@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { TaskItem, CalendarName } from '@/types/task';
-import { isEventPast, getTodayDateStr, isTaskEventTitle } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle, cleanDisplayTitle } from '@/lib/date-utils';
 import { groupTodayAgendaItems, UnifiedAgendaItem } from '@/lib/agenda-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
@@ -304,21 +304,20 @@ export default function HomePage() {
     }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
 
     if (supabase) {
-      await supabase
-        .from('tasks')
-        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-        .eq('id', taskId);
-
-      const clean = title
-        .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-        .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-        .trim();
-      if (clean) {
-        await supabase
-          .from('school_items')
-          .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-          .ilike('title', `%${clean}%`);
-      }
+      const nowIso = new Date().toISOString();
+      const clean = cleanDisplayTitle(title);
+      await Promise.all([
+        supabase
+          .from('tasks')
+          .update({ is_completed: nextCompleted, updated_at: nowIso })
+          .eq('id', taskId),
+        clean
+          ? supabase
+              .from('school_items')
+              .update({ is_completed: nextCompleted, updated_at: nowIso })
+              .ilike('title', `%${clean}%`)
+          : Promise.resolve(),
+      ]);
     }
   };
 
@@ -349,21 +348,20 @@ export default function HomePage() {
     }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
 
     if (supabase) {
-      await supabase
-        .from('tasks')
-        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-        .in('id', [eventId, taskId]);
-
-      const clean = title
-        .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-        .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-        .trim();
-      if (clean) {
-        await supabase
-          .from('school_items')
-          .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
-          .ilike('title', `%${clean}%`);
-      }
+      const nowIso = new Date().toISOString();
+      const clean = cleanDisplayTitle(title);
+      await Promise.all([
+        supabase
+          .from('tasks')
+          .update({ is_completed: nextCompleted, updated_at: nowIso })
+          .in('id', [eventId, taskId]),
+        clean
+          ? supabase
+              .from('school_items')
+              .update({ is_completed: nextCompleted, updated_at: nowIso })
+              .ilike('title', `%${clean}%`)
+          : Promise.resolve(),
+      ]);
     }
   };
 

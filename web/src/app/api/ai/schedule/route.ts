@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProposedTask, CalendarBusyBlock, AIScheduleResponse } from '@/types/ai';
+import { CalendarName } from '@/types/task';
+import { getTodayDateStr, format24hTo12h } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
-function format24hTo12h(time24: string): string {
+function format24StrTo12h(time24: string): string {
   const [hStr, mStr] = time24.split(':');
-  let h = parseInt(hStr, 10);
-  const m = mStr || '00';
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12;
-  if (h === 0) h = 12;
-  return `${h}:${m} ${ampm}`;
+  const h = parseInt(hStr, 10) || 0;
+  const m = parseInt(mStr || '0', 10) || 0;
+  return format24hTo12h(h, m);
 }
 
 function calculateEndTime(startTime24: string, durationMins: number): string {
   const [hStr, mStr] = startTime24.split(':');
-  let totalMins = parseInt(hStr, 10) * 60 + parseInt(mStr || '0', 10) + durationMins;
+  const totalMins = (parseInt(hStr, 10) || 0) * 60 + (parseInt(mStr || '0', 10) || 0) + durationMins;
   const endH = Math.floor(totalMins / 60) % 24;
   const endM = totalMins % 60;
   return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
@@ -70,9 +69,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'GEMINI_API_KEY is not configured in server environment' }, { status: 500 });
     }
 
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getTodayDateStr();
 
-    // Format current calendar events for the prompt
     let formattedSchedule = 'No busy events scheduled between 8:00 AM and 10:00 PM.';
     if (busyBlocks && busyBlocks.length > 0) {
       formattedSchedule = busyBlocks
@@ -115,7 +113,7 @@ JSON FORMAT:
 
     let parsedTasks: Array<{
       itemName: string;
-      calendar: 'Kevin Nguyen' | 'Family' | 'School' | 'Volunteering';
+      calendar: CalendarName;
       startTime24h: string;
       durationMins: number;
       reasoning?: string;
@@ -124,7 +122,6 @@ JSON FORMAT:
     try {
       parsedTasks = JSON.parse(cleanedJsonStr);
     } catch {
-      // Try regex extracting JSON array
       const match = cleanedJsonStr.match(/\[\s*\{[\s\S]*\}\s*\]/);
       if (match) {
         parsedTasks = JSON.parse(match[0]);
@@ -143,16 +140,15 @@ JSON FORMAT:
 
       return {
         itemName: t.itemName || 'Untitled Task',
-        calendar: cal as 'Kevin Nguyen' | 'Family' | 'School' | 'Volunteering',
+        calendar: cal as CalendarName,
         startTime24h: start24,
         durationMins: dur,
-        startTimeFormatted: format24hTo12h(start24),
-        endTimeFormatted: format24hTo12h(end24),
+        startTimeFormatted: format24StrTo12h(start24),
+        endTimeFormatted: format24StrTo12h(end24),
         reasoning: t.reasoning || '',
       };
     });
 
-    // Sort by start time
     scheduledTasks.sort((a, b) => a.startTime24h.localeCompare(b.startTime24h));
 
     return NextResponse.json<AIScheduleResponse>({
@@ -163,6 +159,6 @@ JSON FORMAT:
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
     console.error('Error generating AI schedule:', errorMsg);
-    return NextResponse.json({ success: false, error: errorMsg }, { status: 500 });
+    return NextResponse.json({ success: false, scheduledTasks: [], error: errorMsg }, { status: 500 });
   }
 }

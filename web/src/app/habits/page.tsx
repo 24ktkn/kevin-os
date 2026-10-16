@@ -16,6 +16,7 @@ import {
   X,
   ShieldCheck,
 } from 'lucide-react';
+import { getTodayDateStr } from '@/lib/date-utils';
 
 interface HabitDay {
   dayNumber: number;
@@ -86,8 +87,8 @@ export default function HabitsPage() {
 
   // Calendar Heatmap Controls
   const [selectedFilter, setSelectedFilter] = useState<string>('All Habits (Combined Count)');
-  const [calYear, setCalYear] = useState<number>(new Date().getFullYear());
-  const [calMonth, setCalMonth] = useState<number>(new Date().getMonth() + 1); // 1-12
+  const [calYear, setCalYear] = useState<number>(() => parseInt(getTodayDateStr().split('-')[0], 10));
+  const [calMonth, setCalMonth] = useState<number>(() => parseInt(getTodayDateStr().split('-')[1], 10)); // 1-12
 
   const fetchHabits = useCallback(async () => {
     try {
@@ -278,9 +279,9 @@ export default function HabitsPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {habits.map((h) => {
-              const isUpdating = updatingHabit === h.name;
+              const isUpdating = updatingHabit === `${h.name}-${todayStr}`;
               return (
                 <div
                   key={h.name}

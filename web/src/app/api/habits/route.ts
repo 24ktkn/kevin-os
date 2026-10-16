@@ -1,96 +1,19 @@
 import { NextResponse } from 'next/server';
-import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
+import { getGoogleSheetsClient, SPREADSHEET_ID, mirrorHabitToSheets } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { getProductivityDateStr, addDaysToDateStr } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
-const HABITS_LIST = ['Wake Up On Time', 'Gym Workout', 'Journaling', 'Anki'];
+const HABITS_LIST = ['Wake Up On Time', 'Gym Workout', 'Journaling', 'Anki'] as const;
+type HabitName = (typeof HABITS_LIST)[number];
 
-const HABIT_DB_MAP: Record<string, string> = {
+const HABIT_DB_MAP: Record<string, keyof Omit<HabitRecord, 'date'>> = {
   'Wake Up On Time': 'wake_up_on_time',
   'Gym Workout': 'gym_workout',
   'Journaling': 'journaling',
   'Anki': 'anki',
 };
-
-// Night owl rollover: if before 2 AM EDT, count as previous day
-function getProductivityDate(): { dateStr: string; year: number; month: number; monthName: string } {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: 'numeric',
-    hour12: false,
-  });
-
-  const parts = formatter.formatToParts(now);
-  const findPart = (t: string) => parts.find((p) => p.type === t)?.value || '';
-
-  let year = parseInt(findPart('year'), 10);
-  let month = parseInt(findPart('month'), 10);
-  let day = parseInt(findPart('day'), 10);
-  const hour = parseInt(findPart('hour'), 10);
-
-  if (hour < 2) {
-    const prev = new Date(year, month - 1, day - 1);
-    year = prev.getFullYear();
-    month = prev.getMonth() + 1;
-    day = prev.getDate();
-  }
-
-  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
-
-  return { dateStr, year, month, monthName };
-}
-
-// Background mirror helper to Google Sheets
-async function mirrorHabitToSheets(targetDate: string, habit: string, completed: boolean) {
-  try {
-    const sheets = getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Habits!A1:E1005',
-    });
-    const rows = res.data.values || [];
-    if (rows.length === 0) return;
-    const headers = rows[0].map((h: string) => String(h).trim());
-    const dateIdx = headers.indexOf('Date');
-    const colIdx = headers.indexOf(habit);
-    if (colIdx === -1) return;
-    const colLetter = String.fromCharCode(65 + colIdx);
-
-    let rowIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][dateIdx]).trim() === targetDate) {
-        rowIndex = i + 1;
-        break;
-      }
-    }
-    const valToSet = completed ? 'TRUE' : 'FALSE';
-    if (rowIndex !== -1) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `Habits!${colLetter}${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[valToSet]] },
-      });
-    } else {
-      const newRow = [targetDate, 'FALSE', 'FALSE', 'FALSE', 'FALSE'];
-      newRow[colIdx] = valToSet;
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: 'Habits!A:E',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [newRow] },
-      });
-    }
-  } catch (err) {
-    console.warn('mirrorHabitToSheets warning (non-fatal):', err);
-  }
-}
 
 interface HabitRecord {
   date: string;
@@ -102,19 +25,19 @@ interface HabitRecord {
 
 export async function GET() {
   try {
-    const { dateStr: todayStr, year, month, monthName } = getProductivityDate();
+    const todayStr = getProductivityDateStr();
+    const [year, month] = todayStr.split('-').map(Number);
+    const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
     let records: HabitRecord[] = [];
 
     // 1. Primary: Load from Supabase (sub-20ms)
     const sb = supabaseAdmin || supabase;
     if (sb) {
-      // First attempt querying with anki column
       let { data, error } = await sb
         .from('habits')
         .select('date, wake_up_on_time, gym_workout, journaling, anki')
         .order('date', { ascending: true });
 
-      // Graceful fallback if anki column is not yet migrated in Supabase table
       if (error && (error.code === '42703' || error.message?.includes('anki'))) {
         const fallback = await sb
           .from('habits')
@@ -183,19 +106,30 @@ export async function GET() {
       };
       records.push(todayRecord);
 
-      // Async write to Supabase
       if (sb) {
-        sb.from('habits').upsert(todayRecord, { onConflict: 'date' }).then(() => {});
+        (async () => {
+          const { error: uErr } = await sb.from('habits').upsert(todayRecord, { onConflict: 'date' });
+          if (uErr && uErr.code === '42703') {
+            const { anki: _omit, ...rest } = todayRecord;
+            await sb.from('habits').upsert(rest, { onConflict: 'date' });
+          }
+        })().catch(() => {});
       }
-      // Async write to Sheets
-      mirrorHabitToSheets(todayStr, 'Wake Up On Time', false);
+      mirrorHabitToSheets(todayStr, 'Wake Up On Time', false).catch(() => {});
     }
 
-    // 5. Build rawHistory dictionary across all dates
+    // 4. Single-pass build of rawHistory and per-habit completion counts
     const rawHistory: Record<
       string,
       { 'Wake Up On Time': boolean; 'Gym Workout': boolean; 'Journaling': boolean; 'Anki': boolean; total: number }
     > = {};
+    const habitTotals: Record<HabitName, number> = {
+      'Wake Up On Time': 0,
+      'Gym Workout': 0,
+      'Journaling': 0,
+      'Anki': 0,
+    };
+
     for (const rec of records) {
       const total =
         (rec.wake_up_on_time ? 1 : 0) +
@@ -209,12 +143,15 @@ export async function GET() {
         'Anki': rec.anki,
         total,
       };
+      if (rec.wake_up_on_time) habitTotals['Wake Up On Time']++;
+      if (rec.gym_workout) habitTotals['Gym Workout']++;
+      if (rec.journaling) habitTotals['Journaling']++;
+      if (rec.anki) habitTotals['Anki']++;
     }
 
-    // 6. Build 30-Day Completeness Velocity (tied directly to today's local productivity date)
-    const [tYear, tMonth, tDay] = todayStr.split('-').map(Number);
-    const todayBase = new Date(tYear, tMonth - 1, tDay);
+    const totalDays = records.length;
 
+    // 5. Build 30-Day Completeness Velocity
     const velocity30Days: Array<{
       date: string;
       dayLabel: string;
@@ -225,12 +162,8 @@ export async function GET() {
       total: number;
     }> = [];
     for (let i = 29; i >= 0; i--) {
-      const pastDate = new Date(todayBase);
-      pastDate.setDate(todayBase.getDate() - i);
-      const dYear = pastDate.getFullYear();
-      const dMonth = String(pastDate.getMonth() + 1).padStart(2, '0');
-      const dDay = String(pastDate.getDate()).padStart(2, '0');
-      const dStr = `${dYear}-${dMonth}-${dDay}`;
+      const dStr = addDaysToDateStr(todayStr, -i);
+      const dObj = new Date(dStr + 'T12:00:00');
       const rec = rawHistory[dStr] || {
         'Wake Up On Time': false,
         'Gym Workout': false,
@@ -240,7 +173,7 @@ export async function GET() {
       };
       velocity30Days.push({
         date: dStr,
-        dayLabel: pastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        dayLabel: dObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }),
         wake: rec['Wake Up On Time'],
         gym: rec['Gym Workout'],
         journal: rec['Journaling'],
@@ -249,37 +182,25 @@ export async function GET() {
       });
     }
 
-    // 7. Days in current month & weekday calculation
+    // 6. Days in current month & weekday calculation
     const daysInMonth = new Date(year, month, 0).getDate();
     const firstDayWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7; // Mon = 0 ... Sun = 6
 
     const habitsData = HABITS_LIST.map((habitName) => {
-      const dbCol = HABIT_DB_MAP[habitName] as keyof HabitRecord;
-      let totalDays = 0;
-      let totalCompleted = 0;
+      const dbCol = HABIT_DB_MAP[habitName];
+      const totalCompleted = habitTotals[habitName];
 
-      const completionMap: Record<string, boolean> = {};
-
-      for (const rec of records) {
-        const isDone = Boolean(rec[dbCol]);
-        completionMap[rec.date] = isDone;
-        totalDays++;
-        if (isDone) totalCompleted++;
-      }
-
-      // Calculate continuous streak backwards day-by-day from today
+      // Calculate continuous streak backwards day-by-day from today using O(1) rawHistory lookup
       let streak = 0;
-      if (completionMap[todayStr]) {
+      if (rawHistory[todayStr]?.[habitName]) {
         streak++;
       }
-      const checkDate = new Date(todayBase);
-      checkDate.setDate(checkDate.getDate() - 1);
-
+      let offset = -1;
       while (true) {
-        const checkStr = `${checkDate.getFullYear()}-${String(checkDate.getMonth() + 1).padStart(2, '0')}-${String(checkDate.getDate()).padStart(2, '0')}`;
-        if (completionMap[checkStr]) {
+        const checkStr = addDaysToDateStr(todayStr, offset);
+        if (rawHistory[checkStr]?.[habitName]) {
           streak++;
-          checkDate.setDate(checkDate.getDate() - 1);
+          offset--;
         } else {
           break;
         }
@@ -288,7 +209,6 @@ export async function GET() {
       const consistencyRate = totalDays > 0 ? Math.round((totalCompleted / totalDays) * 100) : 0;
       const completedToday = Boolean(todayRecord && todayRecord[dbCol]);
 
-      // Build days array for current month grid
       const days = [];
       for (let i = 0; i < firstDayWeekday; i++) {
         days.push({ dayNumber: 0, dateStr: '', completed: false, isToday: false, isFuture: false });
@@ -298,7 +218,7 @@ export async function GET() {
         const dStr = `${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
         const isToday = dStr === todayStr;
         const isFuture = dStr > todayStr;
-        const completed = Boolean(completionMap[dStr]);
+        const completed = Boolean(rawHistory[dStr]?.[habitName]);
 
         days.push({
           dayNumber: dayNum,
@@ -315,10 +235,10 @@ export async function GET() {
           habitName === 'Anki'
             ? '🎴'
             : habitName.includes('Wake')
-            ? '⏰'
-            : habitName.includes('Gym')
-            ? '💪'
-            : '✍️',
+              ? '⏰'
+              : habitName.includes('Gym')
+                ? '💪'
+                : '✍️',
         streak,
         consistencyRate,
         totalCompleted,
@@ -358,12 +278,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Unknown habit '${habit}'` }, { status: 400 });
     }
 
-    const { dateStr: todayStr } = getProductivityDate();
-    const targetDate = (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date).trim()))
-      ? String(date).trim()
-      : todayStr;
+    const todayStr = getProductivityDateStr();
+    const targetDate =
+      date && /^\d{4}-\d{2}-\d{2}$/.test(String(date).trim())
+        ? String(date).trim()
+        : todayStr;
 
-    // 1. Primary: Save to Supabase (immediate sub-20ms response)
     const sb = supabaseAdmin || supabase;
     if (sb) {
       try {
@@ -373,27 +293,32 @@ export async function POST(request: Request) {
           .eq('date', targetDate)
           .maybeSingle();
 
-        const payload: Record<string, any> = {
+        const nowIso = new Date().toISOString();
+        const payload: Record<string, unknown> = {
           date: targetDate,
           wake_up_on_time: existing?.wake_up_on_time ?? false,
           gym_workout: existing?.gym_workout ?? false,
           journaling: existing?.journaling ?? false,
           anki: existing?.anki ?? false,
           [dbCol]: completed,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
         };
 
         if (!existing) {
-          payload.created_at = new Date().toISOString();
+          payload.created_at = nowIso;
         }
 
-        await sb.from('habits').upsert(payload, { onConflict: 'date' });
+        const { error: uErr } = await sb.from('habits').upsert(payload, { onConflict: 'date' });
+        if (uErr && (uErr.code === '42703' || uErr.message?.includes('anki'))) {
+          const { anki: _omit, ...fallbackPayload } = payload;
+          await sb.from('habits').upsert(fallbackPayload, { onConflict: 'date' });
+        }
       } catch (sbErr) {
-        console.warn('Supabase habit update warning (e.g. column not yet in schema):', sbErr);
+        console.warn('Supabase habit update warning:', sbErr);
       }
     }
 
-    // 2. Background mirror to Google Sheets (non-blocking)
+    // Background mirror to Google Sheets (non-blocking)
     mirrorHabitToSheets(targetDate, habit, completed).catch((e) => {
       console.warn('Background Sheets sync failed:', e);
     });

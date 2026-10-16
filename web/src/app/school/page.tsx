@@ -24,14 +24,20 @@ import {
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { CalendarName } from '@/types/task';
 import { supabase } from '@/lib/supabase';
-import { getTodayDateStr } from '@/lib/date-utils';
+import {
+  getTodayDateStr,
+  addDaysToDateStr,
+  getCalendarDateString,
+  cleanTaskTitle,
+  titlesMatch,
+} from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 function formatScheduledDate(dateStr?: string): string {
   if (!dateStr) return '';
   try {
     const today = getTodayDateStr();
-    const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const tomorrow = addDaysToDateStr(today, 1);
 
     if (dateStr === today) {
       const d = new Date(dateStr + 'T12:00:00');
@@ -49,12 +55,7 @@ function formatScheduledDate(dateStr?: string): string {
   }
 }
 
-const CALENDAR_MAP: Record<string, string> = {
-  'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
-  'Kevin Nguyen': '24ktkn@gmail.com',
-  'Family': 'family05668227215423587251@group.calendar.google.com',
-  'Volunteering': '57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com',
-};
+const CALENDAR_NAMES: CalendarName[] = ['School', 'Kevin Nguyen', 'Family', 'Volunteering'];
 
 interface DbSchoolRow {
   uid: string;
@@ -98,9 +99,18 @@ export default function SchoolSyncPage() {
     newDate: string;
     newTime: string;
     durationMins: number;
+    deleted?: boolean;
   }) => {
     if (!reschedulingSchoolItem) return;
     const uid = reschedulingSchoolItem.uid;
+    if (rescheduled.deleted) {
+      const updated = { ...scheduledItems };
+      delete updated[uid];
+      setScheduledItems(updated);
+      localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+      setReschedulingSchoolItem(null);
+      return;
+    }
     const updated = {
       ...scheduledItems,
       [uid]: {
@@ -108,7 +118,7 @@ export default function SchoolSyncPage() {
         time: rescheduled.newTime,
         duration: rescheduled.durationMins,
         calendar: reschedulingSchoolItem.scheduledCalendar || 'School',
-        isTaskOnly: reschedulingSchoolItem.scheduledIsTaskOnly,
+        isTaskOnly: rescheduled.durationMins > 0 ? false : reschedulingSchoolItem.scheduledIsTaskOnly,
       },
     };
     setScheduledItems(updated);
@@ -207,47 +217,37 @@ export default function SchoolSyncPage() {
       const completedList: string[] = data.completedTitles || data.results?.completedTitles || [];
 
       if (completedList.length > 0) {
-        const cleanStr = (s: string) =>
-          (s || '')
-            .replace(/\\,/g, ',')
-            .replace(/\\/g, '')
-            .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-            .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-
-        const cleanedCompleted = completedList.map(cleanStr).filter(Boolean);
+        const cleanedCompleted = completedList.map(cleanTaskTitle).filter(Boolean);
         const newCompletions: Record<string, boolean> = {};
+        const nowIso = new Date().toISOString();
+        const rowsToUpsert: Array<{
+          uid: string;
+          title: string;
+          category: string;
+          is_completed: boolean;
+          updated_at: string;
+        }> = [];
 
         for (const ev of currentEvents) {
-          const cleanSummary = cleanStr(ev.summary);
+          const cleanSummary = cleanTaskTitle(ev.summary);
           const isMatch =
             completedList.includes(ev.summary) ||
-            cleanedCompleted.includes(cleanSummary) ||
-            cleanedCompleted.some(
-              (t) =>
-                t === cleanSummary ||
-                (t.length > 5 &&
-                  cleanSummary.length > 5 &&
-                  (t.includes(cleanSummary) || cleanSummary.includes(t)))
-            );
+            cleanedCompleted.some((t) => titlesMatch(t, cleanSummary));
 
           if (isMatch) {
             newCompletions[ev.uid] = true;
-
-            if (supabase) {
-              await supabase
-                .from('school_items')
-                .upsert({
-                  uid: ev.uid,
-                  title: ev.summary,
-                  category: overrides[ev.uid] || ev.category || 'module',
-                  is_completed: true,
-                  updated_at: new Date().toISOString(),
-                });
-            }
+            rowsToUpsert.push({
+              uid: ev.uid,
+              title: ev.summary,
+              category: ev.category || 'module',
+              is_completed: true,
+              updated_at: nowIso,
+            });
           }
+        }
+
+        if (rowsToUpsert.length > 0 && supabase) {
+          await supabase.from('school_items').upsert(rowsToUpsert);
         }
 
         if (Object.keys(newCompletions).length > 0) {
@@ -262,34 +262,26 @@ export default function SchoolSyncPage() {
       // Also discover and sync scheduled items from tasks table in Supabase
       if (supabase) {
         const todayStr = getTodayDateStr();
-        const cleanStr = (s: string) =>
-          s
-            .replace(/\\,/g, ',')
-            .replace(/\\/g, '')
-            .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-            .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-
         const { data: dbTasks } = await supabase
           .from('tasks')
           .select('title, due_date, due_time, duration_mins, calendar_name, is_scheduled, is_completed, type')
           .or('is_scheduled.eq.true,type.eq.Task');
 
         if (dbTasks && dbTasks.length > 0) {
+          const cleanedDbTasks = dbTasks
+            .filter((t) => Boolean(t.title && t.due_date))
+            .map((t) => ({ ...t, clean: cleanTaskTitle(t.title) }));
+
           const newSchedFromDb: Record<
             string,
             { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }
           > = {};
+          const nowIso = new Date().toISOString();
+          const updatePromises: PromiseLike<unknown>[] = [];
 
           for (const ev of currentEvents) {
-            const cleanSummary = cleanStr(ev.summary);
-            const matched = dbTasks.find((t) => {
-              if (!t.title) return false;
-              const c = cleanStr(t.title);
-              return c === cleanSummary || (c.length > 5 && (c.includes(cleanSummary) || cleanSummary.includes(c)));
-            });
+            const cleanSummary = cleanTaskTitle(ev.summary);
+            const matched = cleanedDbTasks.find((t) => titlesMatch(t.clean, cleanSummary));
 
             if (matched && matched.due_date) {
               const effectiveDate =
@@ -303,8 +295,7 @@ export default function SchoolSyncPage() {
                 isTaskOnly: matched.type === 'Task' && !matched.is_scheduled,
               };
 
-              // Keep school_items in sync with latest due_date & due_time from tasks
-              if (supabase) {
+              updatePromises.push(
                 supabase
                   .from('school_items')
                   .update({
@@ -313,12 +304,15 @@ export default function SchoolSyncPage() {
                     scheduled_time: matched.due_time || '10:00 AM',
                     duration_mins: matched.duration_mins || 60,
                     target_calendar: matched.calendar_name || 'School',
-                    updated_at: new Date().toISOString(),
+                    updated_at: nowIso,
                   })
                   .eq('uid', ev.uid)
-                  .then();
-              }
+              );
             }
+          }
+
+          if (updatePromises.length > 0) {
+            Promise.all(updatePromises).catch(() => {});
           }
 
           if (Object.keys(newSchedFromDb).length > 0) {
@@ -401,20 +395,22 @@ export default function SchoolSyncPage() {
     }
 
     if (supabase) {
-      await supabase.from('school_items').upsert({
-        uid,
-        title,
-        category: overrides[uid] || ev?.category || 'module',
-        is_completed: completed,
-        updated_at: new Date().toISOString(),
-      });
-
-      if (title && title !== 'Untitled') {
-        await supabase
-          .from('tasks')
-          .update({ is_completed: completed, updated_at: new Date().toISOString() })
-          .ilike('title', `%${title}%`);
-      }
+      const nowIso = new Date().toISOString();
+      await Promise.all([
+        supabase.from('school_items').upsert({
+          uid,
+          title,
+          category: overrides[uid] || ev?.category || 'module',
+          is_completed: completed,
+          updated_at: nowIso,
+        }),
+        title && title !== 'Untitled'
+          ? supabase
+              .from('tasks')
+              .update({ is_completed: completed, updated_at: nowIso })
+              .ilike('title', `%${title}%`)
+          : Promise.resolve(),
+      ]);
     }
   };
 
@@ -432,7 +428,7 @@ export default function SchoolSyncPage() {
       : eventDateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
     const existing = formState[uid] || {
-      date: eventDateObj.toISOString().split('T')[0],
+      date: getCalendarDateString(eventDateObj),
       time: isTaskOnly ? defaultTimeStr : '10:00 AM',
       duration: isTaskOnly ? 0 : defaultEvent?.duration || 60,
       calendar: 'School',
@@ -758,10 +754,10 @@ export default function SchoolSyncPage() {
                 : dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
               const currentForm = formState[event.uid] || {
-                date: dateObj.toISOString().split('T')[0],
-                time: isAssignment ? formattedTime : '10:00 AM',
-                duration: isAssignment ? 60 : event.duration,
-                calendar: 'School',
+                date: event.scheduledDate || getCalendarDateString(dateObj),
+                time: event.scheduledTime || (isAssignment ? formattedTime : '10:00 AM'),
+                duration: event.scheduledDuration && event.scheduledDuration > 0 ? event.scheduledDuration : isAssignment ? 60 : event.duration,
+                calendar: event.scheduledCalendar || 'School',
               };
 
               return (
@@ -1030,7 +1026,7 @@ export default function SchoolSyncPage() {
                               }
                               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
                             >
-                              {Object.keys(CALENDAR_MAP).map((c) => (
+                              {CALENDAR_NAMES.map((c) => (
                                 <option key={c} value={c}>
                                   {c}
                                 </option>

@@ -16,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { CalendarName, RescheduleRequest, RescheduleResponse, TaskItem } from '@/types/task';
+import { getTodayDateStr, addDaysToDateStr } from '@/lib/date-utils';
 
 interface RescheduleModalProps {
   isOpen: boolean;
@@ -49,7 +50,7 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
   const [selectedDuration, setSelectedDuration] = useState<number>(30);
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarName>('Kevin Nguyen');
   const [recurrenceScope, setRecurrenceScope] = useState<'instance' | 'series'>('instance');
-  const [addTimeblock, setAddTimeblock] = useState<boolean>(true);
+  const [addTimeblock, setAddTimeblock] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -58,13 +59,13 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
 
   useEffect(() => {
     if (item && isOpen) {
-      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      const todayStr = getTodayDateStr();
       setSelectedDate(item.due_date || todayStr);
       setSelectedTime(item.due_time || '10:00 AM');
       setSelectedDuration(item.duration_mins && item.duration_mins > 0 ? item.duration_mins : 30);
       setSelectedCalendar(item.calendar_name || 'Kevin Nguyen');
       setRecurrenceScope('instance');
-      setAddTimeblock(!Boolean(item.calendar_event_id || item.type === 'Event'));
+      setAddTimeblock(false);
       setShowDeleteConfirm(false);
       setErrorMsg('');
       setSuccessMsg('');
@@ -73,19 +74,16 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
 
   // Quick shift helpers (America/New_York relative)
   const setQuickDate = (offsetDays: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + offsetDays);
-    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    setSelectedDate(dateStr);
+    const todayStr = getTodayDateStr();
+    setSelectedDate(addDaysToDateStr(todayStr, offsetDays));
   };
 
   const setToNextMonday = () => {
-    const d = new Date();
-    const day = d.getDay(); // 0 is Sunday, 1 is Monday
+    const todayStr = getTodayDateStr();
+    const d = new Date(`${todayStr}T12:00:00Z`);
+    const day = d.getUTCDay(); // 0 is Sunday, 1 is Monday
     const daysUntilMonday = ((1 + 7 - day) % 7) || 7;
-    d.setDate(d.getDate() + daysUntilMonday);
-    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    setSelectedDate(dateStr);
+    setSelectedDate(addDaysToDateStr(todayStr, daysUntilMonday));
   };
 
   const handleReschedule = async (e?: React.FormEvent) => {

@@ -1,48 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { parseSleepDuration as baseParseSleep, formatDisplayTime as baseFormatTime } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
 export function parseSleepDuration(val: string | number | undefined): { text: string; hours: number } {
-  if (val === undefined || val === null || val === '' || val === '0' || val === 0) {
+  const parsed = baseParseSleep(val);
+  if (parsed.hours <= 0) {
     return { text: 'No data', hours: 0 };
   }
-  const str = String(val).trim().toLowerCase();
-
-  let totalHours = 0;
-
-  if (str.includes('h') || str.includes('m')) {
-    let hours = 0;
-    let minutes = 0;
-    if (str.includes('h')) {
-      const parts = str.split('h');
-      hours = parseFloat(parts[0].trim()) || 0;
-      if (parts[1]?.includes('m')) {
-        minutes = parseFloat(parts[1].replace('m', '').trim()) || 0;
-      }
-    } else if (str.includes('m')) {
-      minutes = parseFloat(str.replace('m', '').trim()) || 0;
-    }
-    totalHours = hours + minutes / 60;
-  } else {
-    totalHours = parseFloat(str) || 0;
-  }
-
-  if (totalHours <= 0) {
-    return { text: 'No data', hours: 0 };
-  }
-
-  const h = Math.floor(totalHours);
-  const m = Math.round((totalHours - h) * 60);
-
-  const finalH = m === 60 ? h + 1 : h;
-  const finalM = m === 60 ? 0 : m;
-
-  return {
-    text: `${finalH}h ${finalM}m`,
-    hours: totalHours,
-  };
+  return parsed;
 }
 
 export function formatDisplayTime(str?: string): string {
@@ -60,7 +28,7 @@ export function formatDisplayTime(str?: string): string {
     }
     const timeMatch = cleaned.match(/\b(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)\b/i);
     if (timeMatch) return timeMatch[1].trim();
-    return str;
+    return baseFormatTime(str, 'No data');
   } catch {
     return str;
   }
@@ -87,8 +55,8 @@ export async function GET(req: NextRequest) {
         if (!error && records && records.length > 0) {
           const target = records[0];
 
-          // Fetch latest valid bodyweight
-          let bodyweight = parseFloat(String(target.bodyweight || '170')) || 170.0;
+          // Fetch latest valid bodyweight if current day's bodyweight was not logged
+          let bodyweight = parseFloat(String(target.bodyweight || '0')) || 0;
           if (bodyweight <= 50 || bodyweight >= 400) {
             const { data: latestWeight } = await sb
               .from('biometrics')
@@ -100,6 +68,8 @@ export async function GET(req: NextRequest) {
               .maybeSingle();
             if (latestWeight?.bodyweight) {
               bodyweight = parseFloat(String(latestWeight.bodyweight));
+            } else {
+              bodyweight = 170.0;
             }
           }
 
@@ -111,6 +81,7 @@ export async function GET(req: NextRequest) {
               weekday: 'short',
               month: 'short',
               day: 'numeric',
+              timeZone: 'America/New_York',
             });
           } catch {
             // keep raw string
@@ -135,7 +106,7 @@ export async function GET(req: NextRequest) {
               steps_percentage: Math.min(100, Math.round((rawSteps / 10000) * 100)),
               hrv: Math.round(rawHrv),
               sleep_duration: sleepParsed.text,
-              sleep_hours: target.sleep_hours || sleepParsed.hours,
+              sleep_hours: sleepParsed.hours || Number(target.sleep_hours) || 0,
               sleep_time: formatDisplayTime(sleepTime),
               wake_time: formatDisplayTime(wakeTime),
               rhr: Math.round(rawRhr),
@@ -144,6 +115,8 @@ export async function GET(req: NextRequest) {
               workout_duration: Math.round(workoutDur),
             },
           });
+        } else if (!error && requestedDate) {
+          return NextResponse.json({ success: true, data: null });
         }
       } catch (sbErr) {
         console.warn('Supabase biometrics fetch warning:', sbErr);
@@ -186,7 +159,10 @@ export async function GET(req: NextRequest) {
     let targetRow = dataRows[dataRows.length - 1];
     if (requestedDate) {
       const match = dataRows.find((r) => String(r[dateIdx]).trim() === requestedDate);
-      if (match) targetRow = match;
+      if (!match) {
+        return NextResponse.json({ success: true, data: null });
+      }
+      targetRow = match;
     }
 
     let bodyweight = 170.0;
@@ -215,6 +191,7 @@ export async function GET(req: NextRequest) {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
+        timeZone: 'America/New_York',
       });
     } catch {
       // keep raw string

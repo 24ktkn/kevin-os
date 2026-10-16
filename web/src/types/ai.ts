@@ -1,4 +1,7 @@
+import { CalendarName } from './task';
+
 export interface CalendarBusyBlock {
+  id?: string;
   calendar: string;
   title: string;
   startIso: string;
@@ -18,7 +21,7 @@ export interface BacklogTask {
 
 export interface ProposedTask {
   itemName: string;
-  calendar: 'Kevin Nguyen' | 'Family' | 'School' | 'Volunteering';
+  calendar: CalendarName;
   startTime24h: string; // e.g. "14:30"
   durationMins: number;
   startTimeFormatted?: string; // e.g. "2:30 PM"

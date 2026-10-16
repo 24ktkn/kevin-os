@@ -1,4 +1,5 @@
 import { TaskItem, CalendarName } from '@/types/task';
+import { cleanDisplayTitle, cleanTaskTitle, titlesMatch } from '@/lib/date-utils';
 
 export interface UnifiedAgendaItem {
   id: string;
@@ -32,13 +33,7 @@ export interface UnifiedAgendaItem {
 }
 
 export function cleanAgendaTitle(str?: string): string {
-  if (!str) return '';
-  return str
-    .replace(/\\,/g, ',')
-    .replace(/\\/g, '')
-    .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return cleanDisplayTitle(str);
 }
 
 function parseTimeToMinutes(timeStr?: string): number {
@@ -57,29 +52,6 @@ function parseTimeToMinutes(timeStr?: string): number {
   return h * 60 + m;
 }
 
-function titlesMatch(a: string, b: string): boolean {
-  const normA = cleanAgendaTitle(a).toLowerCase();
-  const normB = cleanAgendaTitle(b).toLowerCase();
-
-  if (!normA || !normB) return false;
-  if (normA === normB) return true;
-
-  // Partial / prefix match for longer module titles (>= 15 chars)
-  if (normA.length >= 15 && normB.length >= 15) {
-    if (normA.includes(normB) || normB.includes(normA)) return true;
-  }
-
-  // Extract core title without duration prefix if present: e.g. "(56 min) Approach..."
-  const coreA = normA.replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '').trim();
-  const coreB = normB.replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '').trim();
-
-  if (coreA && coreB && (coreA === coreB || (coreA.length >= 12 && (coreA.includes(coreB) || coreB.includes(coreA))))) {
-    return true;
-  }
-
-  return false;
-}
-
 /**
  * Groups today's tasks and calendar events into deduplicated UnifiedAgendaItems.
  * Pairs Google Calendar timeblocks with their associated Google Tasks while preserving
@@ -89,22 +61,57 @@ export function groupTodayAgendaItems(rawTasks: TaskItem[]): UnifiedAgendaItem[]
   const events = rawTasks.filter((t) => t.type === 'Event');
   const tasks = rawTasks.filter((t) => t.type === 'Task');
 
+  // Pre-compute normalized titles and index tasks for O(1) lookup by ID or exact title
+  const taskByGoogleId = new Map<string, TaskItem>();
+  const taskByCalEventId = new Map<string, TaskItem>();
+  const taskNormMap = new Map<string, string>();
+
+  for (const tk of tasks) {
+    if (tk.google_task_id && !taskByGoogleId.has(tk.google_task_id)) {
+      taskByGoogleId.set(tk.google_task_id, tk);
+    }
+    if (tk.calendar_event_id && !taskByCalEventId.has(tk.calendar_event_id)) {
+      taskByCalEventId.set(tk.calendar_event_id, tk);
+    }
+    taskNormMap.set(tk.id, cleanTaskTitle(tk.title));
+  }
+
   const pairedTaskIds = new Set<string>();
   const unified: UnifiedAgendaItem[] = [];
 
   // 1. Process Events and find matching Tasks
   for (const ev of events) {
-    // Find matching task by linked IDs or title
-    const matchingTask = tasks.find((tk) => {
-      if (pairedTaskIds.has(tk.id)) return false;
+    let matchingTask: TaskItem | undefined;
 
-      // Match by explicit foreign keys if populated
-      if (ev.google_task_id && tk.google_task_id && ev.google_task_id === tk.google_task_id) return true;
-      if (ev.calendar_event_id && tk.calendar_event_id && ev.calendar_event_id === tk.calendar_event_id) return true;
+    if (ev.google_task_id) {
+      const candidate = taskByGoogleId.get(ev.google_task_id);
+      if (candidate && !pairedTaskIds.has(candidate.id)) {
+        matchingTask = candidate;
+      }
+    }
 
-      // Match by title
-      return titlesMatch(ev.title, tk.title);
-    });
+    if (!matchingTask && ev.calendar_event_id) {
+      const candidate = taskByCalEventId.get(ev.calendar_event_id);
+      if (candidate && !pairedTaskIds.has(candidate.id)) {
+        matchingTask = candidate;
+      }
+    }
+
+    if (!matchingTask) {
+      const evNorm = cleanTaskTitle(ev.title);
+      if (evNorm) {
+        matchingTask = tasks.find((tk) => {
+          if (pairedTaskIds.has(tk.id)) return false;
+          const tkNorm = taskNormMap.get(tk.id) || '';
+          if (!tkNorm) return false;
+          if (evNorm === tkNorm) return true;
+          if (evNorm.length > 5 && tkNorm.length > 5 && (evNorm.includes(tkNorm) || tkNorm.includes(evNorm))) {
+            return true;
+          }
+          return titlesMatch(ev.title, tk.title);
+        });
+      }
+    }
 
     if (matchingTask) {
       pairedTaskIds.add(matchingTask.id);
@@ -189,7 +196,6 @@ export function groupTodayAgendaItems(rawTasks: TaskItem[]): UnifiedAgendaItem[]
 
   // 3. Chronological sort by due_time
   unified.sort((a, b) => {
-    // If one is allCompleted and other is not, show active ones first
     if (a.allCompleted !== b.allCompleted) {
       return a.allCompleted ? 1 : -1;
     }

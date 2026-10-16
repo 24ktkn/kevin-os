@@ -1,63 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { RescheduleRequest, RescheduleResponse, TaskItem, CalendarName } from '@/types/task';
+import {
+  cleanTaskTitle,
+  titlesMatch,
+  parseTimeToHoursMinutes,
+  format24hTo12h,
+  computeStartEndIso,
+} from '@/lib/date-utils';
+import {
+  CALENDAR_MAP,
+  TASKLIST_MAP,
+  getGoogleCalendarClient,
+  getGoogleTasksClient,
+} from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
 
-const CALENDAR_MAP: Record<string, string> = {
-  'Kevin Nguyen': '24ktkn@gmail.com',
-  'Family': 'family05668227215423587251@group.calendar.google.com',
-  'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
-  'Volunteering': '57bb8a8bf61e233e8bb76ab03f53b03ead35e7ba66e37d2bfd73792e1c1e575e@group.calendar.google.com',
-};
-
-const TASKLIST_MAP: Record<string, string> = {
-  'School': 'ZGRiT21qM2ZCbVRWOVBlMQ',
-  'Kevin Nguyen': '@default',
-  'Family': 'Um85a3gwMVZqTXN4X0M3Wg',
-  'Volunteering': 'bUtfd3ZxU0Y3RFUyM2x2dQ',
-};
-
-function getPrivateKey(): string {
-  const key = process.env.GOOGLE_PRIVATE_KEY || '';
-  return key.replace(/\\n/g, '\n').replace(/^"|"$/g, '');
-}
-
-export function cleanTitle(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/\\,/g, ',')
-    .replace(/\\/g, '')
-    .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-    .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function parseTimeToHoursAndMinutes(timeStr?: string): { hours: number; minutes: number; formatted12h: string } {
-  if (!timeStr || !timeStr.trim()) {
-    return { hours: 10, minutes: 0, formatted12h: '10:00 AM' };
-  }
-
-  const raw = timeStr.trim().toLowerCase();
-  const isPm = raw.includes('pm');
-  const isAm = raw.includes('am');
-  const numericParts = raw.replace(/[a-z\s]/gi, '').split(':');
-  let h = parseInt(numericParts[0], 10) || 0;
-  const m = parseInt(numericParts[1], 10) || 0;
-
-  if (isPm && h < 12) h += 12;
-  if (isAm && h === 12) h = 0;
-
-  // Format 12h
-  const displayH = h % 12 === 0 ? 12 : h % 12;
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const displayM = String(m).padStart(2, '0');
-  const formatted12h = `${displayH}:${displayM} ${ampm}`;
-
-  return { hours: h, minutes: m, formatted12h };
+export function cleanTitle(str?: string): string {
+  return cleanTaskTitle(str);
 }
 
 export async function POST(req: NextRequest) {
@@ -92,329 +53,281 @@ export async function POST(req: NextRequest) {
     let targetCalendarName: CalendarName = calendarName;
     let currentNotes = '';
 
-    // 1. Resolve task in Supabase
-    if (sb && taskId) {
-      const { data: dbTask } = await sb.from('tasks').select('*').eq('id', taskId).maybeSingle();
-      if (dbTask) {
-        resolvedTask = dbTask as TaskItem;
-        if (!targetCalEventId && dbTask.calendar_event_id) targetCalEventId = dbTask.calendar_event_id;
-        if (!targetGoogleTaskId && dbTask.google_task_id) targetGoogleTaskId = dbTask.google_task_id;
-        if (!itemTitle && dbTask.title) itemTitle = dbTask.title;
-        if (dbTask.calendar_name) targetCalendarName = dbTask.calendar_name as CalendarName;
-        currentNotes = dbTask.notes || '';
+    // 1. Fetch all tasks and school_items in a single parallel round-trip
+    let allDbTasks: TaskItem[] = [];
+    let allSchoolRows: { uid: string; title: string }[] = [];
+
+    if (sb) {
+      const [tasksRes, schoolRes] = await Promise.all([
+        sb.from('tasks').select('*'),
+        sb.from('school_items').select('uid, title'),
+      ]);
+      allDbTasks = (tasksRes.data || []) as TaskItem[];
+      allSchoolRows = (schoolRes.data || []) as { uid: string; title: string }[];
+    }
+
+    // Resolve task from in-memory allDbTasks
+    if (taskId) {
+      const byId = allDbTasks.find((t) => t.id === taskId);
+      if (byId) resolvedTask = byId;
+    }
+    if (!resolvedTask && targetCalEventId) {
+      const byCal = allDbTasks.find((t) => t.calendar_event_id === targetCalEventId);
+      if (byCal) resolvedTask = byCal;
+    }
+    if (!resolvedTask && targetGoogleTaskId) {
+      const byGTask = allDbTasks.find((t) => t.google_task_id === targetGoogleTaskId);
+      if (byGTask) resolvedTask = byGTask;
+    }
+
+    if (resolvedTask) {
+      if (!targetCalEventId && resolvedTask.calendar_event_id) {
+        targetCalEventId = resolvedTask.calendar_event_id;
+      }
+      if (!targetGoogleTaskId && resolvedTask.google_task_id) {
+        targetGoogleTaskId = resolvedTask.google_task_id;
+      }
+      if (!itemTitle && resolvedTask.title) itemTitle = resolvedTask.title;
+      if (resolvedTask.calendar_name) targetCalendarName = resolvedTask.calendar_name;
+      currentNotes = resolvedTask.notes || '';
+    }
+
+    const cleanSearchTitle = cleanTaskTitle(itemTitle);
+
+    // Resolve sibling Event / Task IDs in memory if missing
+    if (!targetCalEventId && cleanSearchTitle) {
+      const evMatch = allDbTasks.find(
+        (r) => r.type === 'Event' && r.calendar_event_id && titlesMatch(r.title, itemTitle)
+      );
+      if (evMatch?.calendar_event_id) {
+        targetCalEventId = evMatch.calendar_event_id;
+        if (evMatch.calendar_name) targetCalendarName = evMatch.calendar_name;
+        if (!targetGoogleTaskId && evMatch.google_task_id) targetGoogleTaskId = evMatch.google_task_id;
       }
     }
 
-    // Fallback: lookup by targetCalEventId if taskId didn't resolve
-    if (!resolvedTask && sb && targetCalEventId) {
-      const { data: dbByCal } = await sb.from('tasks').select('*').eq('calendar_event_id', targetCalEventId).maybeSingle();
-      if (dbByCal) {
-        resolvedTask = dbByCal as TaskItem;
-        if (!targetGoogleTaskId && dbByCal.google_task_id) targetGoogleTaskId = dbByCal.google_task_id;
-        if (!itemTitle && dbByCal.title) itemTitle = dbByCal.title;
-        if (dbByCal.calendar_name) targetCalendarName = dbByCal.calendar_name as CalendarName;
-        currentNotes = dbByCal.notes || '';
+    if (!targetGoogleTaskId && cleanSearchTitle) {
+      const tkMatch = allDbTasks.find(
+        (r) => r.type === 'Task' && r.google_task_id && titlesMatch(r.title, itemTitle)
+      );
+      if (tkMatch?.google_task_id) {
+        targetGoogleTaskId = tkMatch.google_task_id;
+        if (tkMatch.calendar_name) targetCalendarName = tkMatch.calendar_name;
+        if (!targetCalEventId && tkMatch.calendar_event_id) targetCalEventId = tkMatch.calendar_event_id;
       }
     }
 
-    // Fallback: lookup by targetGoogleTaskId
-    if (!resolvedTask && sb && targetGoogleTaskId) {
-      const { data: dbByGTask } = await sb.from('tasks').select('*').eq('google_task_id', targetGoogleTaskId).maybeSingle();
-      if (dbByGTask) {
-        resolvedTask = dbByGTask as TaskItem;
-        if (!targetCalEventId && dbByGTask.calendar_event_id) targetCalEventId = dbByGTask.calendar_event_id;
-        if (!itemTitle && dbByGTask.title) itemTitle = dbByGTask.title;
-        if (dbByGTask.calendar_name) targetCalendarName = dbByGTask.calendar_name as CalendarName;
-        currentNotes = dbByGTask.notes || '';
-      }
-    }
-
-    const cleanSearchTitle = cleanTitle(itemTitle);
-
-    // Deep Search 1: If targetCalEventId is still missing, search Supabase 'tasks' for matching 'Event' row
-    if (!targetCalEventId && sb && cleanSearchTitle) {
-      try {
-        const { data: eventCandidates } = await sb
-          .from('tasks')
-          .select('*')
-          .eq('type', 'Event')
-          .not('calendar_event_id', 'is', null);
-
-        if (eventCandidates && eventCandidates.length > 0) {
-          const match = eventCandidates.find((r) => {
-            if (!r.title) return false;
-            const ct = cleanTitle(r.title);
-            return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
-          });
-          if (match?.calendar_event_id) {
-            targetCalEventId = match.calendar_event_id;
-            if (match.calendar_name) targetCalendarName = match.calendar_name as CalendarName;
-            if (!targetGoogleTaskId && match.google_task_id) targetGoogleTaskId = match.google_task_id;
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase event candidate lookup error:', err);
-      }
-    }
-
-    // Deep Search 2: If targetGoogleTaskId is still missing, search Supabase 'tasks' for matching 'Task' row
-    if (!targetGoogleTaskId && sb && cleanSearchTitle) {
-      try {
-        const { data: taskCandidates } = await sb
-          .from('tasks')
-          .select('*')
-          .eq('type', 'Task')
-          .not('google_task_id', 'is', null);
-
-        if (taskCandidates && taskCandidates.length > 0) {
-          const match = taskCandidates.find((r) => {
-            if (!r.title) return false;
-            const ct = cleanTitle(r.title);
-            return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
-          });
-          if (match?.google_task_id) {
-            targetGoogleTaskId = match.google_task_id;
-            if (match.calendar_name) targetCalendarName = match.calendar_name as CalendarName;
-            if (!targetCalEventId && match.calendar_event_id) targetCalEventId = match.calendar_event_id;
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase task candidate lookup error:', err);
-      }
-    }
-
-    const { hours, minutes, formatted12h } = parseTimeToHoursAndMinutes(newTime);
+    const { hours, minutes } = parseTimeToHoursMinutes(newTime);
+    const formatted12h = format24hTo12h(hours, minutes);
     const finalDuration = Math.max(0, parseInt(String(durationMins), 10) || 30);
-
-    // Calculate end time
-    let endTotalMins = hours * 60 + minutes + finalDuration;
-    const endH = Math.floor(endTotalMins / 60) % 24;
-    const endM = endTotalMins % 60;
-
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const startIso = `${newDate}T${pad(hours)}:${pad(minutes)}:00`;
-    const endIso = `${newDate}T${pad(endH)}:${pad(endM)}:00`;
+    const { startDateTime, endDateTime } = computeStartEndIso(newDate, formatted12h, finalDuration || 30);
 
     let patchedCalendar = false;
     let patchedTask = false;
     let patchedSchool = false;
 
-    // 2. Google Calendar Patch
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKey = getPrivateKey();
+    const calendarApi = getGoogleCalendarClient();
+    const { tasksApi, hasCredentials } = getGoogleTasksClient();
     let activeCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['School'] || CALENDAR_MAP['Kevin Nguyen'];
 
-    if (clientEmail && privateKey) {
-      try {
-        const auth = new google.auth.JWT({
-          email: clientEmail,
-          key: privateKey,
-          scopes: ['https://www.googleapis.com/auth/calendar'],
-        });
-        const calendarApi = google.calendar({ version: 'v3', auth });
+    // 2 & 3. Run Google Calendar and Google Tasks updates in parallel
+    await Promise.all([
+      // 2. Google Calendar Patch or Create
+      (async () => {
+        if (!calendarApi) return;
+        try {
+          // Fallback search in Google Calendar only if event was expected or createTimeblock wasn't explicitly false
+          if (!targetCalEventId && cleanSearchTitle && resolvedTask?.type === 'Event') {
+            const calCandidates = [
+              activeCalId,
+              ...Object.values(CALENDAR_MAP).filter((c) => c !== activeCalId),
+            ];
 
-        // Deep Search 3: If targetCalEventId is STILL missing, search Google Calendar directly by clean title!
-        if (!targetCalEventId && cleanSearchTitle) {
-          const calCandidates = [
-            activeCalId,
-            ...Object.values(CALENDAR_MAP).filter((c) => c !== activeCalId),
-          ];
-
-          for (const cId of calCandidates) {
-            try {
-              const listRes = await calendarApi.events.list({
-                calendarId: cId,
-                q: cleanSearchTitle.slice(0, 35),
-                singleEvents: true,
-                maxResults: 25,
-              });
-
-              const match = (listRes.data.items || []).find((ev) => {
-                if (!ev.summary) return false;
-                const cs = cleanTitle(ev.summary);
-                return cs === cleanSearchTitle || (cs.length > 5 && (cs.includes(cleanSearchTitle) || cleanSearchTitle.includes(cs)));
-              });
-
-              if (match && match.id) {
-                targetCalEventId = match.id;
-                activeCalId = cId;
-                for (const [cName, mappedId] of Object.entries(CALENDAR_MAP)) {
-                  if (mappedId === cId) {
-                    targetCalendarName = cName as CalendarName;
-                    break;
-                  }
-                }
-                break;
-              }
-            } catch (searchErr) {
-              console.warn(`Calendar search error for ${cId}:`, searchErr);
-            }
-          }
-        }
-
-        if (targetCalEventId) {
-          try {
-            // Check if this event has a recurring parent if scope is 'series'
-            let eventToPatch = targetCalEventId;
-            if (scope === 'series') {
+            for (const cId of calCandidates) {
               try {
-                const getRes = await calendarApi.events.get({
-                  calendarId: activeCalId,
-                  eventId: targetCalEventId,
-                });
-                if (getRes.data.recurringEventId) {
-                  eventToPatch = getRes.data.recurringEventId;
-                }
-              } catch {
-                // If get fails, stick with targetCalEventId
-              }
-            }
-
-            await calendarApi.events.patch({
-              calendarId: activeCalId,
-              eventId: eventToPatch,
-              requestBody: {
-                start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
-                end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
-              },
-            });
-            patchedCalendar = true;
-          } catch (calPatchErr) {
-            console.warn(`Direct calendar patch error for event ${targetCalEventId} on ${activeCalId}:`, calPatchErr);
-
-            // Attempt cross-calendar search if ID was mapped to different calendar
-            for (const [cName, cId] of Object.entries(CALENDAR_MAP)) {
-              if (cId === activeCalId) continue;
-              try {
-                await calendarApi.events.patch({
+                const listRes = await calendarApi.events.list({
                   calendarId: cId,
-                  eventId: targetCalEventId,
-                  requestBody: {
-                    start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
-                    end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
-                  },
+                  q: cleanSearchTitle.slice(0, 35),
+                  singleEvents: true,
+                  maxResults: 25,
                 });
-                patchedCalendar = true;
-                targetCalendarName = cName as CalendarName;
-                activeCalId = cId;
-                break;
+
+                const match = (listRes.data.items || []).find(
+                  (ev) => ev.summary && titlesMatch(ev.summary, itemTitle)
+                );
+
+                if (match?.id) {
+                  targetCalEventId = match.id;
+                  activeCalId = cId;
+                  for (const [cName, mappedId] of Object.entries(CALENDAR_MAP)) {
+                    if (mappedId === cId) {
+                      targetCalendarName = cName as CalendarName;
+                      break;
+                    }
+                  }
+                  break;
+                }
               } catch {
-                // Ignore and continue
+                // continue
               }
             }
           }
-        } else if (createTimeblock || (createTimeblock !== false && newTime)) {
-          // If no calendar timeblock exists and timeblock creation is requested, insert brand new event
-          try {
-            const calSummary = targetCalendarName === 'School'
-              ? `🎓 [Task] ${itemTitle.trim()}`
-              : itemTitle.trim();
 
-            const insertRes = await calendarApi.events.insert({
-              calendarId: activeCalId,
-              requestBody: {
-                summary: calSummary,
-                description: currentNotes || '',
-                start: { dateTime: `${startIso}-04:00`, timeZone: 'America/New_York' },
-                end: { dateTime: `${endIso}-04:00`, timeZone: 'America/New_York' },
-              },
-            });
-
-            if (insertRes.data.id) {
-              targetCalEventId = insertRes.data.id;
-              patchedCalendar = true;
-
-              // Insert companion 'Event' row in Supabase so Agenda displays it immediately
-              if (sb) {
-                await sb.from('tasks').insert({
-                  id: crypto.randomUUID(),
-                  title: calSummary,
-                  type: 'Event',
-                  calendar_name: targetCalendarName,
-                  due_date: newDate,
-                  due_time: formatted12h,
-                  duration_mins: finalDuration,
-                  is_completed: false,
-                  is_scheduled: true,
-                  calendar_event_id: targetCalEventId,
-                  google_task_id: targetGoogleTaskId,
-                  notes: currentNotes || '',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                });
-              }
-            }
-          } catch (calInsertErr) {
-            console.error('Failed to create new calendar timeblock in reschedule:', calInsertErr);
-          }
-        }
-      } catch (authErr) {
-        console.warn('Calendar service account error:', authErr);
-      }
-    }
-
-    // 3. Google Tasks Patch
-    const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
-    const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
-    const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
-    const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
-    const targetTaskListId = TASKLIST_MAP[targetCalendarName] || TASKLIST_MAP['Kevin Nguyen'];
-
-    if (clientId && clientSecret && refreshToken) {
-      try {
-        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
-        oauth2Client.setCredentials({ refresh_token: refreshToken });
-        const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
-
-        // Build updated notes with ⏰ Scheduled
-        let updatedNotes = currentNotes;
-        const schedTag = `⏰ Scheduled: ${formatted12h} (${finalDuration}m)`;
-        if (updatedNotes.includes('⏰ Scheduled:')) {
-          updatedNotes = updatedNotes.replace(/⏰ Scheduled:[^\n]+/g, schedTag);
-        } else if (updatedNotes) {
-          updatedNotes = `${schedTag}\n\n${updatedNotes}`;
-        } else {
-          updatedNotes = schedTag;
-        }
-
-        if (targetGoogleTaskId) {
-          const listCandidates = [
-            targetTaskListId,
-            ...Object.values(TASKLIST_MAP).filter((l) => l !== targetTaskListId),
-          ];
-
-          for (const listId of listCandidates) {
+          if (targetCalEventId) {
             try {
-              await tasksApi.tasks.patch({
-                tasklist: listId,
-                task: targetGoogleTaskId,
+              let eventToPatch = targetCalEventId;
+              if (scope === 'series') {
+                try {
+                  const getRes = await calendarApi.events.get({
+                    calendarId: activeCalId,
+                    eventId: targetCalEventId,
+                  });
+                  if (getRes.data.recurringEventId) {
+                    eventToPatch = getRes.data.recurringEventId;
+                  }
+                } catch {
+                  // stick with targetCalEventId
+                }
+              }
+
+              await calendarApi.events.patch({
+                calendarId: activeCalId,
+                eventId: eventToPatch,
                 requestBody: {
-                  due: `${newDate}T00:00:00.000Z`,
-                  notes: updatedNotes,
+                  start: { dateTime: startDateTime, timeZone: 'America/New_York' },
+                  end: { dateTime: endDateTime, timeZone: 'America/New_York' },
                 },
               });
-              patchedTask = true;
-              break;
+              patchedCalendar = true;
             } catch {
-              // Try next list candidate
+              for (const [cName, cId] of Object.entries(CALENDAR_MAP)) {
+                if (cId === activeCalId) continue;
+                try {
+                  await calendarApi.events.patch({
+                    calendarId: cId,
+                    eventId: targetCalEventId,
+                    requestBody: {
+                      start: { dateTime: startDateTime, timeZone: 'America/New_York' },
+                      end: { dateTime: endDateTime, timeZone: 'America/New_York' },
+                    },
+                  });
+                  patchedCalendar = true;
+                  targetCalendarName = cName as CalendarName;
+                  activeCalId = cId;
+                  break;
+                } catch {
+                  // Ignore and continue
+                }
+              }
             }
-          }
-        } else if (cleanSearchTitle) {
-          // If no targetGoogleTaskId, search tasklists by clean title
-          for (const listId of Object.values(TASKLIST_MAP)) {
+          } else if (createTimeblock === true) {
+            // Create brand new Google Calendar timeblock when requested
             try {
-              const listRes = await tasksApi.tasks.list({
-                tasklist: listId,
-                showCompleted: false,
-                maxResults: 50,
-              });
-              const match = (listRes.data.items || []).find((t) => {
-                if (!t.title) return false;
-                const ct = cleanTitle(t.title);
-                return ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)));
+              const cleanDisplay = itemTitle.replace(/^(?:[🎓☑️📚📝⏰]\s*)*\[Task\]\s*/i, '').trim();
+              const calSummary =
+                targetCalendarName === 'School'
+                  ? `🎓 [Task] ${cleanDisplay}`
+                  : `🎓 [Task] ${cleanDisplay}`;
+
+              const insertRes = await calendarApi.events.insert({
+                calendarId: activeCalId,
+                requestBody: {
+                  summary: calSummary,
+                  description: currentNotes || '',
+                  start: { dateTime: startDateTime, timeZone: 'America/New_York' },
+                  end: { dateTime: endDateTime, timeZone: 'America/New_York' },
+                },
               });
 
-              if (match && match.id) {
+              if (insertRes.data.id) {
+                targetCalEventId = insertRes.data.id;
+                patchedCalendar = true;
+
+                if (sb) {
+                  await sb.from('tasks').insert({
+                    id: crypto.randomUUID(),
+                    title: calSummary,
+                    type: 'Event',
+                    calendar_name: targetCalendarName,
+                    due_date: newDate,
+                    due_time: formatted12h,
+                    duration_mins: finalDuration,
+                    is_completed: false,
+                    is_scheduled: true,
+                    calendar_event_id: targetCalEventId,
+                    google_task_id: targetGoogleTaskId,
+                    notes: currentNotes || '',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  });
+                }
+              }
+            } catch (calInsertErr) {
+              console.error('Failed to create new calendar timeblock in reschedule:', calInsertErr);
+            }
+          }
+        } catch (authErr) {
+          console.warn('Calendar service account error:', authErr);
+        }
+      })(),
+
+      // 3. Google Tasks Patch
+      (async () => {
+        if (!tasksApi || !hasCredentials) return;
+        try {
+          const targetTaskListId = TASKLIST_MAP[targetCalendarName] || TASKLIST_MAP['Kevin Nguyen'];
+          let updatedNotes = currentNotes;
+          const schedTag = `⏰ Scheduled: ${formatted12h} (${finalDuration}m)`;
+          if (updatedNotes.includes('⏰ Scheduled:')) {
+            updatedNotes = updatedNotes.replace(/⏰ Scheduled:[^\n]+/g, schedTag);
+          } else if (updatedNotes) {
+            updatedNotes = `${schedTag}\n\n${updatedNotes}`;
+          } else {
+            updatedNotes = schedTag;
+          }
+
+          if (targetGoogleTaskId) {
+            const listCandidates = [
+              targetTaskListId,
+              ...Object.values(TASKLIST_MAP).filter((l) => l !== targetTaskListId),
+            ];
+
+            for (const listId of listCandidates) {
+              try {
+                await tasksApi.tasks.patch({
+                  tasklist: listId,
+                  task: targetGoogleTaskId,
+                  requestBody: {
+                    due: `${newDate}T00:00:00.000Z`,
+                    notes: updatedNotes,
+                  },
+                });
+                patchedTask = true;
+                break;
+              } catch {
+                // Try next list candidate
+              }
+            }
+          } else if (cleanSearchTitle) {
+            const listResponses = await Promise.all(
+              Object.values(TASKLIST_MAP).map(async (listId) => {
+                try {
+                  const res = await tasksApi.tasks.list({
+                    tasklist: listId,
+                    showCompleted: true,
+                    showHidden: true,
+                    maxResults: 100,
+                  });
+                  return { listId, items: res.data.items || [] };
+                } catch {
+                  return { listId, items: [] };
+                }
+              })
+            );
+
+            for (const { listId, items } of listResponses) {
+              const match = items.find((t) => t.title && titlesMatch(t.title, itemTitle));
+              if (match?.id) {
                 targetGoogleTaskId = match.id;
                 await tasksApi.tasks.patch({
                   tasklist: listId,
@@ -427,117 +340,88 @@ export async function POST(req: NextRequest) {
                 patchedTask = true;
                 break;
               }
-            } catch {
-              // Ignore
             }
           }
+        } catch (gtErr) {
+          console.warn('Google Tasks patch warning:', gtErr);
         }
-      } catch (gtErr) {
-        console.warn('Google Tasks patch warning:', gtErr);
-      }
-    }
+      })(),
+    ]);
 
-    // 4. Update Supabase 'tasks' table for ALL paired records (both Task and Event rows!)
+    // 4 & 5. Update Supabase 'tasks' and 'school_items' in parallel using in-memory IDs
     let updatedTaskRecord: TaskItem | null = null;
     if (sb) {
       const nowIso = new Date().toISOString();
       const idsToUpdate = new Set<string>();
 
       if (resolvedTask?.id) idsToUpdate.add(resolvedTask.id);
+      if (taskId) idsToUpdate.add(taskId);
 
-      // Find all tasks matching targetCalEventId
-      if (targetCalEventId) {
-        const { data: calMatches } = await sb.from('tasks').select('id').eq('calendar_event_id', targetCalEventId);
-        (calMatches || []).forEach((m) => idsToUpdate.add(m.id));
-      }
-
-      // Find all tasks matching targetGoogleTaskId
-      if (targetGoogleTaskId) {
-        const { data: gMatches } = await sb.from('tasks').select('id').eq('google_task_id', targetGoogleTaskId);
-        (gMatches || []).forEach((m) => idsToUpdate.add(m.id));
-      }
-
-      // Find all tasks matching clean title
-      if (cleanSearchTitle) {
-        const { data: allTasks } = await sb.from('tasks').select('id, title');
-        (allTasks || []).forEach((t) => {
-          if (t.title) {
-            const ct = cleanTitle(t.title);
-            if (ct === cleanSearchTitle || (ct.length > 5 && (ct.includes(cleanSearchTitle) || cleanSearchTitle.includes(ct)))) {
-              idsToUpdate.add(t.id);
-            }
-          }
-        });
-      }
-
-      if (idsToUpdate.size > 0) {
-        const updatePayload: Record<string, unknown> = {
-          due_date: newDate,
-          due_time: formatted12h,
-          duration_mins: finalDuration,
-          is_completed: false, // moving/rescheduling resets completed status if it was completed
-          updated_at: nowIso,
-        };
-
-        if (targetCalEventId) {
-          updatePayload.calendar_event_id = targetCalEventId;
-          updatePayload.is_scheduled = true;
+      for (const t of allDbTasks) {
+        if (targetCalEventId && t.calendar_event_id === targetCalEventId) {
+          idsToUpdate.add(t.id);
         }
-        if (targetGoogleTaskId) updatePayload.google_task_id = targetGoogleTaskId;
-
-        const { data: updatedList } = await sb
-          .from('tasks')
-          .update(updatePayload)
-          .in('id', Array.from(idsToUpdate))
-          .select();
-
-        if (updatedList && updatedList.length > 0) {
-          updatedTaskRecord = (updatedList.find((u) => u.type === 'Task') || updatedList[0]) as TaskItem;
+        if (targetGoogleTaskId && t.google_task_id === targetGoogleTaskId) {
+          idsToUpdate.add(t.id);
+        }
+        if (cleanSearchTitle && t.title && titlesMatch(t.title, itemTitle)) {
+          idsToUpdate.add(t.id);
         }
       }
 
-      // 5. Update Supabase 'school_items' table if applicable
-      if (schoolUid) {
-        await sb
-          .from('school_items')
-          .update({
-            is_scheduled: true,
-            scheduled_date: newDate,
-            scheduled_time: formatted12h,
+      const matchedSchoolUids = schoolUid
+        ? [schoolUid]
+        : cleanSearchTitle
+          ? allSchoolRows.filter((s) => titlesMatch(s.title, itemTitle)).map((s) => s.uid)
+          : [];
+
+      await Promise.all([
+        (async () => {
+          if (idsToUpdate.size === 0) return;
+          const updatePayload: Record<string, unknown> = {
+            due_date: newDate,
+            due_time: formatted12h,
             duration_mins: finalDuration,
-            target_calendar: targetCalendarName,
             is_completed: false,
             updated_at: nowIso,
-          })
-          .eq('uid', schoolUid);
-        patchedSchool = true;
-      } else if (cleanSearchTitle) {
-        const { data: schoolRows } = await sb.from('school_items').select('uid, title');
-        if (schoolRows && schoolRows.length > 0) {
-          const matchedUids = schoolRows
-            .filter((s) => {
-              const cs = cleanTitle(s.title);
-              return cs === cleanSearchTitle || (cs.length > 5 && (cs.includes(cleanSearchTitle) || cleanSearchTitle.includes(cs)));
-            })
-            .map((s) => s.uid);
+          };
 
-          if (matchedUids.length > 0) {
-            await sb
-              .from('school_items')
-              .update({
-                is_scheduled: true,
-                scheduled_date: newDate,
-                scheduled_time: formatted12h,
-                duration_mins: finalDuration,
-                target_calendar: targetCalendarName,
-                is_completed: false,
-                updated_at: nowIso,
-              })
-              .in('uid', matchedUids);
-            patchedSchool = true;
+          if (targetCalEventId) {
+            updatePayload.calendar_event_id = targetCalEventId;
+            updatePayload.is_scheduled = true;
           }
-        }
-      }
+          if (targetGoogleTaskId) {
+            updatePayload.google_task_id = targetGoogleTaskId;
+          }
+
+          const { data: updatedList } = await sb
+            .from('tasks')
+            .update(updatePayload)
+            .in('id', Array.from(idsToUpdate))
+            .select();
+
+          if (updatedList && updatedList.length > 0) {
+            updatedTaskRecord = (updatedList.find((u) => u.type === 'Task') || updatedList[0]) as TaskItem;
+          }
+        })(),
+
+        (async () => {
+          if (matchedSchoolUids.length === 0) return;
+          await sb
+            .from('school_items')
+            .update({
+              is_scheduled: true,
+              scheduled_date: newDate,
+              scheduled_time: formatted12h,
+              duration_mins: finalDuration,
+              target_calendar: targetCalendarName,
+              is_completed: false,
+              updated_at: nowIso,
+            })
+            .in('uid', matchedSchoolUids);
+          patchedSchool = true;
+        })(),
+      ]);
     }
 
     return NextResponse.json<RescheduleResponse>({

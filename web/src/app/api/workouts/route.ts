@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { getTimezoneOffsetStr } from '@/lib/date-utils';
 import {
   WorkoutLogEntry,
   MuscleRecoveryStatus,
@@ -11,34 +12,47 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+const muscleGroupCache = new Map<string, string>();
+
 export function resolveMuscleGroup(exerciseName: string): string {
-  const exe = exerciseName.toLowerCase();
-  if (/knee raise|ab |crunch|woodchopper|twist|plank|leg raise|sit up/.test(exe)) return 'Abs/Core';
-  if (/squat|leg press|lunge|quad|leg extension/.test(exe)) {
-    if (/tricep/.test(exe)) return 'Triceps';
-    return 'Quads';
+  const exe = exerciseName.toLowerCase().trim();
+  const cached = muscleGroupCache.get(exe);
+  if (cached) return cached;
+
+  let group = 'Full Body';
+  if (/knee raise|ab |crunch|woodchopper|twist|plank|leg raise|sit up/.test(exe)) {
+    group = 'Abs/Core';
+  } else if (/squat|leg press|lunge|quad|leg extension/.test(exe)) {
+    group = /tricep/.test(exe) ? 'Triceps' : 'Quads';
+  } else if (/rdl|romanian|leg curl|hamstring|glute|hip thrust/.test(exe)) {
+    group = /bicep|hammer/.test(exe) ? 'Biceps' : 'Hamstrings & Glutes';
+  } else if (/calf|calves/.test(exe)) {
+    group = 'Calves';
+  } else if (/bench|push up|chest fly|incline press|cable fly|pec deck|chest press/.test(exe)) {
+    group = 'Chest';
+  } else if (/pull up|chin up|row|lat pull|pulldown|face pull|shrug|deadlift|lat pulldown/.test(exe)) {
+    group = 'Back';
+  } else if (/shoulder press|overhead press|lateral raise|front raise|arnold press|upright row|military press/.test(exe)) {
+    group = 'Shoulders';
+  } else if (/bicep|curl|preacher|hammer/.test(exe)) {
+    group = 'Biceps';
+  } else if (/tricep|skull crusher|pushdown|dip/.test(exe)) {
+    group = 'Triceps';
   }
-  if (/rdl|romanian|leg curl|hamstring|glute|hip thrust/.test(exe)) {
-    if (/bicep|hammer/.test(exe)) return 'Biceps';
-    return 'Hamstrings & Glutes';
-  }
-  if (/calf|calves/.test(exe)) return 'Calves';
-  if (/bench|push up|chest fly|incline press|cable fly|pec deck|chest press/.test(exe)) return 'Chest';
-  if (/pull up|chin up|row|lat pull|pulldown|face pull|shrug|deadlift|lat pulldown/.test(exe)) return 'Back';
-  if (/shoulder press|overhead press|lateral raise|front raise|arnold press|upright row|military press/.test(exe)) return 'Shoulders';
-  if (/bicep|curl|preacher|hammer/.test(exe)) return 'Biceps';
-  if (/tricep|skull crusher|pushdown|dip/.test(exe)) return 'Triceps';
-  return 'Full Body';
+
+  muscleGroupCache.set(exe, group);
+  return group;
 }
 
 export function calculateEstimated1RM(weight: number, reps: number): number {
   if (weight <= 0 || reps <= 0) return 0;
   if (reps === 1) return weight;
-  // Epley formula: w * (1 + r / 30)
-  return Math.round((weight * (1 + reps / 30.0)) * 10) / 10;
+  return Math.round(weight * (1 + reps / 30.0) * 10) / 10;
 }
 
-export async function GET(req: NextRequest) {
+const CARDIO_REGEX = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/i;
+
+export async function GET() {
   try {
     let parsedLogs: WorkoutLogEntry[] = [];
     const sb = supabaseAdmin || supabase;
@@ -56,8 +70,8 @@ export async function GET(req: NextRequest) {
             const exercise = String(r.exercise || '').trim();
             const weight = parseFloat(String(r.weight_lbs || '0')) || 0;
             const reps = parseInt(String(r.reps || '0'), 10) || 0;
-            const isCardio = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/.test(exercise.toLowerCase());
-            const effectiveVol = isCardio ? 0 : (weight === 0 ? 175.2 * reps : weight * reps);
+            const isCardio = CARDIO_REGEX.test(exercise);
+            const effectiveVol = isCardio ? 0 : weight === 0 ? 175.2 * reps : weight * reps;
             const muscleGroup = resolveMuscleGroup(exercise);
 
             return {
@@ -83,7 +97,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 2. Fallback to Google Sheets (safety net during migration)
+    // 2. Fallback to Google Sheets
     if (parsedLogs.length === 0) {
       try {
         const sheets = getGoogleSheetsClient();
@@ -122,8 +136,8 @@ export async function GET(req: NextRequest) {
             const dur = parseFloat(String(r[durIdx] || '0')) || 0;
             const dist = parseFloat(String(r[distIdx] || '0')) || 0;
 
-            const isCardio = /cardio|treadmill|run|walk|bike|cycle|elliptical|rower/.test(exercise.toLowerCase());
-            const effectiveVol = isCardio ? 0 : (weight === 0 ? 175.2 * reps : weight * reps);
+            const isCardio = CARDIO_REGEX.test(exercise);
+            const effectiveVol = isCardio ? 0 : weight === 0 ? 175.2 * reps : weight * reps;
             const muscleGroup = resolveMuscleGroup(exercise);
 
             parsedLogs.push({
@@ -162,7 +176,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Sort descending by date, then setNumber
+    // Sort descending by date, then ascending by setNumber
     parsedLogs.sort((a, b) => {
       const cmp = b.date.localeCompare(a.date);
       if (cmp !== 0) return cmp;
@@ -171,12 +185,42 @@ export async function GET(req: NextRequest) {
 
     const now = new Date();
 
-    // 1. Group sessions by Date
+    // Single-pass grouping by session date, muscle group, and PRs
     const sessionMap = new Map<string, WorkoutLogEntry[]>();
+    const muscleMap = new Map<string, WorkoutLogEntry[]>();
+    const prMap = new Map<string, ExercisePR>();
+
     for (const log of parsedLogs) {
-      const arr = sessionMap.get(log.date) || [];
-      arr.push(log);
-      sessionMap.set(log.date, arr);
+      // Session grouping (insertion order is already descending by date)
+      const sArr = sessionMap.get(log.date) || [];
+      sArr.push(log);
+      sessionMap.set(log.date, sArr);
+
+      // Muscle grouping
+      const mArr = muscleMap.get(log.muscleGroup) || [];
+      mArr.push(log);
+      muscleMap.set(log.muscleGroup, mArr);
+
+      // Personal Records (support both weighted 1RM and bodyweight max reps)
+      if (log.weightLbs > 0 || log.reps > 0) {
+        const currentPR = prMap.get(log.exercise);
+        const isBetterWeighted = log.estimated1RM > (currentPR?.bestEstimated1RM || 0);
+        const isBetterBodyweight =
+          log.weightLbs === 0 &&
+          currentPR?.maxWeightLbs === 0 &&
+          log.reps > currentPR.maxRepsAtMaxWeight;
+
+        if (!currentPR || isBetterWeighted || isBetterBodyweight) {
+          prMap.set(log.exercise, {
+            exercise: log.exercise,
+            maxWeightLbs: log.weightLbs,
+            maxRepsAtMaxWeight: log.reps,
+            bestEstimated1RM: log.estimated1RM,
+            dateAchieved: log.date,
+            muscleGroup: log.muscleGroup,
+          });
+        }
+      }
     }
 
     const totalWorkouts = sessionMap.size;
@@ -184,10 +228,7 @@ export async function GET(req: NextRequest) {
     let totalDurationMins = 0;
     const recentSessions: WorkoutSessionSummary[] = [];
 
-    const sortedDates = Array.from(sessionMap.keys()).sort((a, b) => b.localeCompare(a));
-
-    for (const d of sortedDates) {
-      const sets = sessionMap.get(d) || [];
+    for (const [d, sets] of sessionMap.entries()) {
       const volume = sets.reduce((sum, s) => sum + s.effectiveVolume, 0);
       totalVolumeLbs += volume;
 
@@ -210,7 +251,7 @@ export async function GET(req: NextRequest) {
 
     const averageDurationMins = totalWorkouts > 0 ? Math.round(totalDurationMins / totalWorkouts) : 0;
 
-    // 2. Muscle Recovery Matrix
+    // 2. Muscle Recovery Matrix (O(1) lookup from muscleMap)
     const trackedMuscles = [
       'Chest',
       'Back',
@@ -224,7 +265,7 @@ export async function GET(req: NextRequest) {
     ];
 
     const muscleRecovery: MuscleRecoveryStatus[] = trackedMuscles.map((muscle) => {
-      const setsOfMuscle = parsedLogs.filter((l) => l.muscleGroup === muscle);
+      const setsOfMuscle = muscleMap.get(muscle) || [];
       if (setsOfMuscle.length === 0) {
         return {
           muscleGroup: muscle,
@@ -235,10 +276,11 @@ export async function GET(req: NextRequest) {
         };
       }
 
-      const mostRecentSet = setsOfMuscle[0]; // parsedLogs is sorted descending by date
+      const mostRecentSet = setsOfMuscle[0];
       let hoursElapsed: number | null = null;
       try {
-        const sDate = new Date(mostRecentSet.date + 'T12:00:00');
+        const tzOffset = getTimezoneOffsetStr(mostRecentSet.date);
+        const sDate = new Date(`${mostRecentSet.date}T12:00:00${tzOffset}`);
         const diffMs = now.getTime() - sDate.getTime();
         hoursElapsed = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
       } catch {
@@ -256,13 +298,15 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      const recentExercises = Array.from(
-        new Set(
-          setsOfMuscle
-            .filter((s) => s.date === mostRecentSet.date)
-            .map((s) => s.exercise)
-        )
-      );
+      const recentExercises: string[] = [];
+      const seenExe = new Set<string>();
+      for (const s of setsOfMuscle) {
+        if (s.date !== mostRecentSet.date) break;
+        if (!seenExe.has(s.exercise)) {
+          seenExe.add(s.exercise);
+          recentExercises.push(s.exercise);
+        }
+      }
 
       return {
         muscleGroup: muscle,
@@ -272,24 +316,6 @@ export async function GET(req: NextRequest) {
         lastExercises: recentExercises,
       };
     });
-
-    // 3. Personal Records (1RM) per Exercise
-    const prMap = new Map<string, ExercisePR>();
-
-    for (const log of parsedLogs) {
-      if (log.weightLbs <= 0 && log.reps <= 0) continue;
-      const currentPR = prMap.get(log.exercise);
-      if (!currentPR || log.estimated1RM > currentPR.bestEstimated1RM) {
-        prMap.set(log.exercise, {
-          exercise: log.exercise,
-          maxWeightLbs: log.weightLbs,
-          maxRepsAtMaxWeight: log.reps,
-          bestEstimated1RM: log.estimated1RM,
-          dateAchieved: log.date,
-          muscleGroup: log.muscleGroup,
-        });
-      }
-    }
 
     const personalRecords = Array.from(prMap.values()).sort(
       (a, b) => b.bestEstimated1RM - a.bestEstimated1RM
@@ -308,6 +334,19 @@ export async function GET(req: NextRequest) {
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
     console.error('Error in workouts GET:', errorMsg);
-    return NextResponse.json({ error: errorMsg }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        totalWorkouts: 0,
+        totalVolumeLbs: 0,
+        averageDurationMins: 0,
+        recentSessions: [],
+        muscleRecovery: [],
+        personalRecords: [],
+        recentLogs: [],
+        error: errorMsg,
+      },
+      { status: 500 }
+    );
   }
 }

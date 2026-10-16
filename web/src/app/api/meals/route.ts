@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { getTodayDateStr } from '@/lib/date-utils';
 import {
   CostcoGroceryItem,
   MealPlanWeek,
@@ -90,89 +91,315 @@ const DEFAULT_RECIPES: HighProteinRecipe[] = [
   },
 ];
 
-const DEFAULT_WEEKLY_PLAN: MealPlanWeek = {
-  weekNumber: 1,
-  theme: 'High-Protein Muscle Hypertrophy & Clean Bulking',
-  dailyAverageCalories: 2645,
-  dailyAverageProtein: 185,
-  schedule: [
-    {
-      dayName: 'Monday',
-      breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
-      lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
-      dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Kirkland Greek Yogurt (1 cup) + Mixed Berries',
-      proteinGrams: 188,
-      calories: 2620,
-    },
-    {
-      dayName: 'Tuesday',
-      breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
-      lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
-      dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Fairlife Protein Shake + Almonds',
-      proteinGrams: 192,
-      calories: 2650,
-    },
-    {
-      dayName: 'Wednesday',
-      breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
-      lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
-      dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Kirkland Greek Yogurt + Blueberries',
-      proteinGrams: 186,
-      calories: 2590,
-    },
-    {
-      dayName: 'Thursday',
-      breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
-      lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
-      dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Fairlife Protein Shake + Banana',
-      proteinGrams: 190,
-      calories: 2680,
-    },
-    {
-      dayName: 'Friday',
-      breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
-      lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
-      dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
-      snack: 'Kirkland Greek Yogurt Bowl',
-      proteinGrams: 184,
-      calories: 2610,
-    },
-    {
-      dayName: 'Saturday',
-      breakfast: 'Scrambled Fresh Eggs (4) + Sourdough Toast + Avocado',
-      lunch: 'Costco Rotisserie Chicken Breast Salad & Quinoa',
-      dinner: 'Lean Ground Beef Tacos with High-Fiber Tortillas',
-      snack: 'Protein Shake + Mixed Berries',
-      proteinGrams: 178,
-      calories: 2750,
-    },
-    {
-      dayName: 'Sunday (Prep Day)',
-      breakfast: 'Protein French Toast + Fresh Fruit',
-      lunch: 'Grilled Chicken Wrap + Veggies',
-      dinner: 'Master Meal Prep Batch Tasting & Macro Balance',
-      snack: 'Kirkland Greek Yogurt Parfait',
-      proteinGrams: 180,
-      calories: 2600,
-    },
-  ],
-};
+const WEEKLY_PLANS: MealPlanWeek[] = [
+  {
+    weekNumber: 1,
+    theme: 'High-Protein Muscle Hypertrophy & Clean Bulking (Trip 1)',
+    dailyAverageCalories: 2645,
+    dailyAverageProtein: 185,
+    schedule: [
+      {
+        dayName: 'Monday',
+        breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
+        lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
+        dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
+        snack: 'Kirkland Greek Yogurt (1 cup) + Mixed Berries',
+        proteinGrams: 188,
+        calories: 2620,
+      },
+      {
+        dayName: 'Tuesday',
+        breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
+        lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
+        dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
+        snack: 'Fairlife Protein Shake + Almonds',
+        proteinGrams: 192,
+        calories: 2650,
+      },
+      {
+        dayName: 'Wednesday',
+        breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
+        lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
+        dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
+        snack: 'Kirkland Greek Yogurt + Blueberries',
+        proteinGrams: 186,
+        calories: 2590,
+      },
+      {
+        dayName: 'Thursday',
+        breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
+        lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
+        dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
+        snack: 'Fairlife Protein Shake + Banana',
+        proteinGrams: 190,
+        calories: 2680,
+      },
+      {
+        dayName: 'Friday',
+        breakfast: 'Fairlife Overnight Proats + 2 Fresh Boiled Eggs',
+        lunch: 'Kirkland Lean Beef & Jasmine Rice Power Bowl',
+        dinner: 'Herb-Marinated Grilled Chicken & Sweet Potatoes',
+        snack: 'Kirkland Greek Yogurt Bowl',
+        proteinGrams: 184,
+        calories: 2610,
+      },
+      {
+        dayName: 'Saturday',
+        breakfast: 'Scrambled Fresh Eggs (4) + Sourdough Toast + Avocado',
+        lunch: 'Costco Rotisserie Chicken Breast Salad & Quinoa',
+        dinner: 'Lean Ground Beef Tacos with High-Fiber Tortillas',
+        snack: 'Protein Shake + Mixed Berries',
+        proteinGrams: 178,
+        calories: 2750,
+      },
+      {
+        dayName: 'Sunday (Prep Day)',
+        breakfast: 'Protein French Toast + Fresh Fruit',
+        lunch: 'Grilled Chicken Wrap + Veggies',
+        dinner: 'Master Meal Prep Batch Tasting & Macro Balance',
+        snack: 'Kirkland Greek Yogurt Parfait',
+        proteinGrams: 180,
+        calories: 2600,
+      },
+    ],
+  },
+  {
+    weekNumber: 2,
+    theme: 'Mediterranean Lean Mass & Endurance Rotation (Trip 1)',
+    dailyAverageCalories: 2610,
+    dailyAverageProtein: 188,
+    schedule: [
+      {
+        dayName: 'Monday',
+        breakfast: 'Greek Yogurt Power Parfait + Oats + Chia Seeds',
+        lunch: 'Herb-Marinated Kirkland Chicken & Quinoa Bowl',
+        dinner: 'Kirkland Lean Beef Stir-Fry & Jasmine Rice',
+        snack: 'Fairlife Chocolate Protein Shake + Apple',
+        proteinGrams: 190,
+        calories: 2610,
+      },
+      {
+        dayName: 'Tuesday',
+        breakfast: 'Scrambled Eggs (3) + Egg Whites + Spinach Wrap',
+        lunch: 'Herb-Marinated Kirkland Chicken & Quinoa Bowl',
+        dinner: 'Kirkland Lean Beef Stir-Fry & Jasmine Rice',
+        snack: 'Kirkland Greek Yogurt + Mixed Berries',
+        proteinGrams: 186,
+        calories: 2580,
+      },
+      {
+        dayName: 'Wednesday',
+        breakfast: 'Greek Yogurt Power Parfait + Oats + Chia Seeds',
+        lunch: 'Herb-Marinated Kirkland Chicken & Quinoa Bowl',
+        dinner: 'Kirkland Lean Beef Stir-Fry & Jasmine Rice',
+        snack: 'Fairlife Protein Shake + Handful Walnuts',
+        proteinGrams: 192,
+        calories: 2640,
+      },
+      {
+        dayName: 'Thursday',
+        breakfast: 'Scrambled Eggs (3) + Egg Whites + Spinach Wrap',
+        lunch: 'Herb-Marinated Kirkland Chicken & Quinoa Bowl',
+        dinner: 'Kirkland Lean Beef Stir-Fry & Jasmine Rice',
+        snack: 'Kirkland Greek Yogurt + Honey & Berries',
+        proteinGrams: 185,
+        calories: 2595,
+      },
+      {
+        dayName: 'Friday',
+        breakfast: 'Fairlife Overnight Proats + Blueberries',
+        lunch: 'Herb-Marinated Kirkland Chicken & Quinoa Bowl',
+        dinner: 'Kirkland Lean Beef Stir-Fry & Jasmine Rice',
+        snack: 'Fairlife Protein Shake + Banana',
+        proteinGrams: 189,
+        calories: 2630,
+      },
+      {
+        dayName: 'Saturday',
+        breakfast: '4-Egg Omelet with Peppers & Sourdough Toast',
+        lunch: 'Kirkland Tuna / Chicken Salad Protein Melt',
+        dinner: 'Grilled Sirloin / Lean Beef & Roasted Sweet Potatoes',
+        snack: 'Greek Yogurt + Dark Chocolate Chips',
+        proteinGrams: 194,
+        calories: 2690,
+      },
+      {
+        dayName: 'Sunday (Prep Day)',
+        breakfast: 'Fairlife Protein Pancakes + Berries',
+        lunch: 'Rotisserie Chicken Caesar Salad Bowl',
+        dinner: 'Trip 2 Inventory Check & Meal Prep Batch',
+        snack: 'Fairlife Protein Shake',
+        proteinGrams: 182,
+        calories: 2540,
+      },
+    ],
+  },
+  {
+    weekNumber: 3,
+    theme: 'Metabolic Performance & Mid-Month Restock (Trip 2)',
+    dailyAverageCalories: 2660,
+    dailyAverageProtein: 190,
+    schedule: [
+      {
+        dayName: 'Monday',
+        breakfast: 'Fairlife Overnight Proats + 2 Hard-Boiled Eggs',
+        lunch: 'Chipotle-Style Kirkland Chicken Burrito Bowl',
+        dinner: 'Lean Ground Beef & Roasted Sweet Potato Mash',
+        snack: 'Kirkland Greek Yogurt + Organic Blueberries',
+        proteinGrams: 192,
+        calories: 2670,
+      },
+      {
+        dayName: 'Tuesday',
+        breakfast: 'Fairlife Overnight Proats + 2 Hard-Boiled Eggs',
+        lunch: 'Chipotle-Style Kirkland Chicken Burrito Bowl',
+        dinner: 'Lean Ground Beef & Roasted Sweet Potato Mash',
+        snack: 'Fairlife Shake + Rice Cakes & PB',
+        proteinGrams: 194,
+        calories: 2690,
+      },
+      {
+        dayName: 'Wednesday',
+        breakfast: 'Fairlife Overnight Proats + 2 Hard-Boiled Eggs',
+        lunch: 'Chipotle-Style Kirkland Chicken Burrito Bowl',
+        dinner: 'Lean Ground Beef & Roasted Sweet Potato Mash',
+        snack: 'Kirkland Greek Yogurt + Chia Seeds',
+        proteinGrams: 188,
+        calories: 2620,
+      },
+      {
+        dayName: 'Thursday',
+        breakfast: 'Fairlife Overnight Proats + 2 Hard-Boiled Eggs',
+        lunch: 'Chipotle-Style Kirkland Chicken Burrito Bowl',
+        dinner: 'Lean Ground Beef & Roasted Sweet Potato Mash',
+        snack: 'Fairlife Shake + Banana',
+        proteinGrams: 191,
+        calories: 2660,
+      },
+      {
+        dayName: 'Friday',
+        breakfast: 'Fairlife Overnight Proats + 2 Hard-Boiled Eggs',
+        lunch: 'Chipotle-Style Kirkland Chicken Burrito Bowl',
+        dinner: 'Lean Ground Beef & Roasted Sweet Potato Mash',
+        snack: 'Kirkland Greek Yogurt Parfait',
+        proteinGrams: 187,
+        calories: 2630,
+      },
+      {
+        dayName: 'Saturday',
+        breakfast: 'Steak & Eggs Breakfast Skillet + Potatoes',
+        lunch: 'Grilled Chicken Pita Wrap + Greek Salad',
+        dinner: 'High-Protein Bolognese over Chickpea Pasta',
+        snack: 'Fairlife Protein Shake',
+        proteinGrams: 195,
+        calories: 2740,
+      },
+      {
+        dayName: 'Sunday (Prep Day)',
+        breakfast: 'Scrambled Eggs (4) + Oatmeal & Berries',
+        lunch: 'Lean Beef & Broccoli Rice Bowl',
+        dinner: 'Week 4 Batch Prep & Macro Portioning',
+        snack: 'Kirkland Greek Yogurt Bowl',
+        proteinGrams: 184,
+        calories: 2610,
+      },
+    ],
+  },
+  {
+    weekNumber: 4,
+    theme: 'Peak Conditioning & Lean Recovery Rotation (Trip 2)',
+    dailyAverageCalories: 2590,
+    dailyAverageProtein: 187,
+    schedule: [
+      {
+        dayName: 'Monday',
+        breakfast: 'High-Protein Egg White & Whole Egg Frittata + Oats',
+        lunch: 'Teriyaki Glazed Kirkland Chicken & Jasmine Rice',
+        dinner: 'Korean-Style Ground Beef Bulgolgi Bowl & Broccoli',
+        snack: 'Fairlife Chocolate Shake + Berries',
+        proteinGrams: 189,
+        calories: 2600,
+      },
+      {
+        dayName: 'Tuesday',
+        breakfast: 'High-Protein Egg White & Whole Egg Frittata + Oats',
+        lunch: 'Teriyaki Glazed Kirkland Chicken & Jasmine Rice',
+        dinner: 'Korean-Style Ground Beef Bulgolgi Bowl & Broccoli',
+        snack: 'Kirkland Greek Yogurt + Almonds',
+        proteinGrams: 186,
+        calories: 2575,
+      },
+      {
+        dayName: 'Wednesday',
+        breakfast: 'High-Protein Egg White & Whole Egg Frittata + Oats',
+        lunch: 'Teriyaki Glazed Kirkland Chicken & Jasmine Rice',
+        dinner: 'Korean-Style Ground Beef Bulgolgi Bowl & Broccoli',
+        snack: 'Fairlife Chocolate Shake + Banana',
+        proteinGrams: 190,
+        calories: 2615,
+      },
+      {
+        dayName: 'Thursday',
+        breakfast: 'High-Protein Egg White & Whole Egg Frittata + Oats',
+        lunch: 'Teriyaki Glazed Kirkland Chicken & Jasmine Rice',
+        dinner: 'Korean-Style Ground Beef Bulgolgi Bowl & Broccoli',
+        snack: 'Kirkland Greek Yogurt + Blueberries',
+        proteinGrams: 185,
+        calories: 2560,
+      },
+      {
+        dayName: 'Friday',
+        breakfast: 'High-Protein Egg White & Whole Egg Frittata + Oats',
+        lunch: 'Teriyaki Glazed Kirkland Chicken & Jasmine Rice',
+        dinner: 'Korean-Style Ground Beef Bulgolgi Bowl & Broccoli',
+        snack: 'Fairlife Shake + PB Powder',
+        proteinGrams: 191,
+        calories: 2605,
+      },
+      {
+        dayName: 'Saturday',
+        breakfast: '4 Eggs Any Style + Avocado Sourdough Toast',
+        lunch: 'Double-Protein Chicken & Rice Burrito Bowl',
+        dinner: 'Lean Beef Burgers (Lettuce/Brioche) + Sweet Potato Fries',
+        snack: 'Greek Yogurt Berry Bowl',
+        proteinGrams: 188,
+        calories: 2650,
+      },
+      {
+        dayName: 'Sunday (Prep Day)',
+        breakfast: 'Fairlife Overnight Proats + Fresh Fruit',
+        lunch: 'Pantry Clean-Out Stir Fry (Chicken/Beef & Veggies)',
+        dinner: 'Next Month Costco Trip 1 Restock Planning & Prep',
+        snack: 'Fairlife Protein Shake',
+        proteinGrams: 182,
+        calories: 2530,
+      },
+    ],
+  },
+];
 
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const requestedTrip = url.searchParams.get('trip') || 'Trip 1';
+    const tripParam = url.searchParams.get('trip');
+    const weekParam = url.searchParams.get('week');
 
-    const now = new Date();
-    const dayOfMonth = now.getDate();
-    const activeTrip: 'Trip 1' | 'Trip 2' = requestedTrip.includes('2') || dayOfMonth > 14 ? 'Trip 2' : 'Trip 1';
-    const activeWeek = Math.min(4, Math.max(1, Math.ceil(dayOfMonth / 7)));
+    const todayStr = getTodayDateStr();
+    const dayOfMonth = parseInt(todayStr.split('-')[2] || '1', 10);
 
-    let groceryItems: CostcoGroceryItem[] = [];
+    const activeTrip: 'Trip 1' | 'Trip 2' = tripParam
+      ? tripParam.includes('2')
+        ? 'Trip 2'
+        : 'Trip 1'
+      : dayOfMonth > 14
+        ? 'Trip 2'
+        : 'Trip 1';
+
+    const activeWeek = weekParam
+      ? Math.min(4, Math.max(1, parseInt(weekParam, 10) || 1))
+      : Math.min(4, Math.max(1, Math.ceil(dayOfMonth / 7)));
+
+    const groceryItems: CostcoGroceryItem[] = [];
     const deptSet = new Set<string>();
 
     const sb = supabaseAdmin || supabase;
@@ -255,36 +482,59 @@ export async function GET(req: NextRequest) {
       departments.push('Meat & Deli', 'Dairy & Eggs', 'Produce & Frozen', 'Bakery & Pantry');
     }
 
+    const selectedPlan = WEEKLY_PLANS.find((w) => w.weekNumber === activeWeek) || WEEKLY_PLANS[0];
+
     return NextResponse.json<MealsResponseData>({
       success: true,
       activeTrip,
       activeWeek,
       groceryItems,
       departments,
-      weeklyPlan: {
-        ...DEFAULT_WEEKLY_PLAN,
-        weekNumber: activeWeek,
-      },
+      weeklyPlan: selectedPlan,
+      allWeeks: WEEKLY_PLANS,
       recipes: DEFAULT_RECIPES,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
     console.error('Error fetching meal prep data:', errorMsg);
-    return NextResponse.json({ success: false, error: errorMsg }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        activeTrip: 'Trip 1',
+        activeWeek: 1,
+        groceryItems: [],
+        departments: [],
+        weeklyPlan: WEEKLY_PLANS[0],
+        recipes: DEFAULT_RECIPES,
+        error: errorMsg,
+      },
+      { status: 500 }
+    );
   }
 }
 
-// POST endpoint to toggle checklist status
+// POST endpoint to toggle checklist status or clear all checked items
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, isChecked } = body;
+    const { id, isChecked, clearAll } = body;
+
+    const sb = supabaseAdmin || supabase;
+
+    if (clearAll === true) {
+      if (sb) {
+        await sb
+          .from('costco_meal_items')
+          .update({ is_checked: false, updated_at: new Date().toISOString() })
+          .eq('is_checked', true);
+      }
+      return NextResponse.json({ success: true, cleared: true });
+    }
 
     if (!id || typeof isChecked !== 'boolean') {
       return NextResponse.json({ error: 'Missing id or isChecked boolean' }, { status: 400 });
     }
 
-    const sb = supabaseAdmin || supabase;
     if (sb) {
       await sb
         .from('costco_meal_items')

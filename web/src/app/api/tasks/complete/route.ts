@@ -1,25 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
-
-const TASKLIST_MAP: Record<string, string> = {
-  'School': 'ZGRiT21qM2ZCbVRWOVBlMQ',
-  'Kevin Nguyen': '@default',
-  'Family': 'Um85a3gwMVZqTXN4X0M3Wg',
-  'Volunteering': 'bUtfd3ZxU0Y3RFUyM2x2dQ',
-};
-
-function cleanTitle(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/\\,/g, ',')
-    .replace(/\\/g, '')
-    .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-    .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
+import { cleanTaskTitle, titlesMatch } from '@/lib/date-utils';
+import { TASKLIST_MAP, getGoogleTasksClient } from '@/lib/google-calendar';
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,57 +25,45 @@ export async function POST(req: NextRequest) {
     let targetListId = calendar_name ? (TASKLIST_MAP[calendar_name] || null) : null;
     let taskTitle = title || '';
 
-    // 1. If no googleTaskId but taskId provided, lookup in Supabase
-    if (!targetGoogleTaskId && taskId && sb) {
-      const { data: dbTask } = await sb
-        .from('tasks')
-        .select('id, google_task_id, calendar_name, title')
-        .eq('id', taskId)
-        .maybeSingle();
+    // 1. Fetch tasks and school_items in 1 parallel round-trip
+    let allTasks: { id: string; google_task_id: string | null; calendar_name: string | null; title: string }[] = [];
+    let allSchool: { uid: string; title: string }[] = [];
 
-      if (dbTask) {
-        if (dbTask.google_task_id) targetGoogleTaskId = dbTask.google_task_id;
-        if (!targetListId && dbTask.calendar_name) targetListId = TASKLIST_MAP[dbTask.calendar_name] || null;
-        if (!taskTitle && dbTask.title) taskTitle = dbTask.title;
-      }
-    }
+    if (sb) {
+      const [tasksRes, schoolRes] = await Promise.all([
+        sb.from('tasks').select('id, google_task_id, calendar_name, title'),
+        sb.from('school_items').select('uid, title'),
+      ]);
+      allTasks = (tasksRes.data || []) as typeof allTasks;
+      allSchool = (schoolRes.data || []) as typeof allSchool;
 
-    // 2. If still no googleTaskId, lookup in Supabase by matching clean title
-    const cleanedQuery = cleanTitle(taskTitle);
-    if (!targetGoogleTaskId && sb && cleanedQuery) {
-      const { data: matchedDbTasks } = await sb
-        .from('tasks')
-        .select('id, google_task_id, calendar_name, title')
-        .not('google_task_id', 'is', null);
-
-      if (matchedDbTasks && matchedDbTasks.length > 0) {
-        const match = matchedDbTasks.find((t) => {
-          const c = cleanTitle(t.title);
-          return c === cleanedQuery || (c.length > 5 && (c.includes(cleanedQuery) || cleanedQuery.includes(c)));
-        });
-        if (match) {
-          targetGoogleTaskId = match.google_task_id;
-          if (!targetListId && match.calendar_name) targetListId = TASKLIST_MAP[match.calendar_name] || null;
+      if (taskId) {
+        const dbTask = allTasks.find((t) => t.id === taskId);
+        if (dbTask) {
+          if (!targetGoogleTaskId && dbTask.google_task_id) targetGoogleTaskId = dbTask.google_task_id;
+          if (!targetListId && dbTask.calendar_name) targetListId = TASKLIST_MAP[dbTask.calendar_name] || null;
+          if (!taskTitle && dbTask.title) taskTitle = dbTask.title;
         }
       }
     }
 
-    // 3. Setup Google Tasks API client
-    const cleanEnvVal = (val?: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
-    const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
-    const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
-    const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
+    const cleanedQuery = cleanTaskTitle(taskTitle);
 
+    if (!targetGoogleTaskId && cleanedQuery) {
+      const match = allTasks.find((t) => t.google_task_id && titlesMatch(t.title, taskTitle));
+      if (match) {
+        targetGoogleTaskId = match.google_task_id;
+        if (!targetListId && match.calendar_name) targetListId = TASKLIST_MAP[match.calendar_name] || null;
+      }
+    }
+
+    // 2. Patch Google Tasks
+    const { tasksApi, hasCredentials } = getGoogleTasksClient();
     let patched = false;
     let patchError: string | null = null;
 
-    if (clientId && clientSecret && refreshToken) {
+    if (tasksApi && hasCredentials) {
       try {
-        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
-        oauth2Client.setCredentials({ refresh_token: refreshToken });
-        const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
-
-        // 3a. Direct patch by targetGoogleTaskId
         if (targetGoogleTaskId) {
           const listCandidates = targetListId
             ? [targetListId, ...Object.values(TASKLIST_MAP).filter((l) => l !== targetListId)]
@@ -118,44 +88,42 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // 3b. Search Google Tasks across tasklists if not patched yet
         if (!patched && cleanedQuery) {
           const listOrder = targetListId
             ? [targetListId, ...Object.values(TASKLIST_MAP).filter((l) => l !== targetListId)]
             : Object.values(TASKLIST_MAP);
 
-          for (const listId of listOrder) {
-            try {
-              const listRes = await tasksApi.tasks.list({
-                tasklist: listId,
-                showCompleted: true,
-                showHidden: true,
-                maxResults: 100,
-              });
-              const items = listRes.data.items || [];
-              const found = items.find((item) => {
-                if (!item.title) return false;
-                const c = cleanTitle(item.title);
-                return c === cleanedQuery || (c.length > 5 && (c.includes(cleanedQuery) || cleanedQuery.includes(c)));
-              });
-
-              if (found && found.id) {
-                targetGoogleTaskId = found.id;
-                targetListId = listId;
-                await tasksApi.tasks.patch({
+          const listResponses = await Promise.all(
+            listOrder.map(async (listId) => {
+              try {
+                const listRes = await tasksApi.tasks.list({
                   tasklist: listId,
-                  task: found.id,
-                  requestBody: {
-                    status: completed ? 'completed' : 'needsAction',
-                    completed: completed ? new Date().toISOString() : null,
-                  },
+                  showCompleted: true,
+                  showHidden: true,
+                  maxResults: 100,
                 });
-                patched = true;
-                break;
+                return { listId, items: listRes.data.items || [] };
+              } catch {
+                return { listId, items: [] };
               }
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : String(err);
-              console.warn(`Error searching tasklist ${listId}:`, msg);
+            })
+          );
+
+          for (const { listId, items } of listResponses) {
+            const found = items.find((item) => item.title && titlesMatch(item.title, taskTitle));
+            if (found?.id) {
+              targetGoogleTaskId = found.id;
+              targetListId = listId;
+              await tasksApi.tasks.patch({
+                tasklist: listId,
+                task: found.id,
+                requestBody: {
+                  status: completed ? 'completed' : 'needsAction',
+                  completed: completed ? new Date().toISOString() : null,
+                },
+              });
+              patched = true;
+              break;
             }
           }
         }
@@ -167,69 +135,45 @@ export async function POST(req: NextRequest) {
       patchError = 'Missing Google Tasks OAuth2 credentials';
     }
 
-    // 4. Update Supabase tasks & school_items records
+    // 3. Batch-update Supabase tasks & school_items records in parallel
     if (sb) {
       const nowIso = new Date().toISOString();
+      const matchingTaskIds = new Set<string>();
+      if (taskId) matchingTaskIds.add(taskId);
 
-      if (taskId) {
-        const updateData: Record<string, unknown> = {
-          is_completed: completed,
-          updated_at: nowIso,
-        };
-        if (targetGoogleTaskId) {
-          updateData.google_task_id = targetGoogleTaskId;
+      for (const t of allTasks) {
+        if (targetGoogleTaskId && t.google_task_id === targetGoogleTaskId) {
+          matchingTaskIds.add(t.id);
+        } else if (cleanedQuery && titlesMatch(t.title, taskTitle)) {
+          matchingTaskIds.add(t.id);
         }
-        await sb.from('tasks').update(updateData).eq('id', taskId);
       }
 
-      if (targetGoogleTaskId) {
-        await sb
-          .from('tasks')
-          .update({ is_completed: completed, updated_at: nowIso })
-          .eq('google_task_id', targetGoogleTaskId);
-      }
+      const matchingSchoolUids = cleanedQuery
+        ? allSchool.filter((s) => titlesMatch(s.title, taskTitle)).map((s) => s.uid)
+        : [];
 
-      if (cleanedQuery) {
-        // Update any matching tasks in tasks table
-        const { data: allTasks } = await sb.from('tasks').select('id, title');
-        if (allTasks && allTasks.length > 0) {
-          const matchingIds = allTasks
-            .filter((t) => {
-              const c = cleanTitle(t.title);
-              return c === cleanedQuery || (c.length > 5 && (c.includes(cleanedQuery) || cleanedQuery.includes(c)));
-            })
-            .map((t) => t.id);
-
-          if (matchingIds.length > 0) {
-            const taskUpdates: Record<string, unknown> = {
-              is_completed: completed,
-              updated_at: nowIso,
-            };
-            if (targetGoogleTaskId) {
-              taskUpdates.google_task_id = targetGoogleTaskId;
-            }
-            await sb.from('tasks').update(taskUpdates).in('id', matchingIds);
+      await Promise.all([
+        (async () => {
+          if (matchingTaskIds.size === 0) return;
+          const taskUpdates: Record<string, unknown> = {
+            is_completed: completed,
+            updated_at: nowIso,
+          };
+          if (targetGoogleTaskId) {
+            taskUpdates.google_task_id = targetGoogleTaskId;
           }
-        }
+          await sb.from('tasks').update(taskUpdates).in('id', Array.from(matchingTaskIds));
+        })(),
 
-        // Update matching school items in school_items table
-        const { data: allSchool } = await sb.from('school_items').select('uid, title');
-        if (allSchool && allSchool.length > 0) {
-          const matchingUids = allSchool
-            .filter((s) => {
-              const c = cleanTitle(s.title);
-              return c === cleanedQuery || (c.length > 5 && (c.includes(cleanedQuery) || cleanedQuery.includes(c)));
-            })
-            .map((s) => s.uid);
-
-          if (matchingUids.length > 0) {
-            await sb
-              .from('school_items')
-              .update({ is_completed: completed, updated_at: nowIso })
-              .in('uid', matchingUids);
-          }
-        }
-      }
+        (async () => {
+          if (matchingSchoolUids.length === 0) return;
+          await sb
+            .from('school_items')
+            .update({ is_completed: completed, updated_at: nowIso })
+            .in('uid', matchingSchoolUids);
+        })(),
+      ]);
     }
 
     return NextResponse.json({

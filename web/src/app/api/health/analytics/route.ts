@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { addDaysToDateStr } from '@/lib/date-utils';
 import { parseSleepDuration, formatDisplayTime } from '../route';
 
 export const dynamic = 'force-dynamic';
@@ -42,7 +43,7 @@ export interface AnalyticsSummary {
   periodLabel: string;
   totalDays: number;
   trackedDays: number;
-  
+
   // Sleep
   avgSleepHours: number;
   avgSleepText: string;
@@ -62,7 +63,7 @@ export interface AnalyticsSummary {
   // Activity & Movement
   avgSteps: number;
   totalSteps: number;
-  stepGoalHitRate: number; // percentage of days >= 10k steps
+  stepGoalHitRate: number;
   daysOver10k: number;
 
   // Workout & Training
@@ -83,10 +84,10 @@ export interface AnalyticsSummary {
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const timeframe = (url.searchParams.get('timeframe') || 'month').toLowerCase(); // 'week' | 'month' | 'year' | 'all'
+    const timeframe = (url.searchParams.get('timeframe') || 'month').toLowerCase();
 
     const sb = supabaseAdmin || supabase;
-    let rawRecords: any[] = [];
+    let rawRecords: Record<string, unknown>[] = [];
 
     // 1. Primary: Load all biometrics from Supabase
     if (sb) {
@@ -131,9 +132,9 @@ export async function GET(req: NextRequest) {
               steps: parseInt(String(r[stepsIdx] || '0').replace(/,/g, ''), 10) || 0,
               hrv: parseFloat(String(r[hrvIdx] || '0')) || 0,
               sleep_duration: String(r[sleepIdx] || ''),
-              sleep_hours: parseFloat(String(r[sleepIdx] || '0')) || 0,
+              sleep_hours: 0,
               rhr: parseFloat(String(r[rhrIdx] || '0')) || 0,
-              bodyweight: parseFloat(String(r[weightIdx] || '170')) || 170,
+              bodyweight: parseFloat(String(r[weightIdx] || '0')) || 0,
               wake_time: String(r[wakeIdx] || ''),
               sleep_time: String(r[sleepTimeIdx] || ''),
               workout_calories: parseFloat(String(r[wCalIdx] || '0')) || 0,
@@ -157,64 +158,111 @@ export async function GET(req: NextRequest) {
     }
 
     // Sort ascending by date
-    rawRecords.sort((a, b) => (a.date > b.date ? 1 : -1));
+    rawRecords.sort((a, b) => (String(a.date) > String(b.date) ? 1 : -1));
 
-    // Determine cutoff date based on timeframe
-    const latestDateStr = rawRecords[rawRecords.length - 1].date;
-    const latestDate = new Date(latestDateStr + 'T12:00:00');
-    let startDate = new Date(latestDate);
-
+    // Determine cutoff date based on timeframe using timezone-safe date math
+    const latestDateStr = String(rawRecords[rawRecords.length - 1].date);
+    let startCutoffStr = '2020-01-01';
     if (timeframe === 'week') {
-      startDate.setDate(latestDate.getDate() - 6); // 7 days total
+      startCutoffStr = addDaysToDateStr(latestDateStr, -6);
     } else if (timeframe === 'month') {
-      startDate.setDate(latestDate.getDate() - 29); // 30 days total
+      startCutoffStr = addDaysToDateStr(latestDateStr, -29);
     } else if (timeframe === 'year') {
-      startDate.setFullYear(latestDate.getFullYear() - 1);
-    } else {
-      // 'all'
-      startDate = new Date('2020-01-01');
+      startCutoffStr = addDaysToDateStr(latestDateStr, -365);
     }
 
-    const startCutoffStr = startDate.toISOString().split('T')[0];
-    const filtered = rawRecords.filter((r) => r.date >= startCutoffStr);
-
-    // Map into sanitized DayMetricPoints
+    // Single-pass normalization across all rawRecords (builds both `days` and `monthMap`)
     let lastValidWeight = 175.0;
-    const days: DayMetricPoint[] = filtered.map((rec) => {
-      const d = new Date(rec.date + 'T12:00:00');
-      const dayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+    for (const r of rawRecords) {
+      const w = parseFloat(String(r.bodyweight || '0'));
+      if (w > 50 && w < 400) {
+        lastValidWeight = Math.round(w * 10) / 10;
+        break;
+      }
+    }
 
-      const parsedSleep = parseSleepDuration(rec.sleep_duration || rec.sleep_hours);
-      const sleepHours = rec.sleep_hours && rec.sleep_hours > 0 ? Number(rec.sleep_hours) : parsedSleep.hours;
+    const days: DayMetricPoint[] = [];
+    const monthMap = new Map<
+      string,
+      Array<{
+        sleepHours: number;
+        rhr: number;
+        hrv: number;
+        steps: number;
+        workoutCalories: number;
+        workoutDuration: number;
+        rawWeight: number;
+      }>
+    >();
+
+    for (const rec of rawRecords) {
+      const dateStr = String(rec.date);
+      const parsedSleep = parseSleepDuration(
+        (rec.sleep_duration as string | number | undefined) ||
+          (rec.sleep_hours as string | number | undefined)
+      );
+      const sleepHours =
+        parsedSleep.hours > 0
+          ? parsedSleep.hours
+          : rec.sleep_hours && Number(rec.sleep_hours) > 0
+            ? Number(rec.sleep_hours)
+            : 0;
 
       const steps = parseInt(String(rec.steps || '0'), 10) || 0;
-      const hrv = Math.round(parseFloat(String(rec.hrv || '0')) * 10) / 10;
-      const rhr = Math.round(parseFloat(String(rec.rhr || '0')) * 10) / 10;
+      const hrv = Math.round((parseFloat(String(rec.hrv || '0')) || 0) * 10) / 10;
+      const rhr = Math.round((parseFloat(String(rec.rhr || '0')) || 0) * 10) / 10;
+      const workoutCalories = Math.round((parseFloat(String(rec.workout_calories || '0')) || 0) * 10) / 10;
+      const workoutDuration = Math.round(parseFloat(String(rec.workout_duration || '0')) || 0);
 
-      let weight = parseFloat(String(rec.bodyweight || '0'));
-      if (weight > 50 && weight < 400) {
-        lastValidWeight = Math.round(weight * 10) / 10;
+      const rawWeight = parseFloat(String(rec.bodyweight || '0')) || 0;
+      if (rawWeight > 50 && rawWeight < 400) {
+        lastValidWeight = Math.round(rawWeight * 10) / 10;
       }
 
-      return {
-        date: rec.date,
-        dayLabel,
-        weekday,
-        steps,
-        stepsGoal: 10000,
-        stepsPercentage: Math.min(100, Math.round((steps / 10000) * 100)),
-        hrv,
-        rhr,
+      // Add to monthly rollup map
+      const monthKey = dateStr.slice(0, 7);
+      const mArr = monthMap.get(monthKey) || [];
+      mArr.push({
         sleepHours: Math.round(sleepHours * 10) / 10,
-        sleepDuration: parsedSleep.text !== 'No data' ? parsedSleep.text : sleepHours > 0 ? `${sleepHours}h` : '0h',
-        sleepTime: formatDisplayTime(rec.sleep_time),
-        wakeTime: formatDisplayTime(rec.wake_time),
-        bodyweight: lastValidWeight,
-        workoutCalories: Math.round(parseFloat(String(rec.workout_calories || '0')) * 10) / 10,
-        workoutDuration: Math.round(parseFloat(String(rec.workout_duration || '0'))),
-      };
-    });
+        rhr,
+        hrv,
+        steps,
+        workoutCalories,
+        workoutDuration,
+        rawWeight: rawWeight > 50 && rawWeight < 400 ? Math.round(rawWeight * 10) / 10 : 0,
+      });
+      monthMap.set(monthKey, mArr);
+
+      // Add to filtered timeframe days
+      if (dateStr >= startCutoffStr) {
+        const d = new Date(dateStr + 'T12:00:00');
+        const dayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+        const weekday = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' });
+
+        days.push({
+          date: dateStr,
+          dayLabel,
+          weekday,
+          steps,
+          stepsGoal: 10000,
+          stepsPercentage: Math.min(100, Math.round((steps / 10000) * 100)),
+          hrv,
+          rhr,
+          sleepHours: Math.round(sleepHours * 10) / 10,
+          sleepDuration:
+            parsedSleep.text !== 'No data'
+              ? parsedSleep.text
+              : sleepHours > 0
+                ? `${sleepHours}h`
+                : '0h',
+          sleepTime: formatDisplayTime(rec.sleep_time as string | undefined),
+          wakeTime: formatDisplayTime(rec.wake_time as string | undefined),
+          bodyweight: lastValidWeight,
+          workoutCalories,
+          workoutDuration,
+        });
+      }
+    }
 
     // Compute Summary Statistics
     const validSleep = days.filter((d) => d.sleepHours > 0);
@@ -255,8 +303,8 @@ export async function GET(req: NextRequest) {
       activeWorkoutDays > 0 ? Math.round(totalWorkoutMinutes / activeWorkoutDays) : 0;
 
     const weights = days.map((d) => d.bodyweight).filter((w) => w > 50);
-    const currentWeight = weights.length > 0 ? weights[weights.length - 1] : 175.0;
-    const startWeight = weights.length > 0 ? weights[0] : 175.0;
+    const currentWeight = weights.length > 0 ? weights[weights.length - 1] : lastValidWeight;
+    const startWeight = weights.length > 0 ? weights[0] : lastValidWeight;
     const weightDelta = Math.round((currentWeight - startWeight) * 10) / 10;
     const minWeight = weights.length > 0 ? Math.min(...weights) : currentWeight;
     const maxWeight = weights.length > 0 ? Math.max(...weights) : currentWeight;
@@ -268,10 +316,10 @@ export async function GET(req: NextRequest) {
         timeframe === 'week'
           ? 'Last 7 Days'
           : timeframe === 'month'
-          ? 'Last 30 Days'
-          : timeframe === 'year'
-          ? 'Last 12 Months'
-          : 'All-Time Longitudinal',
+            ? 'Last 30 Days'
+            : timeframe === 'year'
+              ? 'Last 12 Months'
+              : 'All-Time Longitudinal',
       totalDays: days.length,
       trackedDays: days.filter((d) => d.steps > 0 || d.sleepHours > 0 || d.hrv > 0).length,
       avgSleepHours,
@@ -302,34 +350,9 @@ export async function GET(req: NextRequest) {
       maxWeight,
     };
 
-    // Monthly Rollups across all available data for macro view
-    const monthMap = new Map<string, DayMetricPoint[]>();
-    for (const d of rawRecords) {
-      const monthKey = d.date.slice(0, 7); // 'YYYY-MM'
-      const arr = monthMap.get(monthKey) || [];
-      const parsedSleep = parseSleepDuration(d.sleep_duration || d.sleep_hours);
-      arr.push({
-        date: d.date,
-        dayLabel: '',
-        weekday: '',
-        steps: parseInt(String(d.steps || '0'), 10) || 0,
-        stepsGoal: 10000,
-        stepsPercentage: 0,
-        hrv: parseFloat(String(d.hrv || '0')) || 0,
-        rhr: parseFloat(String(d.rhr || '0')) || 0,
-        sleepHours: d.sleep_hours && d.sleep_hours > 0 ? Number(d.sleep_hours) : parsedSleep.hours,
-        sleepDuration: '',
-        sleepTime: '',
-        wakeTime: '',
-        bodyweight: parseFloat(String(d.bodyweight || '175')) || 175,
-        workoutCalories: parseFloat(String(d.workout_calories || '0')) || 0,
-        workoutDuration: parseFloat(String(d.workout_duration || '0')) || 0,
-      });
-      monthMap.set(monthKey, arr);
-    }
-
     const months: MonthRollup[] = [];
     const sortedMonthKeys = Array.from(monthMap.keys()).sort();
+    let rollingMonthWeight = lastValidWeight;
 
     for (const mKey of sortedMonthKeys) {
       const mDays = monthMap.get(mKey)!;
@@ -359,11 +382,10 @@ export async function GET(req: NextRequest) {
       const mWorkoutCals = Math.round(mDays.reduce((a, b) => a + b.workoutCalories, 0));
       const mWorkoutMins = Math.round(mDays.reduce((a, b) => a + b.workoutDuration, 0));
 
-      const mWeights = mDays.map((x) => x.bodyweight).filter((w) => w > 50);
-      const avgWeight =
-        mWeights.length > 0
-          ? Math.round((mWeights.reduce((a, b) => a + b, 0) / mWeights.length) * 10) / 10
-          : 175.0;
+      const mWeights = mDays.map((x) => x.rawWeight).filter((w) => w > 50);
+      if (mWeights.length > 0) {
+        rollingMonthWeight = Math.round((mWeights.reduce((a, b) => a + b, 0) / mWeights.length) * 10) / 10;
+      }
 
       months.push({
         monthKey: mKey,
@@ -377,7 +399,7 @@ export async function GET(req: NextRequest) {
         avgSteps: avgStepsVal,
         totalWorkoutCalories: mWorkoutCals,
         totalWorkoutMinutes: mWorkoutMins,
-        avgWeight,
+        avgWeight: rollingMonthWeight,
       });
     }
 

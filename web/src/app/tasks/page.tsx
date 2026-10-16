@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
-import { isEventPast, getTodayDateStr, isTaskEventTitle } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle, cleanDisplayTitle } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
@@ -60,84 +60,16 @@ export default function MissionControlPage() {
   const [taskToDelete, setTaskToDelete] = useState<TaskItem | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
 
-  const handleRescheduleSuccess = (rescheduled: {
-    newDate: string;
-    newTime: string;
-    durationMins: number;
-    updatedTask?: TaskItem;
-    deleted?: boolean;
-  }) => {
-    if (!reschedulingTask) return;
-    if (rescheduled.deleted) {
-      setTasks((prev) => {
-        const next = prev.filter((t) => t.id !== reschedulingTask.id);
-        localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
-        return next;
-      });
-      fetchTasks();
-      setReschedulingTask(null);
-      return;
-    }
-    setTasks((prev) => {
-      const next = prev.map((t) =>
-        t.id === reschedulingTask.id || (rescheduled.updatedTask && t.id === rescheduled.updatedTask.id)
-          ? {
-              ...t,
-              ...(rescheduled.updatedTask || {}),
-              due_date: rescheduled.newDate,
-              due_time: rescheduled.newTime,
-              duration_mins: rescheduled.durationMins,
-              is_completed: false,
-            }
-          : t
-      );
-      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
-      return next;
-    });
-    setReschedulingTask(null);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!taskToDelete) return;
-    setDeletingTask(true);
-    const targetId = taskToDelete.id;
-
-    // Optimistic UI update
-    setTasks((prev) => {
-      const next = prev.filter((t) => t.id !== targetId);
-      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
-      return next;
-    });
-
-    try {
-      await fetch('/api/tasks/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: taskToDelete.id,
-          calendarEventId: taskToDelete.calendar_event_id,
-          googleTaskId: taskToDelete.google_task_id,
-          calendarName: taskToDelete.calendar_name,
-          title: taskToDelete.title,
-        }),
-      });
-      await fetchTasks();
-    } catch (err) {
-      console.error('Delete error:', err);
-    } finally {
-      setDeletingTask(false);
-      setTaskToDelete(null);
-    }
-  };
-
   // Fetch tasks from Supabase (with localStorage fallback)
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
+  const fetchTasks = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       // 1. Check local storage first
-      const cached = localStorage.getItem('kevin_os_tasks');
-      if (cached) {
-        setTasks(JSON.parse(cached));
+      if (!silent) {
+        const cached = localStorage.getItem('kevin_os_tasks');
+        if (cached) {
+          setTasks(JSON.parse(cached));
+        }
       }
 
       // 2. Query Supabase
@@ -196,13 +128,84 @@ export default function MissionControlPage() {
     } catch (err) {
       console.error('Error fetching tasks:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  const handleRescheduleSuccess = (rescheduled: {
+    newDate: string;
+    newTime: string;
+    durationMins: number;
+    updatedTask?: TaskItem;
+    deleted?: boolean;
+  }) => {
+    if (!reschedulingTask) return;
+    if (rescheduled.deleted) {
+      setTasks((prev) => {
+        const next = prev.filter((t) => t.id !== reschedulingTask.id);
+        localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+        return next;
+      });
+      fetchTasks(true);
+      setReschedulingTask(null);
+      return;
+    }
+    setTasks((prev) => {
+      const next = prev.map((t) =>
+        t.id === reschedulingTask.id || (rescheduled.updatedTask && t.id === rescheduled.updatedTask.id)
+          ? {
+              ...t,
+              ...(rescheduled.updatedTask || {}),
+              due_date: rescheduled.newDate,
+              due_time: rescheduled.newTime,
+              duration_mins: rescheduled.durationMins,
+              is_completed: false,
+            }
+          : t
+      );
+      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+      return next;
+    });
+    fetchTasks(true);
+    setReschedulingTask(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!taskToDelete) return;
+    setDeletingTask(true);
+    const targetId = taskToDelete.id;
+
+    // Optimistic UI update
+    setTasks((prev) => {
+      const next = prev.filter((t) => t.id !== targetId);
+      localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      await fetch('/api/tasks/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: taskToDelete.id,
+          calendarEventId: taskToDelete.calendar_event_id,
+          googleTaskId: taskToDelete.google_task_id,
+          calendarName: taskToDelete.calendar_name,
+          title: taskToDelete.title,
+        }),
+      });
+      await fetchTasks(true);
+    } catch (err) {
+      console.error('Delete error:', err);
+    } finally {
+      setDeletingTask(false);
+      setTaskToDelete(null);
+    }
+  };
 
   // Optimistic Toggle Task/Event Completion (Supports both checking and unchecking)
   const toggleTaskCompletion = async (id: string, currentStatus: boolean) => {
@@ -231,24 +234,20 @@ export default function MissionControlPage() {
 
     // 2. Direct Supabase update for instantaneous persistence
     if (supabase) {
-      await supabase
-        .from('tasks')
-        .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
-        .eq('id', id);
-
-      // Also sync completion/unchecking to school_items
-      if (target?.title) {
-        const clean = target.title
-          .replace(/^[🎓📚📝⏰\s\[\]Task:]+/gi, '')
-          .replace(/^\(\s*\d+\s*(?:mins?|minutes?|hours?|hrs?)\s*\)\s*/gi, '')
-          .trim();
-        if (clean) {
-          await supabase
-            .from('school_items')
-            .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
-            .ilike('title', `%${clean}%`);
-        }
-      }
+      const nowIso = new Date().toISOString();
+      const clean = target?.title ? cleanDisplayTitle(target.title) : '';
+      await Promise.all([
+        supabase
+          .from('tasks')
+          .update({ is_completed: updatedStatus, updated_at: nowIso })
+          .eq('id', id),
+        clean
+          ? supabase
+              .from('school_items')
+              .update({ is_completed: updatedStatus, updated_at: nowIso })
+              .ilike('title', `%${clean}%`)
+          : Promise.resolve(),
+      ]);
     }
   };
 
@@ -306,7 +305,7 @@ export default function MissionControlPage() {
         if (data.item) {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
-        await fetchTasks();
+        await fetchTasks(true);
         setActiveTab('upcoming');
       } else if (createTimeblock) {
         // 2b. Timeblocked Task with Google Calendar
@@ -327,7 +326,7 @@ export default function MissionControlPage() {
         if (data.item) {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
-        await fetchTasks();
+        await fetchTasks(true);
       } else {
         // 2c. Standalone Task (Google Tasks & Supabase)
         try {
@@ -349,7 +348,7 @@ export default function MissionControlPage() {
           if (data.item) {
             setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
           }
-          await fetchTasks();
+          await fetchTasks(true);
         } catch {
           if (supabase) {
             await supabase.from('tasks').insert([taskItem]);
@@ -380,7 +379,7 @@ export default function MissionControlPage() {
     setSyncing(true);
     try {
       await fetch('/api/tasks/sync');
-      await fetchTasks();
+      await fetchTasks(true);
     } catch (err) {
       console.error('Sync failed:', err);
     } finally {

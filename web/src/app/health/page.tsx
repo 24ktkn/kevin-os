@@ -26,6 +26,7 @@ import {
   Save,
 } from 'lucide-react';
 import { AnalyticsSummary, DayMetricPoint, MonthRollup } from '../api/health/analytics/route';
+import { getTodayDateStr } from '@/lib/date-utils';
 
 type Timeframe = 'week' | 'month' | 'year';
 
@@ -36,7 +37,6 @@ export default function HealthTrackerPage() {
   const [months, setMonths] = useState<MonthRollup[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [activeMetricTab, setActiveMetricTab] = useState<'sleep' | 'cardio' | 'steps' | 'workout' | 'weight'>('sleep');
   const [showEditModal, setShowEditModal] = useState(false);
   const [savingMetrics, setSavingMetrics] = useState(false);
@@ -53,22 +53,29 @@ export default function HealthTrackerPage() {
     workoutDuration: '',
   });
 
-  const openEditModal = () => {
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-    const targetPoint = days.find((d) => d.date === todayStr) || days[days.length - 1];
+  const populateFormForDate = useCallback(
+    (dateStr: string, fallbackLatest = false) => {
+      const targetPoint =
+        days.find((d) => d.date === dateStr) || (fallbackLatest ? days[days.length - 1] : undefined);
+      setEditFormData({
+        date: targetPoint?.date || dateStr,
+        sleep: targetPoint?.sleepHours ? `${targetPoint.sleepHours}` : '',
+        sleepTime: targetPoint?.sleepTime && targetPoint.sleepTime !== 'No data' ? targetPoint.sleepTime : '',
+        wakeTime: targetPoint?.wakeTime && targetPoint.wakeTime !== 'No data' ? targetPoint.wakeTime : '',
+        steps: targetPoint?.steps ? `${targetPoint.steps}` : '',
+        rhr: targetPoint?.rhr ? `${targetPoint.rhr}` : '',
+        hrv: targetPoint?.hrv ? `${targetPoint.hrv}` : '',
+        weight: targetPoint?.bodyweight ? `${targetPoint.bodyweight}` : '',
+        workoutCalories: targetPoint?.workoutCalories ? `${targetPoint.workoutCalories}` : '',
+        workoutDuration: targetPoint?.workoutDuration ? `${targetPoint.workoutDuration}` : '',
+      });
+    },
+    [days]
+  );
 
-    setEditFormData({
-      date: targetPoint?.date || todayStr,
-      sleep: targetPoint?.sleepHours ? `${targetPoint.sleepHours}` : '',
-      sleepTime: targetPoint?.sleepTime || '',
-      wakeTime: targetPoint?.wakeTime || '',
-      steps: targetPoint?.steps ? `${targetPoint.steps}` : '',
-      rhr: targetPoint?.rhr ? `${targetPoint.rhr}` : '',
-      hrv: targetPoint?.hrv ? `${targetPoint.hrv}` : '',
-      weight: targetPoint?.bodyweight ? `${targetPoint.bodyweight}` : '',
-      workoutCalories: targetPoint?.workoutCalories ? `${targetPoint.workoutCalories}` : '',
-      workoutDuration: targetPoint?.workoutDuration ? `${targetPoint.workoutDuration}` : '',
-    });
+  const openEditModal = () => {
+    const todayStr = getTodayDateStr();
+    populateFormForDate(todayStr, true);
     setShowEditModal(true);
   };
 
@@ -76,7 +83,7 @@ export default function HealthTrackerPage() {
     e.preventDefault();
     setSavingMetrics(true);
     try {
-      const payload: Record<string, any> = {
+      const payload: Record<string, unknown> = {
         date: editFormData.date,
         timezone: 'America/New_York',
       };
@@ -152,6 +159,10 @@ export default function HealthTrackerPage() {
   const maxCardioVal = useMemo(() => {
     const maxVal = Math.max(...days.map((d) => Math.max(d.hrv, d.rhr)), 100);
     return Math.ceil(maxVal / 20) * 20;
+  }, [days]);
+
+  const recentDaysTable = useMemo(() => {
+    return days.slice().reverse().slice(0, 30);
   }, [days]);
 
   return (
@@ -519,8 +530,6 @@ export default function HealthTrackerPage() {
                       return (
                         <div
                           key={d.date}
-                          onMouseEnter={() => setHoveredIndex(idx)}
-                          onMouseLeave={() => setHoveredIndex(null)}
                           className="flex-1 min-w-[14px] flex flex-col items-center justify-end h-full group relative cursor-pointer"
                         >
                           {/* Hover Tooltip */}
@@ -935,11 +944,7 @@ export default function HealthTrackerPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {days
-                    .slice()
-                    .reverse()
-                    .slice(0, 30)
-                    .map((d) => (
+                  {recentDaysTable.map((d) => (
                       <tr key={d.date} className="hover:bg-zinc-900/40 transition">
                         <td className="py-2.5 px-4 font-mono font-medium text-white">
                           {d.date}{' '}
@@ -1035,7 +1040,7 @@ export default function HealthTrackerPage() {
                 <input
                   type="date"
                   value={editFormData.date}
-                  onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                  onChange={(e) => populateFormForDate(e.target.value, false)}
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
                   required
                 />
