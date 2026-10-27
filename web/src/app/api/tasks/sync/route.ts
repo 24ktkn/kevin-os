@@ -12,7 +12,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
   buildScheduledNotesTag,
 } from '@/lib/google-calendar';
 
@@ -73,7 +73,7 @@ export async function GET() {
   const claimedTaskIdsInCalendarPass = new Set<string>();
 
   const calendarApi = getGoogleCalendarClient();
-  const { tasksApi, hasCredentials, clientId, clientSecret, refreshToken } = getGoogleTasksClient();
+  const { tasksApi, hasCredentials, clientId, clientSecret, refreshToken } = await getGoogleTasksClientAsync();
 
   // Upfront parallel prefetch from Supabase and Google Tasks
   let allSchoolRows: PreCleanedSchoolRow[] = [];
@@ -103,13 +103,15 @@ export async function GET() {
       ]);
 
       if (schoolRes.data) {
-        allSchoolRows = schoolRes.data.map((r) => ({
-          uid: r.uid,
-          title: r.title || '',
-          clean: cleanTaskTitle(r.title),
-          is_completed: Boolean(r.is_completed),
-          scheduled_date: r.scheduled_date,
-        }));
+        allSchoolRows = schoolRes.data
+          .filter((r) => r.uid && !String(r.uid).startsWith('__system_'))
+          .map((r) => ({
+            uid: r.uid,
+            title: r.title || '',
+            clean: cleanTaskTitle(r.title),
+            is_completed: Boolean(r.is_completed),
+            scheduled_date: r.scheduled_date,
+          }));
       }
 
       if (tasksRes.data) {
@@ -671,6 +673,85 @@ export async function GET() {
           }
         }
       }
+
+      // 2b. Backfill any active local Supabase Tasks that are missing a google_task_id
+      // (e.g. online modules scheduled while the Google Tasks token was expired)
+      if (sb && prefetchedTasklists.size > 0) {
+        const unsyncedLocalTasks = allDbTasks.filter(
+          (t) => !t.is_completed && !t.google_task_id && t.title.trim().length > 0
+        );
+
+        for (const localTask of unsyncedLocalTasks) {
+          try {
+            // Check if a Google Task with a matching clean title already exists in any prefetched list
+            let matchedGoogleTaskId: string | null = null;
+            for (const [, gItems] of prefetchedTasklists.entries()) {
+              const gMatch = gItems.find(
+                (g) => g.title && titlesMatchClean(cleanTaskTitle(g.title), localTask.clean)
+              );
+              if (gMatch?.id) {
+                matchedGoogleTaskId = gMatch.id;
+                break;
+              }
+            }
+
+            if (!matchedGoogleTaskId) {
+              const targetListId =
+                TASKLIST_MAP[localTask.calendar_name] ||
+                TASKLIST_MAP['School'] ||
+                TASKLIST_MAP['Kevin Nguyen'];
+
+              const dueDateStr = localTask.due_date || todayStr;
+              const notesStr = localTask.due_time
+                ? `⏰ Scheduled: ${localTask.due_time} (${localTask.duration_mins || 60}m)`
+                : '';
+
+              const createdRes = await tasksApi.tasks.insert({
+                tasklist: targetListId,
+                requestBody: {
+                  title: localTask.title.trim(),
+                  due: `${dueDateStr}T00:00:00.000Z`,
+                  notes: notesStr,
+                },
+              });
+
+              matchedGoogleTaskId = createdRes.data.id || null;
+              if (matchedGoogleTaskId && createdRes.data) {
+                const listItems = prefetchedTasklists.get(localTask.calendar_name || 'School') || [];
+                listItems.push(createdRes.data);
+              }
+            }
+
+            if (matchedGoogleTaskId) {
+              localTask.google_task_id = matchedGoogleTaskId;
+              tasksByGoogleId.set(matchedGoogleTaskId, localTask);
+
+              await sb
+                .from('tasks')
+                .update({
+                  google_task_id: matchedGoogleTaskId,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', localTask.id);
+
+              if (localTask.calendar_event_id) {
+                await sb
+                  .from('tasks')
+                  .update({
+                    google_task_id: matchedGoogleTaskId,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('calendar_event_id', localTask.calendar_event_id)
+                  .eq('type', 'Event');
+              }
+
+              syncResults.tasksSynced++;
+            }
+          } catch (backfillErr) {
+            console.warn(`Failed to backfill Google Task for "${localTask.title}":`, backfillErr);
+          }
+        }
+      }
     } else {
       syncResults.errors.push(
         `Google Tasks credentials missing (clientId: ${!!clientId}, clientSecret: ${!!clientSecret}, refreshToken: ${!!refreshToken})`
@@ -776,7 +857,7 @@ export async function GET() {
 
           if (overdueSchool && overdueSchool.length > 0) {
             const validUids = overdueSchool
-              .filter((s) => Boolean(s.scheduled_date))
+              .filter((s) => Boolean(s.scheduled_date) && !String(s.uid).startsWith('__system_'))
               .map((s) => s.uid);
 
             if (validUids.length > 0) {
@@ -796,11 +877,17 @@ export async function GET() {
     ]);
   }
 
+  const tasksAuthError =
+    !hasCredentials ||
+    syncResults.errors.some((e) => e.includes('invalid_grant') || e.includes('Tasklist'));
+
   return NextResponse.json({
     success: true,
+    tasksAuthError,
     completedTitles,
     results: {
       ...syncResults,
+      tasksAuthError,
       completedTitles,
     },
   });

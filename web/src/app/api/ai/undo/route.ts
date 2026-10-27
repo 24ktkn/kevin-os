@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { ScheduledCommitItem } from '@/types/ai';
-import { getGoogleCalendarClient, getGoogleTasksClient } from '@/lib/google-calendar';
+import { getGoogleCalendarClient, getGoogleTasksClientAsync } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
     let deletedCount = 0;
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     const sb = supabaseAdmin || supabase;
 
     const eventIdsToDelete: string[] = [];

@@ -9,7 +9,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     const backlogTasks: BacklogTask[] = [];
 
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
 
     // Fetch all 4 Google Calendars and all 4 Google Tasklists concurrently
     await Promise.all([

@@ -6,7 +6,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     let createdTasksCount = 0;
 
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     const sb = supabaseAdmin || supabase;
     const supabaseRowsToInsert: Record<string, unknown>[] = [];
     const nowIso = new Date().toISOString();

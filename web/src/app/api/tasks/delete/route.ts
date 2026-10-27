@@ -6,7 +6,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
@@ -51,7 +51,7 @@ async function handleDelete(req: NextRequest) {
         cleanSearchTitle ? sb.from('school_items').select('uid, title') : Promise.resolve({ data: [] }),
       ]);
       allTasks = (tasksRes.data || []) as typeof allTasks;
-      schoolRows = (schoolRes.data || []) as typeof schoolRows;
+      schoolRows = ((schoolRes.data || []) as typeof schoolRows).filter((s) => !String(s.uid).startsWith('__system_'));
 
       // Pass 1: Seed from taskId
       if (taskId) {
@@ -80,7 +80,7 @@ async function handleDelete(req: NextRequest) {
     let deletedTaskCount = 0;
 
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
 
     // 2 & 3. Delete from Google Calendar and Google Tasks in parallel
     await Promise.all([

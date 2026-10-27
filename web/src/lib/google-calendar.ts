@@ -1,4 +1,7 @@
 import { google, calendar_v3, tasks_v1 } from 'googleapis';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
+import fs from 'fs';
+import path from 'path';
 
 export const CALENDAR_MAP: Record<string, string> = {
   'School': '0dbc1f40c9dc993c6b893fa0e1646b888eb8ed8599668c9697d72689e041e315@group.calendar.google.com',
@@ -13,6 +16,8 @@ export const TASKLIST_MAP: Record<string, string> = {
   'Family': 'ZzR2aGJ6b2p1dWJtN2R2dA',
   'Volunteering': 'YVl5dGVCZ1d5eW9hVEluTw',
 };
+
+export const SYSTEM_TOKEN_UID = '__system_google_tasks_token__';
 
 function cleanEnvVal(val?: string): string {
   return (val || '').replace(/^["']|["']$/g, '').trim();
@@ -54,6 +59,92 @@ export function getGoogleCalendarClient(): calendar_v3.Calendar | null {
 
 let cachedTasksClient: tasks_v1.Tasks | null = null;
 let cachedRefreshToken = '';
+let runtimeRefreshTokenOverride = '';
+let lastDbTokenCheckMs = 0;
+
+/**
+ * Updates the in-memory, Supabase-persisted, and local .env.local Google Tasks refresh token.
+ */
+export async function saveGoogleTasksRefreshToken(newToken: string): Promise<void> {
+  const cleaned = cleanEnvVal(newToken);
+  if (!cleaned) return;
+
+  runtimeRefreshTokenOverride = cleaned;
+  cachedRefreshToken = '';
+  cachedTasksClient = null;
+  lastDbTokenCheckMs = Date.now();
+
+  // 1. Persist in Supabase school_items system row so Vercel & all instances share it
+  const sb = supabaseAdmin || supabase;
+  if (sb) {
+    try {
+      await sb.from('school_items').upsert({
+        uid: SYSTEM_TOKEN_UID,
+        title: 'System Google Tasks OAuth Token',
+        category: 'system',
+        is_completed: false,
+        is_scheduled: false,
+        target_calendar: cleaned,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Could not persist refresh token to Supabase:', err);
+    }
+  }
+
+  // 2. Also update local .env.local if running locally
+  try {
+    const envPath = path.join(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      if (content.includes('GOOGLE_TASKS_REFRESH_TOKEN=')) {
+        const updated = content.replace(
+          /^GOOGLE_TASKS_REFRESH_TOKEN=.*$/m,
+          `GOOGLE_TASKS_REFRESH_TOKEN="${cleaned}"`
+        );
+        fs.writeFileSync(envPath, updated, 'utf8');
+      } else {
+        fs.appendFileSync(envPath, `\nGOOGLE_TASKS_REFRESH_TOKEN="${cleaned}"\n`, 'utf8');
+      }
+    }
+  } catch {
+    // Ignore on read-only serverless filesystems (e.g., Vercel)
+  }
+}
+
+/**
+ * Loads the latest Google Tasks refresh token from Supabase if available.
+ */
+export async function loadGoogleTasksRefreshTokenFromDb(force = false): Promise<string> {
+  const now = Date.now();
+  if (!force && runtimeRefreshTokenOverride && now - lastDbTokenCheckMs < 60_000) {
+    return runtimeRefreshTokenOverride;
+  }
+
+  const sb = supabaseAdmin || supabase;
+  if (sb) {
+    try {
+      const { data } = await sb
+        .from('school_items')
+        .select('target_calendar')
+        .eq('uid', SYSTEM_TOKEN_UID)
+        .maybeSingle();
+
+      lastDbTokenCheckMs = now;
+      if (data?.target_calendar) {
+        const dbToken = cleanEnvVal(data.target_calendar);
+        if (dbToken && dbToken !== runtimeRefreshTokenOverride) {
+          runtimeRefreshTokenOverride = dbToken;
+          cachedTasksClient = null;
+        }
+      }
+    } catch {
+      // Ignore DB lookup errors
+    }
+  }
+
+  return runtimeRefreshTokenOverride || cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
+}
 
 /**
  * Returns a cached Google Tasks API v1 client authenticated via OAuth2 Refresh Token.
@@ -67,7 +158,8 @@ export function getGoogleTasksClient(): {
 } {
   const clientId = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_ID);
   const clientSecret = cleanEnvVal(process.env.GOOGLE_TASKS_CLIENT_SECRET);
-  const refreshToken = cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
+  const refreshToken =
+    runtimeRefreshTokenOverride || cleanEnvVal(process.env.GOOGLE_TASKS_REFRESH_TOKEN);
 
   if (!clientId || !clientSecret || !refreshToken) {
     return {
@@ -102,6 +194,14 @@ export function getGoogleTasksClient(): {
     clientSecret,
     refreshToken,
   };
+}
+
+/**
+ * Async version that checks Supabase for a newer persisted refresh token before returning the client.
+ */
+export async function getGoogleTasksClientAsync(forceReload = false) {
+  await loadGoogleTasksRefreshTokenFromDb(forceReload);
+  return getGoogleTasksClient();
 }
 
 /**

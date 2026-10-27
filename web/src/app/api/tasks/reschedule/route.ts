@@ -12,7 +12,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
@@ -63,7 +63,9 @@ export async function POST(req: NextRequest) {
         sb.from('school_items').select('uid, title'),
       ]);
       allDbTasks = (tasksRes.data || []) as TaskItem[];
-      allSchoolRows = (schoolRes.data || []) as { uid: string; title: string }[];
+      allSchoolRows = ((schoolRes.data || []) as { uid: string; title: string }[]).filter(
+        (s) => !String(s.uid).startsWith('__system_')
+      );
     }
 
     // Resolve task from in-memory allDbTasks
@@ -127,7 +129,7 @@ export async function POST(req: NextRequest) {
     let patchedSchool = false;
 
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     let activeCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['School'] || CALENDAR_MAP['Kevin Nguyen'];
 
     // 2 & 3. Run Google Calendar and Google Tasks updates in parallel

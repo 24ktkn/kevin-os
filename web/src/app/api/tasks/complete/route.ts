@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { cleanTaskTitle, titlesMatch } from '@/lib/date-utils';
-import { TASKLIST_MAP, getGoogleTasksClient } from '@/lib/google-calendar';
+import { TASKLIST_MAP, getGoogleTasksClientAsync } from '@/lib/google-calendar';
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
         sb.from('school_items').select('uid, title'),
       ]);
       allTasks = (tasksRes.data || []) as typeof allTasks;
-      allSchool = (schoolRes.data || []) as typeof allSchool;
+      allSchool = ((schoolRes.data || []) as typeof allSchool).filter((s) => !String(s.uid).startsWith('__system_'));
 
       if (taskId) {
         const dbTask = allTasks.find((t) => t.id === taskId);
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Patch Google Tasks
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     let patched = false;
     let patchError: string | null = null;
 

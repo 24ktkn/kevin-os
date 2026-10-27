@@ -5,7 +5,7 @@ import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
-  getGoogleTasksClient,
+  getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
 
 const RRULE_MAP: Record<string, string> = {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     const shouldCreateTask = !isStandaloneEvent && !skipTask;
 
     const calendarApi = getGoogleCalendarClient();
-    const { tasksApi, hasCredentials } = getGoogleTasksClient();
+    const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
 
     // 1 & 2. Run Google Calendar insert and Google Tasks insert in parallel
     await Promise.all([

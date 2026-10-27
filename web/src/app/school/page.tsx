@@ -32,6 +32,7 @@ import {
   titlesMatch,
 } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
+import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
 
 function formatScheduledDate(dateStr?: string): string {
   if (!dateStr) return '';
@@ -80,6 +81,7 @@ export default function SchoolSyncPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [supabaseConnected, setSupabaseConnected] = useState(false);
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [tasksAuthError, setTasksAuthError] = useState(false);
 
   // Local & Supabase state tracking
   const [overrides, setOverrides] = useState<Record<string, SchoolCategory>>({});
@@ -158,14 +160,17 @@ export default function SchoolSyncPage() {
       try {
         const { data, error: supaErr } = await supabase.from('school_items').select('*');
         if (!supaErr && data) {
+          const validData = (data as DbSchoolRow[]).filter(
+            (r) => r.uid && !String(r.uid).startsWith('__system_')
+          );
           setSupabaseConnected(true);
-          setDbSchoolItems(data as DbSchoolRow[]);
+          setDbSchoolItems(validData);
           const newOverrides: Record<string, SchoolCategory> = {};
           const newCompletions: Record<string, boolean> = {};
           const newScheduled: Record<string, { date: string; time: string; duration: number; calendar: string; isTaskOnly?: boolean }> = {};
           const rolloverUids: string[] = [];
 
-          for (const row of data) {
+          for (const row of validData) {
             if (row.category) newOverrides[row.uid] = row.category as SchoolCategory;
             if (typeof row.is_completed === 'boolean') newCompletions[row.uid] = row.is_completed;
             if (row.is_scheduled && row.scheduled_date) {
@@ -214,6 +219,7 @@ export default function SchoolSyncPage() {
     try {
       const res = await fetch('/api/tasks/sync');
       const data = await res.json();
+      setTasksAuthError(Boolean(data.tasksAuthError || data.results?.tasksAuthError));
       const completedList: string[] = data.completedTitles || data.results?.completedTitles || [];
 
       if (completedList.length > 0) {
@@ -456,6 +462,10 @@ export default function SchoolSyncPage() {
       if (!scheduleRes.ok) {
         console.error('Google schedule error:', schedData.error);
       }
+      if (schedData.taskError) {
+        console.warn('Google Tasks creation warning:', schedData.taskError);
+        setTasksAuthError(true);
+      }
 
       // 2. Update local state
       const updated = { ...scheduledItems, [uid]: { ...existing, isTaskOnly } };
@@ -645,6 +655,14 @@ export default function SchoolSyncPage() {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 space-y-6">
+        <GoogleTasksReconnectBanner
+          visible={tasksAuthError}
+          onReconnected={() => {
+            setTasksAuthError(false);
+            syncGoogleTasks(events);
+          }}
+        />
+
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-xl border border-zinc-800/80 bg-[#121218] p-4 shadow-sm">

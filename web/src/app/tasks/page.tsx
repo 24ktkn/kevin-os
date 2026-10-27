@@ -25,6 +25,7 @@ import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
 import { isEventPast, getTodayDateStr, isTaskEventTitle, cleanDisplayTitle } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
+import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
 
 const CALENDAR_COLORS: Record<CalendarName, { bg: string; text: string; border: string }> = {
   'School': { bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
@@ -59,6 +60,7 @@ export default function MissionControlPage() {
   const [reschedulingTask, setReschedulingTask] = useState<TaskItem | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<TaskItem | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
+  const [tasksAuthError, setTasksAuthError] = useState(false);
 
   // Fetch tasks from Supabase (with localStorage fallback)
   const fetchTasks = useCallback(async (silent = false) => {
@@ -134,6 +136,12 @@ export default function MissionControlPage() {
 
   useEffect(() => {
     fetchTasks();
+    fetch('/api/auth/google-tasks')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.connected === false) setTasksAuthError(true);
+      })
+      .catch(() => {});
   }, [fetchTasks]);
 
   const handleRescheduleSuccess = (rescheduled: {
@@ -323,6 +331,7 @@ export default function MissionControlPage() {
           }),
         });
         const data = await res.json();
+        if (data.taskError) setTasksAuthError(true);
         if (data.item) {
           setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
         }
@@ -345,6 +354,7 @@ export default function MissionControlPage() {
             }),
           });
           const data = await res.json();
+          if (data.taskError) setTasksAuthError(true);
           if (data.item) {
             setTasks((prev) => prev.map((t) => (t.id === newId ? data.item : t)));
           }
@@ -378,7 +388,9 @@ export default function MissionControlPage() {
   const handleSyncAll = async () => {
     setSyncing(true);
     try {
-      await fetch('/api/tasks/sync');
+      const res = await fetch('/api/tasks/sync');
+      const data = await res.json();
+      setTasksAuthError(Boolean(data.tasksAuthError || data.results?.tasksAuthError));
       await fetchTasks(true);
     } catch (err) {
       console.error('Sync failed:', err);
@@ -545,6 +557,14 @@ export default function MissionControlPage() {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 space-y-6">
+        <GoogleTasksReconnectBanner
+          visible={tasksAuthError}
+          onReconnected={() => {
+            setTasksAuthError(false);
+            fetchTasks(true);
+          }}
+        />
+
         {/* Metric Cards Row */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div
