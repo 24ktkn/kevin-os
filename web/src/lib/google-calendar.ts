@@ -11,10 +11,10 @@ export const CALENDAR_MAP: Record<string, string> = {
 };
 
 export const TASKLIST_MAP: Record<string, string> = {
-  'School': 'MDQ4NjkxMjM2OTk5NDY1NzIzOTg6MDow',
+  'School': 'ZGRiT21qM2ZCbVRWOVBlMQ',
   'Kevin Nguyen': '@default',
-  'Family': 'ZzR2aGJ6b2p1dWJtN2R2dA',
-  'Volunteering': 'YVl5dGVCZ1d5eW9hVEluTw',
+  'Family': 'Um85a3gwMVZqTXN4X0M3Wg',
+  'Volunteering': 'bUtfd3ZxU0Y3RFUyM2x2dQ',
 };
 
 export const SYSTEM_TOKEN_UID = '__system_google_tasks_token__';
