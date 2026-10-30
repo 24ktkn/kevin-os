@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
-import { computeStartEndIso } from '@/lib/date-utils';
+import { computeStartEndIso, cleanTaskTitle, titlesMatch } from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
   TASKLIST_MAP,
@@ -56,8 +56,35 @@ export async function POST(req: NextRequest) {
 
     const calendarApi = getGoogleCalendarClient();
     const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
+    const sb = supabaseAdmin || supabase;
 
-    // 1 & 2. Run Google Calendar insert and Google Tasks insert in parallel
+    // Check if an active task/timeblock with the same title already exists in Supabase (prevents duplicate timeblocks)
+    let existingEventRow: { id: string; calendar_event_id: string | null; google_task_id: string | null } | null = null;
+    let existingTaskRow: { id: string; calendar_event_id: string | null; google_task_id: string | null } | null = null;
+
+    if (sb && !isStandaloneEvent && cleanTaskTitle(title)) {
+      const { data: activeRows } = await sb
+        .from('tasks')
+        .select('id, title, type, calendar_event_id, google_task_id')
+        .eq('is_completed', false);
+
+      if (activeRows) {
+        for (const r of activeRows) {
+          if (!r.title || !titlesMatch(r.title, title)) continue;
+          if (r.type === 'Event' && !existingEventRow) {
+            existingEventRow = r;
+            if (r.calendar_event_id) calendarEventId = r.calendar_event_id;
+            if (r.google_task_id && !taskId) taskId = r.google_task_id;
+          } else if (r.type === 'Task' && !existingTaskRow) {
+            existingTaskRow = r;
+            if (r.google_task_id) taskId = r.google_task_id;
+            if (r.calendar_event_id && !calendarEventId) calendarEventId = r.calendar_event_id;
+          }
+        }
+      }
+    }
+
+    // 1 & 2. Run Google Calendar insert/patch and Google Tasks insert/patch in parallel
     await Promise.all([
       (async () => {
         if (skipCalendar || !calendarApi) return;
@@ -71,6 +98,20 @@ export async function POST(req: NextRequest) {
           };
           if (rrule) {
             calReqBody.recurrence = [rrule];
+          }
+
+          if (calendarEventId && !isStandaloneEvent) {
+            try {
+              await calendarApi.events.patch({
+                calendarId: targetCalId,
+                eventId: calendarEventId,
+                requestBody: calReqBody,
+              });
+              return;
+            } catch {
+              // If old event ID was deleted on Google Calendar, fall through to insert
+              calendarEventId = null;
+            }
           }
 
           const calRes = await calendarApi.events.insert({
@@ -88,13 +129,28 @@ export async function POST(req: NextRequest) {
       (async () => {
         if (!shouldCreateTask || !tasksApi || !hasCredentials) return;
         try {
+          const taskBody = {
+            title: title.trim(),
+            notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
+            due: `${date}T00:00:00.000Z`,
+          };
+
+          if (taskId) {
+            try {
+              await tasksApi.tasks.patch({
+                tasklist: targetTaskListId,
+                task: taskId,
+                requestBody: taskBody,
+              });
+              return;
+            } catch {
+              taskId = null;
+            }
+          }
+
           const taskRes = await tasksApi.tasks.insert({
             tasklist: targetTaskListId,
-            requestBody: {
-              title: title.trim(),
-              notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
-              due: `${date}T00:00:00.000Z`,
-            },
+            requestBody: taskBody,
           });
 
           taskId = taskRes.data.id || null;
@@ -105,7 +161,6 @@ export async function POST(req: NextRequest) {
       })(),
     ]);
 
-    const sb = supabaseAdmin || supabase;
     let createdItem = null;
 
     if (sb) {
@@ -113,8 +168,7 @@ export async function POST(req: NextRequest) {
       const rowsToInsert: Record<string, unknown>[] = [];
 
       if (isStandaloneEvent || calendarEventId) {
-        rowsToInsert.push({
-          id: crypto.randomUUID(),
+        const eventPayload = {
           title: eventSummary,
           type: 'Event',
           calendar_name: calCat || 'Kevin Nguyen',
@@ -125,17 +179,30 @@ export async function POST(req: NextRequest) {
           notes: description || '',
           calendar_event_id: calendarEventId,
           google_task_id: taskId,
-          recurrence_rule: rrule || null,
           is_scheduled: true,
           is_completed: false,
-          created_at: nowIso,
           updated_at: nowIso,
-        });
+        };
+
+        if (existingEventRow && !isStandaloneEvent) {
+          const { data: updatedEv } = await sb
+            .from('tasks')
+            .update(eventPayload)
+            .eq('id', existingEventRow.id)
+            .select()
+            .single();
+          createdItem = updatedEv || { id: existingEventRow.id, ...eventPayload };
+        } else {
+          rowsToInsert.push({
+            id: crypto.randomUUID(),
+            ...eventPayload,
+            created_at: nowIso,
+          });
+        }
       }
 
       if (shouldCreateTask) {
-        rowsToInsert.push({
-          id: crypto.randomUUID(),
+        const taskPayload = {
           title: title.trim(),
           type: 'Task',
           calendar_name: calCat || 'School',
@@ -146,17 +213,39 @@ export async function POST(req: NextRequest) {
           notes: description || '',
           google_task_id: taskId,
           calendar_event_id: calendarEventId,
-          recurrence_rule: rrule || null,
           is_scheduled: Boolean(calendarEventId),
           is_completed: false,
-          created_at: nowIso,
           updated_at: nowIso,
-        });
+        };
+
+        if (existingTaskRow) {
+          const { data: updatedTk } = await sb
+            .from('tasks')
+            .update(taskPayload)
+            .eq('id', existingTaskRow.id)
+            .select()
+            .single();
+          if (!createdItem) createdItem = updatedTk || { id: existingTaskRow.id, ...taskPayload };
+        } else {
+          rowsToInsert.push({
+            id: crypto.randomUUID(),
+            ...taskPayload,
+            created_at: nowIso,
+          });
+        }
       }
 
       if (rowsToInsert.length > 0) {
-        const { data: insertedRows } = await sb.from('tasks').insert(rowsToInsert).select();
-        createdItem = (insertedRows && insertedRows[0]) || rowsToInsert[0];
+        const { data: insertedRows, error: insertErr } = await sb
+          .from('tasks')
+          .insert(rowsToInsert)
+          .select();
+        if (insertErr) {
+          console.error('Supabase tasks insert error in /api/schedule:', insertErr.message);
+        }
+        if (!createdItem) {
+          createdItem = (insertedRows && insertedRows[0]) || rowsToInsert[0];
+        }
       }
     }
 

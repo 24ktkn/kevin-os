@@ -4,6 +4,7 @@ import { RescheduleRequest, RescheduleResponse, TaskItem, CalendarName } from '@
 import {
   cleanTaskTitle,
   titlesMatch,
+  isTaskEventTitle,
   parseTimeToHoursMinutes,
   format24hTo12h,
   computeStartEndIso,
@@ -138,8 +139,9 @@ export async function POST(req: NextRequest) {
       (async () => {
         if (!calendarApi) return;
         try {
-          // Fallback search in Google Calendar only if event was expected or createTimeblock wasn't explicitly false
-          if (!targetCalEventId && cleanSearchTitle && resolvedTask?.type === 'Event') {
+          // Always search Google Calendar by title when targetCalEventId is not yet known
+          // (e.g. when rescheduling from School Sync or when the Task row had no calendar_event_id linked yet)
+          if (!targetCalEventId && cleanSearchTitle) {
             const calCandidates = [
               activeCalId,
               ...Object.values(CALENDAR_MAP).filter((c) => c !== activeCalId),
@@ -154,17 +156,25 @@ export async function POST(req: NextRequest) {
                   maxResults: 25,
                 });
 
-                const match = (listRes.data.items || []).find(
+                const matches = (listRes.data.items || []).filter(
                   (ev) => ev.summary && titlesMatch(ev.summary, itemTitle)
                 );
 
-                if (match?.id) {
-                  targetCalEventId = match.id;
+                if (matches.length > 0 && matches[0].id) {
+                  targetCalEventId = matches[0].id;
                   activeCalId = cId;
                   for (const [cName, mappedId] of Object.entries(CALENDAR_MAP)) {
                     if (mappedId === cId) {
                       targetCalendarName = cName as CalendarName;
                       break;
+                    }
+                  }
+
+                  // Clean up any extra duplicate [Task] timeblocks for the same item on this calendar
+                  for (let i = 1; i < matches.length; i++) {
+                    const dup = matches[i];
+                    if (dup.id && isTaskEventTitle(dup.summary || '')) {
+                      calendarApi.events.delete({ calendarId: cId, eventId: dup.id }).catch(() => {});
                     }
                   }
                   break;
@@ -220,6 +230,34 @@ export async function POST(req: NextRequest) {
                 } catch {
                   // Ignore and continue
                 }
+              }
+            }
+
+            // Also remove any secondary duplicate [Task] events on activeCalId that match this task title
+            if (cleanSearchTitle && scope !== 'series') {
+              try {
+                const listRes = await calendarApi.events.list({
+                  calendarId: activeCalId,
+                  q: cleanSearchTitle.slice(0, 35),
+                  singleEvents: true,
+                  maxResults: 20,
+                });
+                for (const ev of listRes.data.items || []) {
+                  if (
+                    ev.id &&
+                    ev.id !== targetCalEventId &&
+                    ev.summary &&
+                    isTaskEventTitle(ev.summary) &&
+                    titlesMatch(ev.summary, itemTitle)
+                  ) {
+                    await calendarApi.events.delete({
+                      calendarId: activeCalId,
+                      eventId: ev.id,
+                    });
+                  }
+                }
+              } catch {
+                // Ignore duplicate cleanup errors
               }
             }
           } else if (createTimeblock === true) {
@@ -379,7 +417,6 @@ export async function POST(req: NextRequest) {
 
       await Promise.all([
         (async () => {
-          if (idsToUpdate.size === 0) return;
           const updatePayload: Record<string, unknown> = {
             due_date: newDate,
             due_time: formatted12h,
@@ -396,14 +433,62 @@ export async function POST(req: NextRequest) {
             updatePayload.google_task_id = targetGoogleTaskId;
           }
 
-          const { data: updatedList } = await sb
-            .from('tasks')
-            .update(updatePayload)
-            .in('id', Array.from(idsToUpdate))
-            .select();
+          if (idsToUpdate.size > 0) {
+            const { data: updatedList } = await sb
+              .from('tasks')
+              .update(updatePayload)
+              .in('id', Array.from(idsToUpdate))
+              .select();
 
-          if (updatedList && updatedList.length > 0) {
-            updatedTaskRecord = (updatedList.find((u) => u.type === 'Task') || updatedList[0]) as TaskItem;
+            if (updatedList && updatedList.length > 0) {
+              updatedTaskRecord = (updatedList.find((u) => u.type === 'Task') || updatedList[0]) as TaskItem;
+            }
+          } else if (itemTitle) {
+            // If neither Event nor Task row existed in Supabase tasks yet, insert them so future operations stay linked
+            const cleanDisplay = itemTitle.replace(/^(?:[🎓☑️📚📝⏰]\s*)*\[Task\]\s*/i, '').trim();
+            const rowsToInsert: Record<string, unknown>[] = [];
+            if (targetCalEventId) {
+              rowsToInsert.push({
+                id: crypto.randomUUID(),
+                title: `🎓 [Task] ${cleanDisplay}`,
+                type: 'Event',
+                calendar_name: targetCalendarName,
+                due_date: newDate,
+                due_time: formatted12h,
+                duration_mins: finalDuration,
+                is_completed: false,
+                is_scheduled: true,
+                calendar_event_id: targetCalEventId,
+                google_task_id: targetGoogleTaskId,
+                notes: currentNotes || '',
+                created_at: nowIso,
+                updated_at: nowIso,
+              });
+            }
+            if (targetGoogleTaskId) {
+              rowsToInsert.push({
+                id: crypto.randomUUID(),
+                title: cleanDisplay,
+                type: 'Task',
+                calendar_name: targetCalendarName,
+                due_date: newDate,
+                due_time: formatted12h,
+                duration_mins: finalDuration,
+                is_completed: false,
+                is_scheduled: Boolean(targetCalEventId),
+                calendar_event_id: targetCalEventId,
+                google_task_id: targetGoogleTaskId,
+                notes: currentNotes || '',
+                created_at: nowIso,
+                updated_at: nowIso,
+              });
+            }
+            if (rowsToInsert.length > 0) {
+              const { data: insertedList } = await sb.from('tasks').insert(rowsToInsert).select();
+              if (insertedList && insertedList.length > 0) {
+                updatedTaskRecord = (insertedList.find((u) => u.type === 'Task') || insertedList[0]) as TaskItem;
+              }
+            }
           }
         })(),
 
