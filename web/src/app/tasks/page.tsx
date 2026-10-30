@@ -136,12 +136,35 @@ export default function MissionControlPage() {
 
   useEffect(() => {
     fetchTasks();
-    fetch('/api/auth/google-tasks')
+    // Automatically run background two-way sync with Google Calendar & Google Tasks on load
+    fetch('/api/tasks/sync')
       .then((r) => r.json())
       .then((d) => {
-        if (d.connected === false) setTasksAuthError(true);
+        setTasksAuthError(Boolean(d.tasksAuthError || d.results?.tasksAuthError));
+        fetchTasks(true);
       })
       .catch(() => {});
+
+    // Also re-sync automatically when switching back to this browser tab (e.g. after dragging an event in Google Calendar)
+    let lastSyncMs = Date.now();
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+        lastSyncMs = Date.now();
+        fetch('/api/tasks/sync')
+          .then((r) => r.json())
+          .then((d) => {
+            setTasksAuthError(Boolean(d.tasksAuthError || d.results?.tasksAuthError));
+            fetchTasks(true);
+          })
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
   }, [fetchTasks]);
 
   const handleRescheduleSuccess = (rescheduled: {

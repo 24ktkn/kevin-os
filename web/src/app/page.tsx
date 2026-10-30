@@ -215,7 +215,25 @@ export default function HomePage() {
 
   useEffect(() => {
     loadAll();
-  }, [loadAll]);
+
+    // Re-sync with Google Calendar & Tasks when switching back to the dashboard tab
+    let lastSyncMs = Date.now();
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+        lastSyncMs = Date.now();
+        fetch('/api/tasks/sync')
+          .then((res) => res.json())
+          .then(() => fetchTodayTasks())
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
+  }, [loadAll, fetchTodayTasks]);
 
   // Group today's tasks into deduplicated unified items
   const unifiedAgendaItems = useMemo(() => {

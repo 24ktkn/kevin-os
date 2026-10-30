@@ -360,6 +360,23 @@ export default function SchoolSyncPage() {
   useEffect(() => {
     fetchCalendar();
     loadStoredData();
+
+    // Re-sync when switching back to the School Sync tab after moving events in Google Calendar
+    let lastSyncMs = Date.now();
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+        lastSyncMs = Date.now();
+        fetch('/api/tasks/sync')
+          .then(() => loadStoredData())
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
   }, [loadStoredData]);
 
   // Persist handlers (Updates LocalStorage + Supabase in parallel)
