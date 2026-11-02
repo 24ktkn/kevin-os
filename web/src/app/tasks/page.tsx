@@ -55,6 +55,7 @@ export default function MissionControlPage() {
   const [newTaskLocation, setNewTaskLocation] = useState('');
   const [newTaskNotes, setNewTaskNotes] = useState('');
   const [createTimeblock, setCreateTimeblock] = useState(false);
+  const [noDueDate, setNoDueDate] = useState(false);
   const [newTaskRepeat, setNewTaskRepeat] = useState<RepeatOption>('None');
   const [submittingTask, setSubmittingTask] = useState(false);
   const [reschedulingTask, setReschedulingTask] = useState<TaskItem | null>(null);
@@ -290,15 +291,20 @@ export default function MissionControlPage() {
     setSubmittingTask(true);
     const newId = crypto.randomUUID();
     const isEvent = modalMode === 'Event';
+    const isOngoingNoDueDate = !isEvent && !createTimeblock && (noDueDate || !newTaskDate);
+    const todayStr = getTodayDateStr();
+    const effectiveDueDate = isOngoingNoDueDate ? todayStr : newTaskDate || todayStr;
+    const effectiveTime = isEvent || createTimeblock ? newTaskTime : '';
+    const effectiveDuration = isEvent || createTimeblock ? newTaskDuration : 0;
 
     const taskItem: TaskItem = {
       id: newId,
       title: newTaskTitle.trim(),
       type: isEvent ? 'Event' : createTimeblock ? 'Event' : 'Task',
       calendar_name: newTaskCalendar,
-      due_date: newTaskDate,
-      due_time: newTaskTime,
-      duration_mins: newTaskDuration,
+      due_date: effectiveDueDate,
+      due_time: effectiveTime,
+      duration_mins: effectiveDuration,
       location: newTaskLocation.trim(),
       is_completed: false,
       is_scheduled: isEvent || createTimeblock,
@@ -360,7 +366,7 @@ export default function MissionControlPage() {
         }
         await fetchTasks(true);
       } else {
-        // 2c. Standalone Task (Google Tasks & Supabase)
+        // 2c. Standalone Task (Google Tasks & Supabase) — omit date in Google Tasks if noDueDate is checked
         try {
           const res = await fetch('/api/schedule', {
             method: 'POST',
@@ -368,8 +374,8 @@ export default function MissionControlPage() {
             body: JSON.stringify({
               title: taskItem.title,
               description: taskItem.notes,
-              date: taskItem.due_date,
-              time: taskItem.due_time,
+              date: isOngoingNoDueDate ? '' : taskItem.due_date,
+              time: '',
               duration: 0,
               calendar: taskItem.calendar_name,
               skipCalendar: true,
@@ -387,8 +393,7 @@ export default function MissionControlPage() {
             await supabase.from('tasks').insert([taskItem]);
           }
         }
-        const todayStr = getTodayDateStr();
-        if (taskItem.due_date && taskItem.due_date <= todayStr) {
+        if (isOngoingNoDueDate || (taskItem.due_date && taskItem.due_date <= todayStr)) {
           setActiveTab('today');
         } else {
           setActiveTab('backlog');
@@ -399,6 +404,7 @@ export default function MissionControlPage() {
       setNewTaskTitle('');
       setNewTaskLocation('');
       setNewTaskNotes('');
+      setNoDueDate(false);
       setIsAddModalOpen(false);
     } catch (err) {
       console.error('Failed to create item:', err);
@@ -929,48 +935,49 @@ export default function MissionControlPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-zinc-400 block mb-1">
-                    {modalMode === 'Event' ? 'Event Date *' : 'Due Date'}
+              {modalMode === 'Task' && (
+                <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-800/50 flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                      <RotateCcw className="h-3.5 w-3.5 text-cyan-400" /> Ongoing Daily Task (No Due Date)
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      Appears on Today&apos;s Agenda &amp; Today&apos;s Tasks and automatically rolls over to the next day until checked off.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={noDueDate}
+                      onChange={(e) => {
+                        setNoDueDate(e.target.checked);
+                        if (e.target.checked) setCreateTimeblock(false);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500"></div>
                   </label>
-                  <input
-                    type="date"
-                    required={modalMode === 'Event'}
-                    value={newTaskDate}
-                    onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
-                    onChange={(e) => setNewTaskDate(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
-                  />
                 </div>
-                <div>
-                  <label className="text-zinc-400 block mb-1">
-                    {modalMode === 'Event' ? 'Start Time *' : 'Start Time'}
-                  </label>
-                  <input
-                    type="text"
-                    required={modalMode === 'Event'}
-                    placeholder="10:00 AM"
-                    value={newTaskTime}
-                    onChange={(e) => setNewTaskTime(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 font-mono"
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-zinc-400 block mb-1">Duration (Mins)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={600}
-                    value={newTaskDuration}
-                    onChange={(e) => setNewTaskDuration(parseInt(e.target.value, 10) || 30)}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-                <div>
+                {(!noDueDate || modalMode === 'Event') && (
+                  <div>
+                    <label className="text-zinc-400 block mb-1">
+                      {modalMode === 'Event' ? 'Event Date *' : 'Due Date'}
+                    </label>
+                    <input
+                      type="date"
+                      required={modalMode === 'Event'}
+                      value={newTaskDate}
+                      onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                      onChange={(e) => setNewTaskDate(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
+                    />
+                  </div>
+                )}
+
+                <div className={noDueDate && modalMode === 'Task' ? 'col-span-2' : ''}>
                   <label className="text-zinc-400 block mb-1">
                     {modalMode === 'Event' ? 'Target Calendar' : 'Category / Calendar'}
                   </label>
@@ -986,6 +993,35 @@ export default function MissionControlPage() {
                   </select>
                 </div>
               </div>
+
+              {(modalMode === 'Event' || createTimeblock) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-zinc-400 block mb-1">
+                      {modalMode === 'Event' ? 'Start Time *' : 'Timeblock Start Time'}
+                    </label>
+                    <input
+                      type="text"
+                      required={modalMode === 'Event'}
+                      placeholder="10:00 AM"
+                      value={newTaskTime}
+                      onChange={(e) => setNewTaskTime(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-zinc-400 block mb-1">Duration (Mins)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={600}
+                      value={newTaskDuration}
+                      onChange={(e) => setNewTaskDuration(parseInt(e.target.value, 10) || 30)}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               {modalMode === 'Event' && (
                 <div>
@@ -1040,18 +1076,20 @@ export default function MissionControlPage() {
                   <span>Syncs directly to your selected Google Calendar & appears under Upcoming Events.</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="timeblock"
-                    checked={createTimeblock}
-                    onChange={(e) => setCreateTimeblock(e.target.checked)}
-                    className="rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-0 cursor-pointer"
-                  />
-                  <label htmlFor="timeblock" className="text-zinc-300 cursor-pointer">
-                    Also create Google Calendar timeblock event
-                  </label>
-                </div>
+                !noDueDate && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="timeblock"
+                      checked={createTimeblock}
+                      onChange={(e) => setCreateTimeblock(e.target.checked)}
+                      className="rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="timeblock" className="text-zinc-300 cursor-pointer">
+                      Also create Google Calendar timeblock event
+                    </label>
+                  </div>
+                )
               )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">

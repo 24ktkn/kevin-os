@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
-import { computeStartEndIso, cleanTaskTitle, titlesMatch } from '@/lib/date-utils';
+import { computeStartEndIso, cleanTaskTitle, titlesMatch, getTodayDateStr } from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
   TASKLIST_MAP,
@@ -33,10 +33,12 @@ export async function POST(req: NextRequest) {
       recurrenceRule,
     } = body;
 
-    if (!title || !date) {
+    if (!title || (!date && !skipCalendar)) {
       return NextResponse.json({ error: 'Missing required title or date' }, { status: 400 });
     }
 
+    const effectiveDate = date || getTodayDateStr();
+    const hasExplicitDueDate = Boolean(date && date.trim().length > 0);
     const durationMins = parseInt(duration, 10) || 60;
     const targetCalId = CALENDAR_MAP[calCat] || CALENDAR_MAP['Kevin Nguyen'] || CALENDAR_MAP['School'];
     const targetTaskListId = TASKLIST_MAP[calCat] || TASKLIST_MAP['Kevin Nguyen'] || TASKLIST_MAP['School'];
@@ -44,7 +46,7 @@ export async function POST(req: NextRequest) {
     const eventTime = time ? time.trim() : '10:00 AM';
     const rrule = recurrenceRule || (repeat && RRULE_MAP[repeat] ? RRULE_MAP[repeat] : null);
 
-    const { startDateTime, endDateTime } = computeStartEndIso(date, eventTime, durationMins);
+    const { startDateTime, endDateTime } = computeStartEndIso(effectiveDate, eventTime, durationMins);
 
     let calendarEventId: string | null = null;
     let calendarError: string | null = null;
@@ -129,11 +131,17 @@ export async function POST(req: NextRequest) {
       (async () => {
         if (!shouldCreateTask || !tasksApi || !hasCredentials) return;
         try {
-          const taskBody = {
+          const taskNotes = skipCalendar
+            ? description || ''
+            : `⏰ Scheduled: ${eventTime} (${durationMins}m)${description ? `\n\n${description}` : ''}`;
+
+          const taskBody: { title: string; notes: string; due?: string } = {
             title: title.trim(),
-            notes: `⏰ Scheduled: ${eventTime} (${durationMins}m)\n\n${description || ''}`,
-            due: `${date}T00:00:00.000Z`,
+            notes: taskNotes,
           };
+          if (hasExplicitDueDate) {
+            taskBody.due = `${effectiveDate}T00:00:00.000Z`;
+          }
 
           if (taskId) {
             try {
@@ -172,7 +180,7 @@ export async function POST(req: NextRequest) {
           title: eventSummary,
           type: 'Event',
           calendar_name: calCat || 'Kevin Nguyen',
-          due_date: date,
+          due_date: effectiveDate,
           due_time: eventTime,
           duration_mins: durationMins,
           location: location || '',
@@ -206,7 +214,7 @@ export async function POST(req: NextRequest) {
           title: title.trim(),
           type: 'Task',
           calendar_name: calCat || 'School',
-          due_date: date,
+          due_date: effectiveDate,
           due_time: skipCalendar ? '' : eventTime,
           duration_mins: skipCalendar ? 0 : durationMins,
           location: location || '',
