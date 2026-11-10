@@ -211,6 +211,17 @@ export default function HomePage() {
       .then((res) => res.json())
       .then(() => fetchTodayTasks())
       .catch((err) => console.warn('Homepage background task sync error:', err));
+
+    // Background sync with Google Health API v4 to pull latest biometrics, sleep & workouts
+    fetch('/api/health/google-sync?days=3')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && data?.syncedCount > 0) {
+          fetchHealth();
+          fetchHabits();
+        }
+      })
+      .catch(() => {});
   }, [fetchHealth, fetchHabits, fetchTodayTasks]);
 
   useEffect(() => {

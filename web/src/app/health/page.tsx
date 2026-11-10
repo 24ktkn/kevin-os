@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AnalyticsSummary, DayMetricPoint, MonthRollup } from '../api/health/analytics/route';
 import { getTodayDateStr } from '@/lib/date-utils';
+import GoogleHealthConnectBanner from '@/components/health/GoogleHealthConnectBanner';
 
 type Timeframe = 'week' | 'month' | 'year';
 
@@ -135,8 +136,46 @@ export default function HealthTrackerPage() {
     fetchAnalytics(timeframe);
   }, [timeframe, fetchAnalytics]);
 
+  // Background Google Health sync on mount & tab focus
+  useEffect(() => {
+    fetch('/api/health/google-sync?days=7')
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success && res.syncedCount > 0) {
+          fetchAnalytics(timeframe);
+        }
+      })
+      .catch(() => {});
+
+    let lastSyncMs = Date.now();
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 60_000) {
+        lastSyncMs = Date.now();
+        fetch('/api/health/google-sync?days=3')
+          .then((r) => r.json())
+          .then((res) => {
+            if (res.success && res.syncedCount > 0) {
+              fetchAnalytics(timeframe);
+            }
+          })
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
+  }, [timeframe, fetchAnalytics]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
+    try {
+      await fetch('/api/health/google-sync?days=14', { method: 'POST' });
+    } catch {
+      // ignore if not connected yet
+    }
     await fetchAnalytics(timeframe);
   };
 
@@ -238,6 +277,9 @@ export default function HealthTrackerPage() {
           </button>
         </div>
       </div>
+
+      {/* Google Health API v4 Connection & Auto-Sync Banner */}
+      <GoogleHealthConnectBanner onSynced={() => fetchAnalytics(timeframe)} />
 
       {loading ? (
         <div className="space-y-4">

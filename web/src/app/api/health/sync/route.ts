@@ -5,7 +5,7 @@ import { getCalendarDateString, parseSleepDuration } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
-interface BiometricInput {
+export interface BiometricInput {
   date?: string;
   steps?: number | string;
   rhr?: number | string;
@@ -51,7 +51,7 @@ function formatTimeString(isoString?: string): string {
   }
 }
 
-async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string) {
+export async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string) {
   try {
     const sheets = getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
@@ -115,7 +115,7 @@ async function mirrorBiometricsToSheets(updatedRow: string[], targetDate: string
   }
 }
 
-async function processBiometricRecord(
+export async function processBiometricRecord(
   body: BiometricInput,
   sb: ReturnType<typeof createSupabaseTypeHelper>,
   skipSheetsMirror = false
