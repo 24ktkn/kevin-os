@@ -201,21 +201,7 @@ export async function verifyGoogleHealthToken(accessToken: string): Promise<{
   error?: string;
 }> {
   try {
-    const res = await fetch(`${GOOGLE_HEALTH_BASE_URL}/users/getIdentity`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
-
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      return { ok: true, identity: data };
-    }
-
-    // Fallback check against a standard v4 dataTypes endpoint
-    const fallbackRes = await fetch(
+    const res = await fetch(
       `${GOOGLE_HEALTH_BASE_URL}/users/me/dataTypes/daily-resting-heart-rate/dataPoints?pageSize=1`,
       {
         headers: {
@@ -226,15 +212,16 @@ export async function verifyGoogleHealthToken(accessToken: string): Promise<{
       }
     );
 
-    if (fallbackRes.ok) {
-      return { ok: true };
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: true, identity: data };
     }
 
-    const errJson = await fallbackRes.json().catch(() => ({}));
+    const errJson = await res.json().catch(() => ({}));
     const errMsg =
       errJson?.error?.message ||
       errJson?.error_description ||
-      `HTTP ${fallbackRes.status} ${fallbackRes.statusText}`;
+      `HTTP ${res.status} ${res.statusText}`;
     return { ok: false, error: errMsg };
   } catch (err: unknown) {
     return {
