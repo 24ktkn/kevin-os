@@ -87,6 +87,7 @@ export default function HomePage() {
   const [loadingHabits, setLoadingHabits] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState<string | null>(null);
   const [togglingHabit, setTogglingHabit] = useState<string | null>(null);
 
   // Fetch Health Biometrics
@@ -200,7 +201,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [fetchTodayTasks]);
 
-  // Load all initial data
+  // Load all initial data (fast initial paint + background cloud sync)
   const loadAll = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
@@ -222,6 +223,34 @@ export default function HomePage() {
         }
       })
       .catch(() => {});
+  }, [fetchHealth, fetchHabits, fetchTodayTasks]);
+
+  // Explicit 1-click "Sync Health & Calendar" button handler: awaits both Google APIs first, then refreshes UI
+  const handleManualSyncAll = useCallback(async () => {
+    setRefreshing(true);
+    setSyncStatusText(null);
+    try {
+      const [healthSyncRes, taskSyncRes] = await Promise.all([
+        fetch('/api/health/google-sync?days=7', { method: 'POST' })
+          .then((r) => r.json())
+          .catch(() => null),
+        fetch('/api/tasks/sync')
+          .then((r) => r.json())
+          .catch(() => null),
+      ]);
+
+      await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
+
+      const healthDays = healthSyncRes?.syncedCount ?? 0;
+      const calSynced =
+        (taskSyncRes?.results?.eventsSynced ?? 0) + (taskSyncRes?.results?.tasksSynced ?? 0);
+      setSyncStatusText(
+        `Synced Google Health (${healthDays}d) & Calendar/Tasks (${calSynced})`
+      );
+      setTimeout(() => setSyncStatusText(null), 5000);
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchHealth, fetchHabits, fetchTodayTasks]);
 
   useEffect(() => {
@@ -436,14 +465,21 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {syncStatusText && (
+            <span className="text-[11px] font-medium text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{syncStatusText}</span>
+            </span>
+          )}
+
           <button
-            onClick={loadAll}
+            onClick={handleManualSyncAll}
             disabled={refreshing}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs font-medium text-zinc-300 hover:text-white transition shadow-sm"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-400 text-xs font-semibold text-emerald-300 hover:text-white transition shadow-sm disabled:opacity-50"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
-            <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-emerald-400' : 'text-emerald-400'}`} />
+            <span>{refreshing ? 'Syncing Health & Calendar...' : 'Sync Health & Calendar'}</span>
           </button>
 
           <Link
@@ -472,7 +508,16 @@ export default function HomePage() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-zinc-400 hidden sm:inline">Apple Health Synced</span>
+            <button
+              type="button"
+              onClick={handleManualSyncAll}
+              disabled={refreshing}
+              className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition disabled:opacity-50"
+              title="Pull latest biometrics, sleep & workouts from Google Health API v4"
+            >
+              <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Google Health Sync</span>
+            </button>
             <Link
               href="/health"
               className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition"
