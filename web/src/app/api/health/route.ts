@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
-import { parseSleepDuration as baseParseSleep, formatDisplayTime as baseFormatTime } from '@/lib/date-utils';
+import {
+  parseSleepDuration as baseParseSleep,
+  formatDisplayTime as baseFormatTime,
+  getCalendarDateString,
+} from '@/lib/date-utils';
+import { fetchGoogleHealthDailyRecords } from '@/lib/google-health';
+import { processBiometricRecord } from './sync/route';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,8 +46,9 @@ export async function GET(req: NextRequest) {
     const requestedDate = url.searchParams.get('date')?.trim();
 
     const sb = supabaseAdmin || supabase;
+    const todayEastern = getCalendarDateString(undefined, 'America/New_York');
 
-    // 1. Primary: Load from Supabase biometrics (sub-20ms)
+    // 1. Primary: Load from Supabase biometrics (and auto-sync from Google Health if today's sleep is not yet recorded)
     if (sb) {
       try {
         let query = sb.from('biometrics').select('*');
@@ -51,7 +58,51 @@ export async function GET(req: NextRequest) {
           query = query.order('date', { ascending: false }).limit(1);
         }
 
-        const { data: records, error } = await query;
+        let { data: records, error } = await query;
+        const firstRow = !error && records && records.length > 0 ? records[0] : null;
+        const needsMorningGoogleSync =
+          !requestedDate &&
+          (!firstRow ||
+            String(firstRow.date).trim() < todayEastern ||
+            !(Number(firstRow.sleep_hours) > 0));
+
+        if (needsMorningGoogleSync) {
+          try {
+            const { records: ghRecords } = await fetchGoogleHealthDailyRecords(2);
+            for (const rec of ghRecords) {
+              await processBiometricRecord(
+                {
+                  date: rec.date,
+                  steps: rec.steps,
+                  rhr: rec.rhr,
+                  hrv: rec.hrv,
+                  weight: rec.weight,
+                  sleep: rec.sleep,
+                  sleepTime: rec.sleepTime,
+                  wakeTime: rec.wakeTime,
+                  workoutCalories: rec.workoutCalories,
+                  workoutDuration: rec.workoutDuration,
+                  timezone: 'America/New_York',
+                },
+                sb,
+                ghRecords.length > 1
+              );
+            }
+            if (ghRecords.length > 0) {
+              const refreshed = await sb
+                .from('biometrics')
+                .select('*')
+                .order('date', { ascending: false })
+                .limit(1);
+              if (!refreshed.error && refreshed.data && refreshed.data.length > 0) {
+                records = refreshed.data;
+              }
+            }
+          } catch {
+            // Non-fatal if Google Health has no new records yet
+          }
+        }
+
         if (!error && records && records.length > 0) {
           const target = records[0];
 

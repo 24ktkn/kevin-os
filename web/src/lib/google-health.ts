@@ -18,14 +18,20 @@ function cleanEnvVal(val?: string): string {
 }
 
 let runtimeHealthRefreshToken = '';
+let runtimeHealthClientId = '';
+let runtimeHealthClientSecret = '';
 let lastHealthTokenDbCheckMs = 0;
 
 export function getGoogleHealthOAuthConfig() {
   const clientId = cleanEnvVal(
-    process.env.GOOGLE_HEALTH_CLIENT_ID || process.env.GOOGLE_TASKS_CLIENT_ID
+    runtimeHealthClientId ||
+      process.env.GOOGLE_HEALTH_CLIENT_ID ||
+      process.env.GOOGLE_TASKS_CLIENT_ID
   );
   const clientSecret = cleanEnvVal(
-    process.env.GOOGLE_HEALTH_CLIENT_SECRET || process.env.GOOGLE_TASKS_CLIENT_SECRET
+    runtimeHealthClientSecret ||
+      process.env.GOOGLE_HEALTH_CLIENT_SECRET ||
+      process.env.GOOGLE_TASKS_CLIENT_SECRET
   );
   const authUrl = clientId
     ? `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
@@ -41,7 +47,7 @@ export function getGoogleHealthOAuthConfig() {
 }
 
 /**
- * Persists the Google Health OAuth refresh token to Supabase and local .env.local.
+ * Persists the Google Health OAuth refresh token (and OAuth client credentials) to Supabase and local .env.local.
  */
 export async function saveGoogleHealthRefreshToken(newToken: string): Promise<void> {
   const cleaned = cleanEnvVal(newToken);
@@ -49,6 +55,12 @@ export async function saveGoogleHealthRefreshToken(newToken: string): Promise<vo
 
   runtimeHealthRefreshToken = cleaned;
   lastHealthTokenDbCheckMs = Date.now();
+
+  const { clientId, clientSecret } = getGoogleHealthOAuthConfig();
+  const payloadStr =
+    clientId && clientSecret
+      ? JSON.stringify({ refreshToken: cleaned, clientId, clientSecret })
+      : cleaned;
 
   const sb = supabaseAdmin || supabase;
   if (sb) {
@@ -59,7 +71,7 @@ export async function saveGoogleHealthRefreshToken(newToken: string): Promise<vo
         category: 'system',
         is_completed: false,
         is_scheduled: false,
-        target_calendar: cleaned,
+        target_calendar: payloadStr,
         updated_at: new Date().toISOString(),
       });
     } catch (err) {
@@ -87,7 +99,7 @@ export async function saveGoogleHealthRefreshToken(newToken: string): Promise<vo
 }
 
 /**
- * Loads the Google Health refresh token from Supabase or environment variables.
+ * Loads the Google Health refresh token (and OAuth client credentials if bundled) from Supabase or environment variables.
  */
 export async function loadGoogleHealthRefreshTokenFromDb(force = false): Promise<string> {
   const now = Date.now();
@@ -106,9 +118,21 @@ export async function loadGoogleHealthRefreshTokenFromDb(force = false): Promise
 
       lastHealthTokenDbCheckMs = now;
       if (data?.target_calendar) {
-        const dbToken = cleanEnvVal(data.target_calendar);
-        if (dbToken) {
-          runtimeHealthRefreshToken = dbToken;
+        const raw = String(data.target_calendar).trim();
+        if (raw.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.refreshToken) runtimeHealthRefreshToken = cleanEnvVal(parsed.refreshToken);
+            if (parsed.clientId) runtimeHealthClientId = cleanEnvVal(parsed.clientId);
+            if (parsed.clientSecret) runtimeHealthClientSecret = cleanEnvVal(parsed.clientSecret);
+          } catch {
+            runtimeHealthRefreshToken = cleanEnvVal(raw);
+          }
+        } else {
+          const dbToken = cleanEnvVal(raw);
+          if (dbToken) {
+            runtimeHealthRefreshToken = dbToken;
+          }
         }
       }
     } catch {
@@ -131,8 +155,8 @@ export async function getGoogleHealthAccessTokenAsync(forceReload = false): Prom
   authUrl: string;
   error?: string;
 }> {
-  const { clientId, clientSecret, authUrl } = getGoogleHealthOAuthConfig();
   const refreshToken = await loadGoogleHealthRefreshTokenFromDb(forceReload);
+  const { clientId, clientSecret, authUrl } = getGoogleHealthOAuthConfig();
 
   if (!clientId || !clientSecret || !refreshToken) {
     return {

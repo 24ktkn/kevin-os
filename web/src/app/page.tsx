@@ -227,7 +227,7 @@ export default function HomePage() {
   useEffect(() => {
     loadAll();
 
-    // Re-sync with Google Calendar & Tasks when switching back to the dashboard tab
+    // Re-sync with Google Calendar, Tasks & Health when switching back to the dashboard tab
     let lastSyncMs = Date.now();
     const onVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
@@ -235,6 +235,15 @@ export default function HomePage() {
         fetch('/api/tasks/sync')
           .then((res) => res.json())
           .then(() => fetchTodayTasks())
+          .catch(() => {});
+        fetch('/api/health/google-sync?days=3')
+          .then((res) => res.json())
+          .then((data) => {
+            if (data?.success && data?.syncedCount > 0) {
+              fetchHealth();
+              fetchHabits();
+            }
+          })
           .catch(() => {});
       }
     };
