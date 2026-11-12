@@ -390,15 +390,96 @@ export async function fetchGoogleHealthDailyRecords(daysBack = 7): Promise<{
 
   // Run all 6 Google Health v4 metric fetches in parallel
   await Promise.all([
-    // 1. STEPS (dailyRollUp first, fallback to reconcile/dataPoints)
+    // 1. STEPS (Apple Watch priority + non-overlapping iPhone interval deduplication, fallback to dailyRollUp)
     (async () => {
       try {
-        const [startY, startM, startD] = minDateStr.split('-').map(Number);
-        const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000);
-        const [endY, endM, endD] = toEasternDateStr(tomorrow).split('-').map(Number);
-
-        let gotRollup = false;
+        let gotDeduplicatedSteps = false;
         try {
+          const rawData = await fetchHealthEndpoint(
+            accessToken,
+            '/users/me/dataTypes/steps/dataPoints?pageSize=2500'
+          );
+          const rawPts = Array.isArray(rawData?.dataPoints) ? rawData.dataPoints : [];
+          if (rawPts.length > 0) {
+            const ptsByDate = new Map<string, any[]>();
+            for (const p of rawPts) {
+              const s = p.steps || p;
+              const dStr = parseCivilDateObj(
+                s?.interval?.civilStartTime ||
+                  s?.interval?.startTime ||
+                  s?.startTime ||
+                  s?.date
+              );
+              if (!dStr) continue;
+              let arr = ptsByDate.get(dStr);
+              if (!arr) {
+                arr = [];
+                ptsByDate.set(dStr, arr);
+              }
+              arr.push(p);
+            }
+
+            for (const [dStr, dayPts] of ptsByDate.entries()) {
+              const rec = ensureDay(dStr);
+              if (!rec) continue;
+
+              const watchPts = dayPts.filter(
+                (p) => p?.dataSource?.device?.formFactor !== 'PHONE'
+              );
+              const phonePts = dayPts.filter(
+                (p) => p?.dataSource?.device?.formFactor === 'PHONE'
+              );
+
+              if (watchPts.length > 0 && phonePts.length > 0) {
+                const watchIntervals = watchPts.map((p) => {
+                  const iv = p.steps?.interval || p.interval || {};
+                  return {
+                    start: new Date(iv.startTime || 0).getTime(),
+                    end: new Date(iv.endTime || 0).getTime(),
+                    count: Number(p.steps?.count ?? p.steps?.countSum ?? 0),
+                  };
+                });
+
+                const watchSum = watchIntervals.reduce((acc, w) => acc + w.count, 0);
+                let nonOverlapPhone = 0;
+                for (const p of phonePts) {
+                  const iv = p.steps?.interval || p.interval || {};
+                  const pStart = new Date(iv.startTime || 0).getTime();
+                  const pEnd = new Date(iv.endTime || 0).getTime();
+                  const c = Number(p.steps?.count ?? p.steps?.countSum ?? 0);
+                  const overlaps = watchIntervals.some(
+                    (w) => pStart <= w.end + 60_000 && pEnd >= w.start - 60_000
+                  );
+                  if (!overlaps) {
+                    nonOverlapPhone += c;
+                  }
+                }
+                const totalSteps = Math.round(watchSum + nonOverlapPhone);
+                if (totalSteps > 0) {
+                  rec.steps = totalSteps;
+                  gotDeduplicatedSteps = true;
+                }
+              } else {
+                const sum = dayPts.reduce(
+                  (acc, p) => acc + Number(p.steps?.count ?? p.steps?.countSum ?? 0),
+                  0
+                );
+                if (sum > 0) {
+                  rec.steps = Math.round(sum);
+                  gotDeduplicatedSteps = true;
+                }
+              }
+            }
+          }
+        } catch {
+          // Fallback to dailyRollUp below
+        }
+
+        if (!gotDeduplicatedSteps) {
+          const [startY, startM, startD] = minDateStr.split('-').map(Number);
+          const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000);
+          const [endY, endM, endD] = toEasternDateStr(tomorrow).split('-').map(Number);
+
           const rollupData = await fetchHealthEndpoint(
             accessToken,
             '/users/me/dataTypes/steps/dataPoints:dailyRollUp',
@@ -435,34 +516,7 @@ export async function fetchGoogleHealthDailyRecords(daysBack = 7): Promise<{
               const rec = ensureDay(dStr);
               if (rec && countVal > 0) {
                 rec.steps = Math.max(rec.steps || 0, Math.round(countVal));
-                gotRollup = true;
               }
-            }
-          }
-        } catch {
-          // Fallback to reconcile below
-        }
-
-        if (!gotRollup) {
-          const stepPoints = await fetchDataPointsWithFallback(accessToken, 'steps', true, 2500);
-          const dailyStepSums = new Map<string, number>();
-          for (const dp of stepPoints) {
-            const s = dp.steps || dp;
-            const startRaw =
-              s?.interval?.startTime ||
-              s?.startTime ||
-              s?.sampleTime?.physicalTime ||
-              s?.date;
-            const dStr = parseCivilDateObj(startRaw);
-            const c = Number(s?.count ?? s?.countSum ?? s?.value ?? 0);
-            if (dStr && c > 0) {
-              dailyStepSums.set(dStr, (dailyStepSums.get(dStr) || 0) + c);
-            }
-          }
-          for (const [dStr, sum] of dailyStepSums.entries()) {
-            const rec = ensureDay(dStr);
-            if (rec && sum > 0) {
-              rec.steps = Math.max(rec.steps || 0, Math.round(sum));
             }
           }
         }

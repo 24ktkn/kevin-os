@@ -38,6 +38,7 @@ async function handleGoogleHealthSync(req: NextRequest) {
         {
           date: rec.date,
           steps: rec.steps,
+          overwriteSteps: true,
           rhr: rec.rhr,
           hrv: rec.hrv,
           weight: rec.weight,

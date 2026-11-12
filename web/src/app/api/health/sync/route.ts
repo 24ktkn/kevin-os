@@ -147,9 +147,12 @@ export async function processBiometricRecord(
     }
   }
 
-  // Incoming steps (cumulative within a day)
+  // Incoming steps (cumulative within a day unless authoritative overwriteSteps is set)
   const incomingSteps = parseInt(String(body.steps ?? body.Steps ?? 0), 10) || 0;
-  const finalSteps = Math.max(existingRecord?.steps || 0, incomingSteps);
+  const finalSteps =
+    body.overwriteSteps && incomingSteps > 0
+      ? incomingSteps
+      : Math.max(existingRecord?.steps || 0, incomingSteps);
 
   // Incoming HRV
   const incomingHrv = parseFloat(String(body.hrv ?? body.HRV ?? 0)) || 0;
