@@ -7,6 +7,8 @@ import {
   isTaskEventTitle,
   cleanTaskTitle,
   computeStartEndIso,
+  parseTimeToHoursMinutes,
+  format24hTo12h,
 } from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
@@ -15,6 +17,12 @@ import {
   getGoogleTasksClientAsync,
   buildScheduledNotesTag,
 } from '@/lib/google-calendar';
+import {
+  BusyInterval,
+  RolloverTaskCandidate,
+  AssignedRolloverSlot,
+  planRolloverTimeSlotsWithAI,
+} from '@/lib/ai-rollover-scheduler';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +32,7 @@ interface PreCleanedSchoolRow {
   clean: string;
   is_completed: boolean;
   scheduled_date?: string | null;
+  duration_mins?: number | null;
 }
 
 interface PreCleanedTaskRow {
@@ -63,6 +72,7 @@ export async function GET() {
   const syncResults = {
     calendarEventsSynced: 0,
     tasksSynced: 0,
+    aiRolloverRescheduled: 0,
     errors: [] as string[],
   };
   const sb = supabaseAdmin || supabase;
@@ -90,7 +100,7 @@ export async function GET() {
     (async () => {
       if (!sb) return;
       const [schoolRes, tasksRes, eventsRes] = await Promise.all([
-        sb.from('school_items').select('uid, title, is_completed, scheduled_date'),
+        sb.from('school_items').select('uid, title, is_completed, scheduled_date, duration_mins'),
         sb
           .from('tasks')
           .select('id, title, due_date, due_time, duration_mins, google_task_id, calendar_event_id, calendar_name, is_completed, is_scheduled')
@@ -111,6 +121,7 @@ export async function GET() {
             clean: cleanTaskTitle(r.title),
             is_completed: Boolean(r.is_completed),
             scheduled_date: r.scheduled_date,
+            duration_mins: r.duration_mins,
           }));
       }
 
@@ -214,6 +225,114 @@ export async function GET() {
 
       const duplicateEventIdsToDelete: string[] = [];
 
+      // Pre-pass: Collect all busy intervals on todayStr and all past incomplete task timeblocks to roll over via AI
+      const todayBusyBlocks: BusyInterval[] = [];
+      const rolloverCandidates: RolloverTaskCandidate[] = [];
+
+      for (const { calName, events } of calendarResponses) {
+        for (const ev of events) {
+          if (!ev.summary || !ev.id || !ev.start?.dateTime) continue;
+
+          const start = new Date(ev.start.dateTime);
+          const evDateStr = start.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+          const evTimeStr = start.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: 'America/New_York',
+          });
+
+          let evDurationMins = 60;
+          if (ev.end?.dateTime) {
+            const end = new Date(ev.end.dateTime);
+            evDurationMins = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60000));
+          }
+
+          const { hours, minutes } = parseTimeToHoursMinutes(evTimeStr);
+          const startMins = hours * 60 + minutes;
+          const endMins = startMins + evDurationMins;
+
+          const cleanEvTitle = cleanTaskTitle(ev.summary);
+          const isTaskBlock = isTaskEventTitle(ev.summary);
+
+          // Check whether this item is already marked completed in DB or Google Tasks
+          const existingEv = eventsByCalEventId.get(ev.id)?.[0];
+          const matchedTk =
+            tasksByCalEventId.get(ev.id) ||
+            (isTaskBlock && cleanEvTitle
+              ? allDbTasks.find(
+                  (tk) =>
+                    (!tk.calendar_event_id || tk.calendar_event_id === ev.id) &&
+                    titlesMatchClean(tk.clean, cleanEvTitle)
+                )
+              : undefined);
+          const matchedSchool =
+            isTaskBlock && cleanEvTitle
+              ? allSchoolRows.find((s) => titlesMatchClean(s.clean, cleanEvTitle))
+              : undefined;
+
+          let isDoneInGoogleTasks = false;
+          if (isTaskBlock && cleanEvTitle) {
+            for (const [, gItems] of prefetchedTasklists.entries()) {
+              const gMatch = gItems.find(
+                (item) =>
+                  (matchedTk?.google_task_id && item.id === matchedTk.google_task_id) ||
+                  (item.title && titlesMatchClean(cleanTaskTitle(item.title), cleanEvTitle))
+              );
+              if (gMatch?.status === 'completed') {
+                isDoneInGoogleTasks = true;
+                break;
+              }
+            }
+          }
+
+          const isCompleted =
+            Boolean(existingEv?.is_completed) ||
+            Boolean(matchedTk?.is_completed) ||
+            Boolean(matchedSchool?.is_completed) ||
+            isDoneInGoogleTasks;
+
+          if (evDateStr === todayStr && !isCompleted) {
+            const endH = Math.floor((endMins % 1440) / 60);
+            const endM = endMins % 60;
+            todayBusyBlocks.push({
+              id: ev.id,
+              title: ev.summary,
+              calendar: calName,
+              startMins,
+              endMins,
+              startTime12h: evTimeStr,
+              endTime12h: format24hTo12h(endH, endM),
+            });
+          } else if (isTaskBlock && !isCompleted && evDateStr < todayStr) {
+            const predeterminedDuration =
+              evDurationMins ||
+              matchedTk?.duration_mins ||
+              matchedSchool?.duration_mins ||
+              30;
+
+            rolloverCandidates.push({
+              id: ev.id,
+              title: cleanEvTitle || ev.summary,
+              calendar: calName,
+              durationMins: predeterminedDuration,
+              preferredTimeStr: evTimeStr,
+            });
+          }
+        }
+      }
+
+      // If any incomplete online modules / task timeblocks need to roll over from past days to todayStr,
+      // use the AI Rollover Scheduler to place each into an empty timeblock on todayStr that fits its duration
+      let rolloverSlotMap = new Map<string, AssignedRolloverSlot>();
+      if (rolloverCandidates.length > 0) {
+        rolloverSlotMap = await planRolloverTimeSlotsWithAI(
+          todayStr,
+          todayBusyBlocks,
+          rolloverCandidates
+        );
+      }
+
       for (const { calName, calId, events } of calendarResponses) {
         for (const ev of events) {
           if (!ev.summary || !ev.id) continue;
@@ -277,9 +396,18 @@ export async function GET() {
               ? isMarkedDoneInDb
               : isEventPast(dateStr, timeStr === 'All Day' ? '' : timeStr, durationMins) || isMarkedDoneInDb;
 
-            // Auto-rollover incomplete task timeblocks from past dates to todayStr
+            // Auto-rollover incomplete task timeblocks from past dates to todayStr using AI empty-slot scheduling
+            let wasRolledOverFromPast = false;
             if (isTaskBlock && !isItemCompleted && dateStr < todayStr) {
+              wasRolledOverFromPast = true;
               dateStr = todayStr;
+              const aiSlot = rolloverSlotMap.get(ev.id);
+              if (aiSlot) {
+                timeStr = aiSlot.startTime12h;
+                durationMins = aiSlot.durationMins;
+                syncResults.aiRolloverRescheduled++;
+              }
+
               if (ev.start?.dateTime && timeStr !== 'All Day') {
                 try {
                   const { startDateTime, endDateTime } = computeStartEndIso(todayStr, timeStr, durationMins);
@@ -407,6 +535,7 @@ export async function GET() {
             if (matchedTask) {
               const effectiveTime = timeStr === 'All Day' ? '' : timeStr;
               const dateOrTimeChanged =
+                wasRolledOverFromPast ||
                 matchedTask.due_date !== dateStr ||
                 (effectiveTime && matchedTask.due_time !== effectiveTime);
 

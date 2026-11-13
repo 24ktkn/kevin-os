@@ -98,8 +98,11 @@ export default function MissionControlPage() {
             }
 
             // Auto-rollover incomplete tasks and task timeblocks from past dates to today
+            // (Only write client-side due_date for non-timeblocked tasks; timeblocked tasks are AI-relocated by /api/tasks/sync)
             if (!t.is_completed && isTaskOrTaskBlock && t.due_date && t.due_date < todayStr) {
-              rolloverTaskIds.push(t.id);
+              if (!t.calendar_event_id && !isTaskEventTitle(t.title)) {
+                rolloverTaskIds.push(t.id);
+              }
               return { ...t, due_date: todayStr };
             }
 

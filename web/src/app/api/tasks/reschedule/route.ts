@@ -8,6 +8,7 @@ import {
   parseTimeToHoursMinutes,
   format24hTo12h,
   computeStartEndIso,
+  getTimezoneOffsetStr,
 } from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
@@ -15,6 +16,10 @@ import {
   getGoogleCalendarClient,
   getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
+import {
+  BusyInterval,
+  planRolloverTimeSlotsWithAI,
+} from '@/lib/ai-rollover-scheduler';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +42,7 @@ export async function POST(req: NextRequest) {
       durationMins = 30,
       scope = 'instance',
       createTimeblock,
+      autoFindEmptySlot,
     } = body;
 
     if (!newDate) {
@@ -121,9 +127,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { hours, minutes } = parseTimeToHoursMinutes(newTime);
-    const formatted12h = format24hTo12h(hours, minutes);
-    const finalDuration = Math.max(0, parseInt(String(durationMins), 10) || 30);
-    const { startDateTime, endDateTime } = computeStartEndIso(newDate, formatted12h, finalDuration || 30);
+    let formatted12h = format24hTo12h(hours, minutes);
+    const finalDuration = Math.max(
+      5,
+      parseInt(String(durationMins), 10) || resolvedTask?.duration_mins || 30
+    );
+    let aiSlotReasoning: string | undefined;
 
     let patchedCalendar = false;
     let patchedTask = false;
@@ -132,6 +141,84 @@ export async function POST(req: NextRequest) {
     const calendarApi = getGoogleCalendarClient();
     const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     let activeCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['School'] || CALENDAR_MAP['Kevin Nguyen'];
+
+    // If autoFindEmptySlot is requested, query all 4 Google Calendars on newDate and let AI pick an open slot
+    if (autoFindEmptySlot && calendarApi) {
+      try {
+        const tzOffset = getTimezoneOffsetStr(newDate);
+        const dayTimeMin = `${newDate}T00:00:00${tzOffset}`;
+        const dayTimeMax = `${newDate}T23:59:59${tzOffset}`;
+
+        const busyOnTargetDate: BusyInterval[] = [];
+        await Promise.all(
+          Object.entries(CALENDAR_MAP).map(async ([cName, cId]) => {
+            try {
+              const res = await calendarApi.events.list({
+                calendarId: cId,
+                timeMin: dayTimeMin,
+                timeMax: dayTimeMax,
+                singleEvents: true,
+                orderBy: 'startTime',
+              });
+              for (const ev of res.data.items || []) {
+                if (!ev.summary || !ev.start?.dateTime) continue;
+                // Exclude the item currently being rescheduled so it doesn't block itself
+                if (targetCalEventId && ev.id === targetCalEventId) continue;
+                if (cleanSearchTitle && isTaskEventTitle(ev.summary) && titlesMatch(ev.summary, itemTitle)) {
+                  continue;
+                }
+
+                const start = new Date(ev.start.dateTime);
+                const evTimeStr = start.toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                  timeZone: 'America/New_York',
+                });
+                let evDur = 60;
+                if (ev.end?.dateTime) {
+                  const end = new Date(ev.end.dateTime);
+                  evDur = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60000));
+                }
+                const parsed = parseTimeToHoursMinutes(evTimeStr);
+                const sMins = parsed.hours * 60 + parsed.minutes;
+                const eMins = sMins + evDur;
+                busyOnTargetDate.push({
+                  id: ev.id || undefined,
+                  title: ev.summary,
+                  calendar: cName,
+                  startMins: sMins,
+                  endMins: eMins,
+                  startTime12h: evTimeStr,
+                  endTime12h: format24hTo12h(Math.floor((eMins % 1440) / 60), eMins % 60),
+                });
+              }
+            } catch {
+              // ignore individual calendar fetch error
+            }
+          })
+        );
+
+        const slotMap = await planRolloverTimeSlotsWithAI(newDate, busyOnTargetDate, [
+          {
+            id: 'reschedule-target',
+            title: cleanSearchTitle || itemTitle || 'Task',
+            calendar: targetCalendarName,
+            durationMins: finalDuration,
+            preferredTimeStr: newTime || resolvedTask?.due_time,
+          },
+        ]);
+        const chosen = slotMap.get('reschedule-target');
+        if (chosen) {
+          formatted12h = chosen.startTime12h;
+          aiSlotReasoning = chosen.reasoning;
+        }
+      } catch (aiErr) {
+        console.warn('autoFindEmptySlot fallback in reschedule:', aiErr);
+      }
+    }
+
+    const { startDateTime, endDateTime } = computeStartEndIso(newDate, formatted12h, finalDuration || 30);
 
     // 2 & 3. Run Google Calendar and Google Tasks updates in parallel
     await Promise.all([
@@ -513,8 +600,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json<RescheduleResponse>({
       success: true,
-      message: `Rescheduled to ${newDate} at ${formatted12h} (${finalDuration}m)`,
+      message: aiSlotReasoning
+        ? `AI scheduled to ${newDate} at ${formatted12h} (${finalDuration}m) — ${aiSlotReasoning}`
+        : `Rescheduled to ${newDate} at ${formatted12h} (${finalDuration}m)`,
       updatedTask: updatedTaskRecord || undefined,
+      assignedTime: formatted12h,
+      aiSlotReasoning,
       patchedCalendar,
       patchedTask,
       patchedSchool,

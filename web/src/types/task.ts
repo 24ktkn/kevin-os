@@ -34,12 +34,15 @@ export interface RescheduleRequest {
   durationMins?: number;
   scope?: 'instance' | 'series';
   createTimeblock?: boolean;
+  autoFindEmptySlot?: boolean;
 }
 
 export interface RescheduleResponse {
   success: boolean;
   message?: string;
   updatedTask?: TaskItem;
+  assignedTime?: string;
+  aiSlotReasoning?: string;
   patchedCalendar?: boolean;
   patchedTask?: boolean;
   patchedSchool?: boolean;

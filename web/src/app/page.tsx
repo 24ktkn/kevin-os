@@ -158,8 +158,11 @@ export default function HomePage() {
             }
 
             // Incomplete tasks or task timeblocks from past days: automatically roll over to today
+            // (Only write client-side due_date for non-timeblocked tasks; timeblocked tasks are AI-relocated by /api/tasks/sync)
             if (!t.is_completed && isTaskOrTaskBlock && t.due_date < todayStr) {
-              rolloverTaskIds.push(t.id);
+              if (!t.calendar_event_id && !isTaskEventTitle(t.title)) {
+                rolloverTaskIds.push(t.id);
+              }
               processed.push({ ...t, due_date: todayStr });
               continue;
             }

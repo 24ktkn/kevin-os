@@ -86,9 +86,13 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
     setSelectedDate(addDaysToDateStr(todayStr, daysUntilMonday));
   };
 
-  const handleReschedule = async (e?: React.FormEvent) => {
+  const handleReschedule = async (
+    e?: React.FormEvent,
+    options?: { autoFindEmptySlot?: boolean; overrideDate?: string }
+  ) => {
     if (e) e.preventDefault();
-    if (!item || !selectedDate) return;
+    const targetDate = options?.overrideDate || selectedDate;
+    if (!item || !targetDate) return;
 
     setSubmitting(true);
     setErrorMsg('');
@@ -102,11 +106,12 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
         schoolUid: item.schoolUid,
         title: item.title,
         calendarName: selectedCalendar,
-        newDate: selectedDate,
+        newDate: targetDate,
         newTime: selectedTime,
         durationMins: selectedDuration,
         scope: recurrenceScope,
-        createTimeblock: !isTimeblocked ? addTimeblock : true,
+        createTimeblock: options?.autoFindEmptySlot ? true : !isTimeblocked ? addTimeblock : true,
+        autoFindEmptySlot: Boolean(options?.autoFindEmptySlot),
       };
 
       const res = await fetch('/api/tasks/reschedule', {
@@ -121,11 +126,14 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
         throw new Error(data.error || 'Failed to reschedule item');
       }
 
+      const finalAssignedTime = data.assignedTime || selectedTime;
+      setSelectedDate(targetDate);
+      setSelectedTime(finalAssignedTime);
       setSuccessMsg(data.message || 'Successfully rescheduled!');
       if (onSuccess) {
         onSuccess({
-          newDate: selectedDate,
-          newTime: selectedTime,
+          newDate: targetDate,
+          newTime: finalAssignedTime,
           durationMins: selectedDuration,
           updatedTask: data.updatedTask,
         });
@@ -134,7 +142,7 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
       // Close modal automatically after brief success confirmation
       setTimeout(() => {
         onClose();
-      }, 500);
+      }, 650);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown reschedule error';
       setErrorMsg(msg);
@@ -260,6 +268,33 @@ export default function RescheduleModal({ isOpen, onClose, item, onSuccess }: Re
                 {preset.label}
               </button>
             ))}
+          </div>
+
+          {/* 1-Click AI Smart Empty-Slot Reschedule Actions */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <button
+              type="button"
+              disabled={submitting || deleting}
+              onClick={() => {
+                const tomorrowStr = addDaysToDateStr(getTodayDateStr(), 1);
+                handleReschedule(undefined, { autoFindEmptySlot: true, overrideDate: tomorrowStr });
+              }}
+              className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600/30 to-cyan-600/30 hover:from-purple-600/45 hover:to-cyan-600/45 border border-purple-500/40 text-purple-200 hover:text-white text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+              <span>AI Auto-Slot Tomorrow ({selectedDuration}m)</span>
+            </button>
+            <button
+              type="button"
+              disabled={submitting || deleting || !selectedDate}
+              onClick={() => {
+                handleReschedule(undefined, { autoFindEmptySlot: true });
+              }}
+              className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-cyan-500/40 text-cyan-300 hover:text-white text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+              <span>AI Find Empty Slot on {selectedDate || 'Date'}</span>
+            </button>
           </div>
         </div>
 
