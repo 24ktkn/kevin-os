@@ -152,7 +152,7 @@ export default function MissionControlPage() {
     // Also re-sync automatically when switching back to this browser tab (e.g. after dragging an event in Google Calendar)
     let lastSyncMs = Date.now();
     const onVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 5_000) {
         lastSyncMs = Date.now();
         fetch('/api/tasks/sync')
           .then((r) => r.json())

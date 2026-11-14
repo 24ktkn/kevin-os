@@ -262,7 +262,7 @@ export default function HomePage() {
     // Re-sync with Google Calendar, Tasks & Health when switching back to the dashboard tab
     let lastSyncMs = Date.now();
     const onVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 5_000) {
         lastSyncMs = Date.now();
         fetch('/api/tasks/sync')
           .then((res) => res.json())

@@ -537,7 +537,8 @@ export async function GET() {
               const dateOrTimeChanged =
                 wasRolledOverFromPast ||
                 matchedTask.due_date !== dateStr ||
-                (effectiveTime && matchedTask.due_time !== effectiveTime);
+                (effectiveTime && matchedTask.due_time !== effectiveTime) ||
+                matchedTask.duration_mins !== durationMins;
 
               await sb
                 .from('tasks')
