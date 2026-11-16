@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Activity,
@@ -32,7 +32,12 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { TaskItem, CalendarName } from '@/types/task';
-import { isEventPast, getTodayDateStr, isTaskEventTitle, cleanDisplayTitle } from '@/lib/date-utils';
+import {
+  isEventPast,
+  getTodayDateStr,
+  isTaskEventTitle,
+  titlesMatch,
+} from '@/lib/date-utils';
 import { groupTodayAgendaItems, UnifiedAgendaItem } from '@/lib/agenda-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 
@@ -121,6 +126,7 @@ export default function HomePage() {
   }, []);
 
   const [reschedulingItem, setReschedulingItem] = useState<UnifiedAgendaItem | null>(null);
+  const mutationSeqRef = useRef(0);
 
   // Fetch Today's Tasks & Events from Supabase with auto-rollover for incomplete tasks
   const fetchTodayTasks = useCallback(async () => {
@@ -211,9 +217,14 @@ export default function HomePage() {
     setRefreshing(false);
 
     // Background sync with Google Calendar & Google Tasks to pull in any external updates
+    const syncSeq = mutationSeqRef.current;
     fetch('/api/tasks/sync')
       .then((res) => res.json())
-      .then(() => fetchTodayTasks())
+      .then(() => {
+        if (mutationSeqRef.current === syncSeq) {
+          fetchTodayTasks();
+        }
+      })
       .catch((err) => console.warn('Homepage background task sync error:', err));
 
     // Background sync with Google Health API v4 to pull latest biometrics, sleep & workouts
@@ -264,9 +275,14 @@ export default function HomePage() {
     const onVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 5_000) {
         lastSyncMs = Date.now();
+        const syncSeq = mutationSeqRef.current;
         fetch('/api/tasks/sync')
           .then((res) => res.json())
-          .then(() => fetchTodayTasks())
+          .then(() => {
+            if (mutationSeqRef.current === syncSeq) {
+              fetchTodayTasks();
+            }
+          })
           .catch(() => {});
         fetch('/api/health/google-sync?days=3')
           .then((res) => res.json())
@@ -334,11 +350,38 @@ export default function HomePage() {
   };
 
   // Toggle Timeblock Only (Google Calendar / Supabase Event)
-  const toggleTimeblockOnly = async (eventId: string, currentCompleted: boolean) => {
+  const toggleTimeblockOnly = useCallback(async (
+    eventId: string,
+    currentCompleted: boolean,
+    rawTitle?: string,
+    calendarEventId?: string,
+    calendarName?: string
+  ) => {
+    mutationSeqRef.current += 1;
     const nextCompleted = !currentCompleted;
     setTodayTasks((prev) =>
       prev.map((t) => (t.id === eventId ? { ...t, is_completed: nextCompleted } : t))
     );
+
+    if (isTaskEventTitle(rawTitle)) {
+      try {
+        const res = await fetch('/api/tasks/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taskId: eventId,
+            calendarEventId,
+            title: rawTitle,
+            calendar_name: calendarName,
+            completed: nextCompleted,
+            timeblockOnly: true,
+          }),
+        });
+        if (res.ok) return;
+      } catch (err) {
+        console.error('Failed to sync timeblock completion:', err);
+      }
+    }
 
     if (supabase) {
       await supabase
@@ -346,94 +389,96 @@ export default function HomePage() {
         .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
         .eq('id', eventId);
     }
-  };
+  }, []);
 
   // Toggle Task Checklist Only (Google Tasks / School Sync / Supabase Task)
-  const toggleTaskOnly = async (
+  const toggleTaskOnly = useCallback(async (
     taskId: string,
     currentCompleted: boolean,
     title: string,
     calendarName: string,
     googleTaskId?: string
   ) => {
+    mutationSeqRef.current += 1;
     const nextCompleted = !currentCompleted;
     setTodayTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, is_completed: nextCompleted } : t))
     );
 
-    fetch('/api/tasks/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskId,
-        googleTaskId,
-        title,
-        calendar_name: calendarName,
-        completed: nextCompleted,
-      }),
-    }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
+    try {
+      const res = await fetch('/api/tasks/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          googleTaskId,
+          title,
+          calendar_name: calendarName,
+          completed: nextCompleted,
+        }),
+      });
+      if (res.ok) return;
+    } catch (err) {
+      console.error('Failed to sync task completion to Google Tasks:', err);
+    }
 
     if (supabase) {
-      const nowIso = new Date().toISOString();
-      const clean = cleanDisplayTitle(title);
-      await Promise.all([
-        supabase
-          .from('tasks')
-          .update({ is_completed: nextCompleted, updated_at: nowIso })
-          .eq('id', taskId),
-        clean
-          ? supabase
-              .from('school_items')
-              .update({ is_completed: nextCompleted, updated_at: nowIso })
-              .ilike('title', `%${clean}%`)
-          : Promise.resolve(),
-      ]);
+      await supabase
+        .from('tasks')
+        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+        .eq('id', taskId);
     }
-  };
+  }, []);
 
-  // Toggle Both Timeblock and Task Simultaneously (1-Click Complete Both)
-  const toggleBoth = async (
+  // Toggle Both Timeblock and Task Simultaneously (1-Click Complete Both or standalone [Task] block)
+  const toggleBoth = useCallback(async (
     eventId: string,
     taskId: string,
     currentCompleted: boolean,
     title: string,
     calendarName: string,
-    googleTaskId?: string
+    googleTaskId?: string,
+    calendarEventId?: string
   ) => {
+    mutationSeqRef.current += 1;
     const nextCompleted = !currentCompleted;
     setTodayTasks((prev) =>
-      prev.map((t) => (t.id === eventId || t.id === taskId ? { ...t, is_completed: nextCompleted } : t))
+      prev.map((t) =>
+        t.id === eventId ||
+        t.id === taskId ||
+        (googleTaskId && t.google_task_id === googleTaskId) ||
+        (calendarEventId && t.calendar_event_id === calendarEventId) ||
+        titlesMatch(t.title, title)
+          ? { ...t, is_completed: nextCompleted }
+          : t
+      )
     );
 
-    fetch('/api/tasks/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskId,
-        googleTaskId,
-        title,
-        calendar_name: calendarName,
-        completed: nextCompleted,
-      }),
-    }).catch((err) => console.error('Failed to sync task completion to Google Tasks:', err));
+    try {
+      const res = await fetch('/api/tasks/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          googleTaskId,
+          calendarEventId,
+          title,
+          calendar_name: calendarName,
+          completed: nextCompleted,
+        }),
+      });
+      if (res.ok) return;
+    } catch (err) {
+      console.error('Failed to sync task completion to Google Tasks:', err);
+    }
 
     if (supabase) {
-      const nowIso = new Date().toISOString();
-      const clean = cleanDisplayTitle(title);
-      await Promise.all([
-        supabase
-          .from('tasks')
-          .update({ is_completed: nextCompleted, updated_at: nowIso })
-          .in('id', [eventId, taskId]),
-        clean
-          ? supabase
-              .from('school_items')
-              .update({ is_completed: nextCompleted, updated_at: nowIso })
-              .ilike('title', `%${clean}%`)
-          : Promise.resolve(),
-      ]);
+      await supabase
+        .from('tasks')
+        .update({ is_completed: nextCompleted, updated_at: new Date().toISOString() })
+        .in('id', Array.from(new Set([eventId, taskId])));
     }
-  };
+  }, []);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -861,7 +906,8 @@ export default function HomePage() {
                               item.allCompleted,
                               item.cleanTitle,
                               item.calendar_name,
-                              item.task!.googleTaskId
+                              item.task!.googleTaskId,
+                              item.timeblock!.calendarEventId
                             )
                           }
                           className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition flex items-center gap-1 cursor-pointer ${
@@ -891,7 +937,15 @@ export default function HomePage() {
                       {/* Pill 1: Calendar Timeblock */}
                       <button
                         type="button"
-                        onClick={() => toggleTimeblockOnly(item.timeblock!.id, item.timeblock!.isCompleted)}
+                        onClick={() =>
+                          toggleTimeblockOnly(
+                            item.timeblock!.id,
+                            item.timeblock!.isCompleted,
+                            item.rawTitle,
+                            item.timeblock!.calendarEventId,
+                            item.calendar_name
+                          )
+                        }
                         className={`p-2 rounded-xl border text-left transition flex items-start gap-2 cursor-pointer ${
                           item.timeblock!.isCompleted
                             ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
@@ -1000,7 +1054,25 @@ export default function HomePage() {
                     <button
                       onClick={() => {
                         if (item.timeblock) {
-                          toggleTimeblockOnly(item.timeblock.id, item.timeblock.isCompleted);
+                          if (isTaskEventTitle(item.rawTitle)) {
+                            toggleBoth(
+                              item.timeblock.id,
+                              item.timeblock.id,
+                              item.timeblock.isCompleted,
+                              item.cleanTitle,
+                              item.calendar_name,
+                              undefined,
+                              item.timeblock.calendarEventId
+                            );
+                          } else {
+                            toggleTimeblockOnly(
+                              item.timeblock.id,
+                              item.timeblock.isCompleted,
+                              item.rawTitle,
+                              item.timeblock.calendarEventId,
+                              item.calendar_name
+                            );
+                          }
                         } else if (item.task) {
                           toggleTaskOnly(
                             item.task.id,

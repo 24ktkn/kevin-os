@@ -350,7 +350,7 @@ export async function POST(req: NextRequest) {
           } else if (createTimeblock === true) {
             // Create brand new Google Calendar timeblock when requested
             try {
-              const cleanDisplay = itemTitle.replace(/^(?:[🎓☑️📚📝⏰]\s*)*\[Task\]\s*/i, '').trim();
+              const cleanDisplay = itemTitle.replace(/^(?:(?:✅|🎓|☑️|📚|📝|⏰)\uFE0F?\s*)*\[Task\]\s*/i, '').trim();
               const calSummary =
                 targetCalendarName === 'School'
                   ? `🎓 [Task] ${cleanDisplay}`

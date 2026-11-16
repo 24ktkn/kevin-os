@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   GraduationCap,
   BookOpen,
@@ -128,6 +128,8 @@ export default function SchoolSyncPage() {
     setReschedulingSchoolItem(null);
   };
 
+  const mutationSeqRef = useRef(0);
+
   // Load from Supabase (with fallback to localStorage)
   const loadStoredData = useCallback(async () => {
     const todayStr = getTodayDateStr();
@@ -198,7 +200,13 @@ export default function SchoolSyncPage() {
           }
 
           setOverrides((prev) => ({ ...prev, ...newOverrides }));
-          setCompletions((prev) => ({ ...prev, ...newCompletions }));
+          setCompletions((prev) => {
+            const merged = { ...prev, ...newCompletions };
+            try {
+              localStorage.setItem('kevin_school_completions', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
           setScheduledItems((prev) => {
             const merged = { ...prev, ...newScheduled };
             try {
@@ -216,10 +224,12 @@ export default function SchoolSyncPage() {
   // Check Google Tasks completion status and sync with local/Supabase
   const syncGoogleTasks = useCallback(async (currentEvents: SchoolEvent[]) => {
     setSyncingTasks(true);
+    const syncSeq = mutationSeqRef.current;
     try {
       const res = await fetch('/api/tasks/sync');
       const data = await res.json();
       setTasksAuthError(Boolean(data.tasksAuthError || data.results?.tasksAuthError));
+      if (mutationSeqRef.current !== syncSeq) return;
       const completedList: string[] = data.completedTitles || data.results?.completedTitles || [];
 
       if (completedList.length > 0) {
@@ -318,7 +328,7 @@ export default function SchoolSyncPage() {
           }
 
           if (updatePromises.length > 0) {
-            Promise.all(updatePromises).catch(() => {});
+            await Promise.all(updatePromises).catch(() => {});
           }
 
           if (Object.keys(newSchedFromDb).length > 0) {
@@ -332,12 +342,16 @@ export default function SchoolSyncPage() {
           }
         }
       }
+
+      if (mutationSeqRef.current === syncSeq) {
+        await loadStoredData();
+      }
     } catch (err) {
       console.error('Two-way task sync error:', err);
     } finally {
       setSyncingTasks(false);
     }
-  }, []);
+  }, [loadStoredData]);
 
   // Fetch school feed
   const fetchCalendar = async () => {
@@ -364,10 +378,15 @@ export default function SchoolSyncPage() {
     // Re-sync when switching back to the School Sync tab after moving events in Google Calendar
     let lastSyncMs = Date.now();
     const onVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 30_000) {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 5_000) {
         lastSyncMs = Date.now();
+        const syncSeq = mutationSeqRef.current;
         fetch('/api/tasks/sync')
-          .then(() => loadStoredData())
+          .then(() => {
+            if (mutationSeqRef.current === syncSeq) {
+              loadStoredData();
+            }
+          })
           .catch(() => {});
       }
     };
@@ -397,6 +416,7 @@ export default function SchoolSyncPage() {
   };
 
   const handleToggleComplete = async (uid: string, completed: boolean) => {
+    mutationSeqRef.current += 1;
     const updated = { ...completions, [uid]: completed };
     setCompletions(updated);
     localStorage.setItem('kevin_school_completions', JSON.stringify(updated));
@@ -404,36 +424,32 @@ export default function SchoolSyncPage() {
     const ev = events.find((e) => e.uid === uid);
     const title = ev?.summary || 'Untitled';
 
-    // 1. Sync directly to Google Tasks via complete API
+    // 1. Sync directly to Google Tasks, Google Calendar, and Supabase via complete API
     if (title && title !== 'Untitled') {
-      fetch('/api/tasks/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          calendar_name: 'School',
-          completed,
-        }),
-      }).catch((err) => console.error('Failed to sync school module completion to Google Tasks:', err));
+      try {
+        await fetch('/api/tasks/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title,
+            calendar_name: 'School',
+            completed,
+          }),
+        });
+      } catch (err) {
+        console.error('Failed to sync school module completion to Google Tasks:', err);
+      }
     }
 
+    // 2. Ensure the school_items row itself exists (for never-before-scheduled iCal items) and has latest timestamp
     if (supabase) {
-      const nowIso = new Date().toISOString();
-      await Promise.all([
-        supabase.from('school_items').upsert({
-          uid,
-          title,
-          category: overrides[uid] || ev?.category || 'module',
-          is_completed: completed,
-          updated_at: nowIso,
-        }),
-        title && title !== 'Untitled'
-          ? supabase
-              .from('tasks')
-              .update({ is_completed: completed, updated_at: nowIso })
-              .ilike('title', `%${title}%`)
-          : Promise.resolve(),
-      ]);
+      await supabase.from('school_items').upsert({
+        uid,
+        title,
+        category: overrides[uid] || ev?.category || 'module',
+        is_completed: completed,
+        updated_at: new Date().toISOString(),
+      });
     }
   };
 

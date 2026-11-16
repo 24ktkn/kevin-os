@@ -177,15 +177,43 @@ export function computeStartEndIso(
   };
 }
 
+const TASK_EVENT_PREFIX_REGEX = /^(?:(?:✅|🎓|☑️|📚|📝|⏰)\uFE0F?\s*)*\[Task\]/i;
+const TASK_EVENT_STRIP_REGEX = /^(?:(?:✅|🎓|☑️|📚|📝|⏰)\uFE0F?\s*)*\[Task\]\s*/i;
+
 /**
  * Checks if a calendar event summary represents a Task timeblock
- * (e.g. "🎓 [Task] ...", "☑️ [Task] ...", or "[Task] ...").
+ * (e.g. "🎓 [Task] ...", "✅ [Task] ...", "☑️ [Task] ...", or "[Task] ...").
  * Task timeblocks should only complete when the task is checked off, and roll over to today if incomplete.
  */
-export function isTaskEventTitle(title?: string): boolean {
+export function isTaskEventTitle(title?: string | null): boolean {
   if (!title) return false;
-  const trimmed = title.trim();
-  return /^(?:[🎓☑️📚📝⏰]\s*)*\[Task\]/i.test(trimmed);
+  return TASK_EVENT_PREFIX_REGEX.test(title.trim());
+}
+
+/**
+ * Checks if a Google Calendar event summary carries a completed checkmark prefix ("✅ ...").
+ */
+export function isCompletedCalendarTitle(title?: string | null): boolean {
+  if (!title) return false;
+  return /^\s*(?:✅|✔\uFE0F?)/.test(title);
+}
+
+/**
+ * Removes the "[Task]" prefix (and any leading status/category emoji) from a calendar summary.
+ */
+export function stripTaskEventPrefix(title?: string | null): string {
+  if (!title) return '';
+  return title.trim().replace(TASK_EVENT_STRIP_REGEX, '').trim();
+}
+
+/**
+ * Formats a "[Task]" calendar summary with either "✅ [Task]" (completed) or "🎓 [Task]" (active).
+ * Standalone non-task calendar events are returned unchanged.
+ */
+export function formatCompletedCalendarSummary(title: string, completed: boolean): string {
+  if (!isTaskEventTitle(title)) return title;
+  const body = stripTaskEventPrefix(title);
+  return completed ? `✅ [Task] ${body}` : `🎓 [Task] ${body}`;
 }
 
 /**
@@ -196,7 +224,7 @@ export function cleanDisplayTitle(str?: string): string {
   return str
     .replace(/\\,/g, ',')
     .replace(/\\/g, '')
-    .replace(/^(?:[🎓📚📝⏰☑️\s]+|\[Task\]\s*|Task:\s*)+/gi, '')
+    .replace(/^(?:(?:✅|🎓|📚|📝|⏰|☑️)\uFE0F?|\s+|\[Task\]\s*|Task:\s*)+/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

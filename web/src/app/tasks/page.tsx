@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Rocket,
   Plus,
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { TaskItem, CalendarName, RepeatOption } from '@/types/task';
 import { supabase } from '@/lib/supabase';
-import { isEventPast, getTodayDateStr, isTaskEventTitle, cleanDisplayTitle } from '@/lib/date-utils';
+import { isEventPast, getTodayDateStr, isTaskEventTitle, titlesMatch } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
 
@@ -62,6 +62,7 @@ export default function MissionControlPage() {
   const [taskToDelete, setTaskToDelete] = useState<TaskItem | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
   const [tasksAuthError, setTasksAuthError] = useState(false);
+  const mutationSeqRef = useRef(0);
 
   // Fetch tasks from Supabase (with localStorage fallback)
   const fetchTasks = useCallback(async (silent = false) => {
@@ -141,11 +142,14 @@ export default function MissionControlPage() {
   useEffect(() => {
     fetchTasks();
     // Automatically run background two-way sync with Google Calendar & Google Tasks on load
+    const initialSyncSeq = mutationSeqRef.current;
     fetch('/api/tasks/sync')
       .then((r) => r.json())
       .then((d) => {
         setTasksAuthError(Boolean(d.tasksAuthError || d.results?.tasksAuthError));
-        fetchTasks(true);
+        if (mutationSeqRef.current === initialSyncSeq) {
+          fetchTasks(true);
+        }
       })
       .catch(() => {});
 
@@ -154,11 +158,14 @@ export default function MissionControlPage() {
     const onVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastSyncMs > 5_000) {
         lastSyncMs = Date.now();
+        const syncSeq = mutationSeqRef.current;
         fetch('/api/tasks/sync')
           .then((r) => r.json())
           .then((d) => {
             setTasksAuthError(Boolean(d.tasksAuthError || d.results?.tasksAuthError));
-            fetchTasks(true);
+            if (mutationSeqRef.current === syncSeq) {
+              fetchTasks(true);
+            }
           })
           .catch(() => {});
       }
@@ -244,45 +251,49 @@ export default function MissionControlPage() {
 
   // Optimistic Toggle Task/Event Completion (Supports both checking and unchecking)
   const toggleTaskCompletion = async (id: string, currentStatus: boolean) => {
+    mutationSeqRef.current += 1;
     const updatedStatus = !currentStatus;
     const target = tasks.find((t) => t.id === id);
 
-    // Instant local UI update (< 5ms)
+    // Instant local UI update across matching sibling rows (< 5ms)
     setTasks((prev) => {
-      const next = prev.map((t) => (t.id === id ? { ...t, is_completed: updatedStatus } : t));
+      const next = prev.map((t) =>
+        t.id === id ||
+        (target?.google_task_id && t.google_task_id === target.google_task_id) ||
+        (target?.calendar_event_id && t.calendar_event_id === target.calendar_event_id) ||
+        (target?.title && titlesMatch(t.title, target.title))
+          ? { ...t, is_completed: updatedStatus }
+          : t
+      );
       localStorage.setItem('kevin_os_tasks', JSON.stringify(next));
       return next;
     });
 
-    // 1. Sync directly to Google Tasks and Supabase via complete API
-    fetch('/api/tasks/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        taskId: id,
-        googleTaskId: target?.google_task_id,
-        title: target?.title,
-        calendar_name: target?.calendar_name,
-        completed: updatedStatus,
-      }),
-    }).catch((err) => console.error('Failed to sync completion to Google Tasks:', err));
+    // Sync directly to Google Tasks, Google Calendar, and Supabase via complete API
+    try {
+      const res = await fetch('/api/tasks/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: id,
+          googleTaskId: target?.google_task_id,
+          calendarEventId: target?.calendar_event_id,
+          title: target?.title,
+          calendar_name: target?.calendar_name,
+          completed: updatedStatus,
+        }),
+      });
+      if (res.ok) return;
+    } catch (err) {
+      console.error('Failed to sync completion to Google Tasks:', err);
+    }
 
-    // 2. Direct Supabase update for instantaneous persistence
+    // Fallback direct Supabase update if API request fails
     if (supabase) {
-      const nowIso = new Date().toISOString();
-      const clean = target?.title ? cleanDisplayTitle(target.title) : '';
-      await Promise.all([
-        supabase
-          .from('tasks')
-          .update({ is_completed: updatedStatus, updated_at: nowIso })
-          .eq('id', id),
-        clean
-          ? supabase
-              .from('school_items')
-              .update({ is_completed: updatedStatus, updated_at: nowIso })
-              .ilike('title', `%${clean}%`)
-          : Promise.resolve(),
-      ]);
+      await supabase
+        .from('tasks')
+        .update({ is_completed: updatedStatus, updated_at: new Date().toISOString() })
+        .eq('id', id);
     }
   };
 

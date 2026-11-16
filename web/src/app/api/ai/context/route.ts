@@ -4,7 +4,7 @@ import {
   BacklogTask,
   AISchedulerContextResponse,
 } from '@/types/ai';
-import { getTodayDateStr, getTimezoneOffsetStr } from '@/lib/date-utils';
+import { getTodayDateStr, getTimezoneOffsetStr, isCompletedCalendarTitle } from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
   TASKLIST_MAP,
@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
 
         for (const { calName, items } of calResults) {
           for (const event of items) {
+            if (isCompletedCalendarTitle(event.summary)) continue;
             const startDateTime = event.start?.dateTime;
             const endDateTime = event.end?.dateTime;
             if (!startDateTime || !endDateTime) continue;
