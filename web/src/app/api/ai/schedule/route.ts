@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProposedTask, CalendarBusyBlock, AIScheduleResponse } from '@/types/ai';
 import { CalendarName } from '@/types/task';
-import { getTodayDateStr, format24hTo12h } from '@/lib/date-utils';
+import { getTodayDateStr, format24hTo12h, parseTimeToHoursMinutes, DEFAULT_TIMEZONE } from '@/lib/date-utils';
+import { hasIntervalConflict, findFirstEmptySlot } from '@/lib/ai-rollover-scheduler';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,11 +22,13 @@ function calculateEndTime(startTime24: string, durationMins: number): string {
 }
 
 async function callGemini(prompt: string, apiKey: string): Promise<string> {
-  const models = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+  const models = ['gemini-flash-lite-latest', 'gemini-3.5-flash', 'gemini-flash-latest'];
   let lastError = '';
 
   for (const model of models) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -37,6 +40,7 @@ async function callGemini(prompt: string, apiKey: string): Promise<string> {
             topP: 0.95,
           },
         }),
+        signal: controller.signal,
       });
 
       const data = await res.json();
@@ -49,6 +53,8 @@ async function callGemini(prompt: string, apiKey: string): Promise<string> {
       }
     } catch (e: unknown) {
       lastError = e instanceof Error ? e.message : String(e);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -132,10 +138,55 @@ JSON FORMAT:
 
     const validCalendars = new Set(['Kevin Nguyen', 'Family', 'School', 'Volunteering']);
 
+    // Build occupied busy intervals from context busyBlocks so we guarantee ZERO overlap even if Gemini slips up
+    const occupied: Array<{ startMins: number; endMins: number }> = [];
+    for (const b of busyBlocks as CalendarBusyBlock[]) {
+      let sMins = -1;
+      let eMins = -1;
+      if (b.startIso && b.endIso) {
+        const sd = new Date(b.startIso);
+        const ed = new Date(b.endIso);
+        if (!Number.isNaN(sd.getTime()) && !Number.isNaN(ed.getTime())) {
+          const sTimeStr = sd.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: DEFAULT_TIMEZONE,
+          });
+          const p = parseTimeToHoursMinutes(sTimeStr);
+          sMins = p.hours * 60 + p.minutes;
+          eMins = sMins + Math.max(5, Math.round((ed.getTime() - sd.getTime()) / 60000));
+        }
+      }
+      if (sMins < 0 && b.startTime && b.endTime) {
+        const ps = parseTimeToHoursMinutes(b.startTime);
+        const pe = parseTimeToHoursMinutes(b.endTime);
+        sMins = ps.hours * 60 + ps.minutes;
+        eMins = pe.hours * 60 + pe.minutes;
+      }
+      if (sMins >= 0 && eMins > sMins) {
+        occupied.push({ startMins: sMins, endMins: eMins });
+      }
+    }
+
     const scheduledTasks: ProposedTask[] = parsedTasks.map((t) => {
       const cal = validCalendars.has(t.calendar) ? t.calendar : 'Kevin Nguyen';
-      const start24 = t.startTime24h || '09:00';
       const dur = Math.max(15, parseInt(String(t.durationMins || 30), 10));
+      const parsedStart = parseTimeToHoursMinutes(t.startTime24h || '09:00');
+      const proposedStartMins = parsedStart.hours * 60 + parsedStart.minutes;
+      const proposedEndMins = proposedStartMins + dur;
+
+      const withinWindow = proposedStartMins >= 8 * 60 && proposedEndMins <= 22 * 60 + 30;
+      const chosenStartMins =
+        withinWindow && !hasIntervalConflict(proposedStartMins, proposedEndMins, occupied, 5)
+          ? proposedStartMins
+          : findFirstEmptySlot(dur, occupied, 8 * 60, proposedStartMins);
+
+      occupied.push({ startMins: chosenStartMins, endMins: chosenStartMins + dur });
+
+      const chH = Math.floor(chosenStartMins / 60) % 24;
+      const chM = chosenStartMins % 60;
+      const start24 = `${String(chH).padStart(2, '0')}:${String(chM).padStart(2, '0')}`;
       const end24 = calculateEndTime(start24, dur);
 
       return {

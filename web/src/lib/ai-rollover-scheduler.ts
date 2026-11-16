@@ -32,7 +32,8 @@ export interface AssignedRolloverSlot {
   reasoning: string;
 }
 
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+const GEMINI_MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash', 'gemini-flash-latest'];
+const GEMINI_TIMEOUT_MS = 8_000;
 const DAY_START_MINS = 8 * 60; // 08:00 AM (480)
 const DAY_END_MINS = 22 * 60;  // 10:00 PM (1320)
 const BUFFER_MINS = 5;         // Minimum 5-minute buffer around busy blocks
@@ -128,8 +129,13 @@ export function findFirstEmptySlot(
     }
   }
 
-  // 4. Try with 0 buffer if day is tightly packed
-  for (let cand = DAY_START_MINS; cand + safeDuration <= 23 * 60 + 45; cand += 15) {
+  // 4. Try with 0 buffer in fine 5-minute increments if day is tightly packed (e.g. :20/:50 class transitions)
+  for (let cand = scanStart; cand + safeDuration <= 23 * 60 + 45; cand += 5) {
+    if (!hasIntervalConflict(cand, cand + safeDuration, occupied, 0)) {
+      return cand;
+    }
+  }
+  for (let cand = DAY_START_MINS; cand < scanStart && cand + safeDuration <= 23 * 60 + 45; cand += 5) {
     if (!hasIntervalConflict(cand, cand + safeDuration, occupied, 0)) {
       return cand;
     }
@@ -140,6 +146,8 @@ export function findFirstEmptySlot(
 
 async function callGeminiForRollover(prompt: string, apiKey: string): Promise<string | null> {
   for (const model of GEMINI_MODELS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
@@ -152,6 +160,7 @@ async function callGeminiForRollover(prompt: string, apiKey: string): Promise<st
             responseMimeType: 'application/json',
           },
         }),
+        signal: controller.signal,
       });
 
       if (res.ok) {
@@ -161,6 +170,8 @@ async function callGeminiForRollover(prompt: string, apiKey: string): Promise<st
       }
     } catch {
       // Fallback to next model
+    } finally {
+      clearTimeout(timer);
     }
   }
   return null;

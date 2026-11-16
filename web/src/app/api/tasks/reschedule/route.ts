@@ -5,6 +5,7 @@ import {
   cleanTaskTitle,
   titlesMatch,
   isTaskEventTitle,
+  isCompletedCalendarTitle,
   parseTimeToHoursMinutes,
   format24hTo12h,
   computeStartEndIso,
@@ -20,6 +21,7 @@ import {
   BusyInterval,
   planRolloverTimeSlotsWithAI,
 } from '@/lib/ai-rollover-scheduler';
+import { getElentraBusyBlocksForDate } from '@/lib/elentra-calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -142,7 +144,7 @@ export async function POST(req: NextRequest) {
     const { tasksApi, hasCredentials } = await getGoogleTasksClientAsync();
     let activeCalId = CALENDAR_MAP[targetCalendarName] || CALENDAR_MAP['School'] || CALENDAR_MAP['Kevin Nguyen'];
 
-    // If autoFindEmptySlot is requested, query all 4 Google Calendars on newDate and let AI pick an open slot
+    // If autoFindEmptySlot is requested, query all 4 Google Calendars + Elentra ICS classes on newDate and let AI pick an open slot
     if (autoFindEmptySlot && calendarApi) {
       try {
         const tzOffset = getTimezoneOffsetStr(newDate);
@@ -150,8 +152,8 @@ export async function POST(req: NextRequest) {
         const dayTimeMax = `${newDate}T23:59:59${tzOffset}`;
 
         const busyOnTargetDate: BusyInterval[] = [];
-        await Promise.all(
-          Object.entries(CALENDAR_MAP).map(async ([cName, cId]) => {
+        await Promise.all([
+          ...Object.entries(CALENDAR_MAP).map(async ([cName, cId]) => {
             try {
               const res = await calendarApi.events.list({
                 calendarId: cId,
@@ -162,6 +164,7 @@ export async function POST(req: NextRequest) {
               });
               for (const ev of res.data.items || []) {
                 if (!ev.summary || !ev.start?.dateTime) continue;
+                if (isCompletedCalendarTitle(ev.summary)) continue;
                 // Exclude the item currently being rescheduled so it doesn't block itself
                 if (targetCalEventId && ev.id === targetCalEventId) continue;
                 if (cleanSearchTitle && isTaskEventTitle(ev.summary) && titlesMatch(ev.summary, itemTitle)) {
@@ -196,8 +199,14 @@ export async function POST(req: NextRequest) {
             } catch {
               // ignore individual calendar fetch error
             }
-          })
-        );
+          }),
+          (async () => {
+            const elentraClasses = await getElentraBusyBlocksForDate(newDate);
+            for (const eb of elentraClasses) {
+              busyOnTargetDate.push(eb);
+            }
+          })(),
+        ]);
 
         const slotMap = await planRolloverTimeSlotsWithAI(newDate, busyOnTargetDate, [
           {

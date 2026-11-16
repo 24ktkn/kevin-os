@@ -24,8 +24,10 @@ import {
   BusyInterval,
   RolloverTaskCandidate,
   AssignedRolloverSlot,
+  hasIntervalConflict,
   planRolloverTimeSlotsWithAI,
 } from '@/lib/ai-rollover-scheduler';
+import { getElentraBusyBlocksForDate } from '@/lib/elentra-calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -408,31 +410,41 @@ export async function GET() {
       const timeMin = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const timeMax = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Fetch all 4 calendars in parallel
-      const calendarResponses = await Promise.all(
-        Object.entries(CALENDAR_MAP).map(async ([calName, calId]) => {
-          try {
-            const res = await calendarApi.events.list({
-              calendarId: calId,
-              timeMin,
-              timeMax,
-              singleEvents: true,
-              orderBy: 'startTime',
-              maxResults: 150,
-            });
-            return { calName, calId, events: res.data.items || [] };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            syncResults.errors.push(`Calendar ${calName}: ${msg}`);
-            return { calName, calId, events: [] };
-          }
-        })
-      );
+      // Fetch all 4 calendars + Elentra timed classes for today in parallel
+      const [calendarResponses, elentraBusyToday] = await Promise.all([
+        Promise.all(
+          Object.entries(CALENDAR_MAP).map(async ([calName, calId]) => {
+            try {
+              const res = await calendarApi.events.list({
+                calendarId: calId,
+                timeMin,
+                timeMax,
+                singleEvents: true,
+                orderBy: 'startTime',
+                maxResults: 150,
+              });
+              return { calName, calId, events: res.data.items || [] };
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              syncResults.errors.push(`Calendar ${calName}: ${msg}`);
+              return { calName, calId, events: [] };
+            }
+          })
+        ),
+        getElentraBusyBlocksForDate(todayStr),
+      ]);
 
       const duplicateEventIdsToDelete: string[] = [];
 
-      // Pre-pass: Collect all busy intervals on todayStr and all past incomplete task timeblocks to roll over via AI
-      const todayBusyBlocks: BusyInterval[] = [];
+      // Pre-pass: Collect all busy intervals on todayStr (Google Calendars + Elentra classes)
+      // and gather both past-day rollover tasks AND any today task blocks overlapping scheduled classes.
+      const todayFixedBusyBlocks: BusyInterval[] = [...elentraBusyToday];
+      const todayTaskCandidates: Array<{
+        candidate: RolloverTaskCandidate;
+        startMins: number;
+        endMins: number;
+        busyInterval: BusyInterval;
+      }> = [];
       const rolloverCandidates: RolloverTaskCandidate[] = [];
 
       for (const { calName, events } of calendarResponses) {
@@ -499,7 +511,7 @@ export async function GET() {
           if (evDateStr === todayStr && !isCompleted) {
             const endH = Math.floor((endMins % 1440) / 60);
             const endM = endMins % 60;
-            todayBusyBlocks.push({
+            const busyInterval: BusyInterval = {
               id: ev.id,
               title: ev.summary,
               calendar: calName,
@@ -507,7 +519,28 @@ export async function GET() {
               endMins,
               startTime12h: evTimeStr,
               endTime12h: format24hTo12h(endH, endM),
-            });
+            };
+            if (isTaskBlock) {
+              const predeterminedDuration =
+                evDurationMins ||
+                matchedTk?.duration_mins ||
+                matchedSchool?.duration_mins ||
+                30;
+              todayTaskCandidates.push({
+                candidate: {
+                  id: ev.id,
+                  title: cleanEvTitle || ev.summary,
+                  calendar: calName,
+                  durationMins: predeterminedDuration,
+                  preferredTimeStr: evTimeStr,
+                },
+                startMins,
+                endMins,
+                busyInterval,
+              });
+            } else {
+              todayFixedBusyBlocks.push(busyInterval);
+            }
           } else if (isTaskBlock && !isCompleted && evDateStr < todayStr) {
             const predeterminedDuration =
               evDurationMins ||
@@ -525,6 +558,35 @@ export async function GET() {
           }
         }
       }
+
+      // Separate non-conflicting today task blocks (keep fixed) from colliding ones (auto-relocate around classes)
+      const todayBusyBlocks: BusyInterval[] = [...todayFixedBusyBlocks];
+      const keptTodayTaskIntervals: Array<{ startMins: number; endMins: number }> = [];
+      todayTaskCandidates.sort((a, b) => a.startMins - b.startMins);
+
+      for (const tc of todayTaskCandidates) {
+        const overlapsFixedClass = hasIntervalConflict(
+          tc.startMins,
+          tc.endMins,
+          todayFixedBusyBlocks,
+          0
+        );
+        const overlapsKeptTask = hasIntervalConflict(
+          tc.startMins,
+          tc.endMins,
+          keptTodayTaskIntervals,
+          0
+        );
+        if (overlapsFixedClass || overlapsKeptTask) {
+          rolloverCandidates.push(tc.candidate);
+        } else {
+          todayBusyBlocks.push(tc.busyInterval);
+          keptTodayTaskIntervals.push({ startMins: tc.startMins, endMins: tc.endMins });
+        }
+      }
+
+      // Schedule longer modules first so small tasks don't fragment wide open gaps
+      rolloverCandidates.sort((a, b) => b.durationMins - a.durationMins);
 
       // If any incomplete online modules / task timeblocks need to roll over from past days to todayStr,
       // use the AI Rollover Scheduler to place each into an empty timeblock on todayStr that fits its duration
@@ -642,7 +704,10 @@ export async function GET() {
             let rolloverStartIso: string | null = null;
             let rolloverEndIso: string | null = null;
 
-            if (isTaskBlock && !finalCompleted && dateStr < todayStr) {
+            const shouldRelocateTodayOverlap =
+              isTaskBlock && !finalCompleted && dateStr === todayStr && rolloverSlotMap.has(ev.id);
+
+            if (isTaskBlock && !finalCompleted && (dateStr < todayStr || shouldRelocateTodayOverlap)) {
               // Live last-millisecond guard right before touching Google Calendar for rollover:
               // If the user ticked this task off during AI planning or earlier rollover patches, abort rollover!
               let completedInFlight = false;

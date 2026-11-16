@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
+import {
+  DEFAULT_ELENTRA_ICAL_URL,
+  warmElentraBusyCacheFromRawIcs,
+} from '@/lib/elentra-calendar';
 
-const DEFAULT_ICAL_URL =
-  'https://elentra.schulich.uwo.ca/calendars/private-75254bda7546b960cf7cafa6c97f213b/knguy69.ics';
+const DEFAULT_ICAL_URL = DEFAULT_ELENTRA_ICAL_URL;
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +29,9 @@ export async function GET(request: NextRequest) {
     }
 
     const rawText = await res.text();
+    if (url === DEFAULT_ICAL_URL) {
+      warmElentraBusyCacheFromRawIcs(rawText).catch(() => {});
+    }
     const normalized = rawText.replace(/\r\n /g, '').replace(/\n /g, '');
     const lines = normalized.split(/\r?\n/);
 
@@ -55,6 +61,7 @@ export async function GET(request: NextRequest) {
             dateObj = new Date(year, month, day);
           } else if (val.length >= 15) {
             isAllDay = false;
+            const isUtc = val.endsWith('Z');
             const cleanVal = val.replace('Z', '');
             const year = parseInt(cleanVal.substring(0, 4), 10);
             const month = parseInt(cleanVal.substring(4, 6), 10) - 1;
@@ -62,7 +69,9 @@ export async function GET(request: NextRequest) {
             const hours = parseInt(cleanVal.substring(9, 11), 10);
             const mins = parseInt(cleanVal.substring(11, 13), 10);
             const secs = parseInt(cleanVal.substring(13, 15), 10);
-            dateObj = new Date(year, month, day, hours, mins, secs);
+            dateObj = isUtc
+              ? new Date(Date.UTC(year, month, day, hours, mins, secs))
+              : new Date(year, month, day, hours, mins, secs);
           } else {
             dateObj = new Date();
           }

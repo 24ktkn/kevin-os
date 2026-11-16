@@ -4,13 +4,19 @@ import {
   BacklogTask,
   AISchedulerContextResponse,
 } from '@/types/ai';
-import { getTodayDateStr, getTimezoneOffsetStr, isCompletedCalendarTitle } from '@/lib/date-utils';
+import {
+  getTodayDateStr,
+  getTimezoneOffsetStr,
+  isCompletedCalendarTitle,
+  cleanTaskTitle,
+} from '@/lib/date-utils';
 import {
   CALENDAR_MAP,
   TASKLIST_MAP,
   getGoogleCalendarClient,
   getGoogleTasksClientAsync,
 } from '@/lib/google-calendar';
+import { getElentraBusyBlocksForDate } from '@/lib/elentra-calendar';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,6 +126,28 @@ export async function GET(req: NextRequest) {
               tasklistId: listId,
               due: task.due || undefined,
               notes: task.notes || undefined,
+            });
+          }
+        }
+      })(),
+      // Include subscribed Schulich Elentra timed classes (lectures, COtW, CS1, exams, etc.)
+      (async () => {
+        const elentraBlocks = await getElentraBusyBlocksForDate(targetDate);
+        for (const eb of elentraBlocks) {
+          if (eb.endMins <= 8 * 60 || eb.startMins >= 22 * 60) continue;
+          const ebClean = cleanTaskTitle(eb.title);
+          const alreadyListed = busyBlocks.some(
+            (b) => b.startTime === eb.startTime12h && cleanTaskTitle(b.title) === ebClean
+          );
+          if (!alreadyListed) {
+            busyBlocks.push({
+              id: eb.id,
+              calendar: 'School',
+              title: eb.title,
+              startIso: eb.startIso,
+              endIso: eb.endIso,
+              startTime: eb.startTime12h,
+              endTime: eb.endTime12h,
             });
           }
         }
