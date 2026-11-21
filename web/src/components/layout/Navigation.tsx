@@ -7,13 +7,13 @@ import {
   Home,
   Rocket,
   GraduationCap,
-  Activity,
   Flame,
   HeartPulse,
   Dumbbell,
   UtensilsCrossed,
   Bot,
   Sparkles,
+  Brain,
 } from 'lucide-react';
 
 interface NavItem {
@@ -28,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'Home', href: '/', icon: Home, activeMatch: (p: string) => p === '/' },
   { name: 'Mission Control', href: '/tasks', icon: Rocket, activeMatch: (p: string) => p.startsWith('/tasks') },
   { name: 'School Sync', href: '/school', icon: GraduationCap, activeMatch: (p: string) => p.startsWith('/school') },
+  { name: 'Anki', href: '/anki', icon: Brain, activeMatch: (p: string) => p.startsWith('/anki') },
   { name: 'Habit Tracker', href: '/habits', icon: Flame, activeMatch: (p: string) => p.startsWith('/habits') },
   { name: 'Health Tracker', href: '/health', icon: HeartPulse, activeMatch: (p: string) => p.startsWith('/health') },
   { name: 'Workout Tracker', href: '/workouts', icon: Dumbbell, activeMatch: (p: string) => p.startsWith('/workouts') },

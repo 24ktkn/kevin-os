@@ -11,8 +11,11 @@ import {
   withMcpCors,
 } from '@/lib/mcp-auth';
 import {
+  addAnkiNotes,
   completeTask,
   deleteTask,
+  getAnkiLeeches,
+  getAnkiOverview,
   getHabitsData,
   getHealthSummary,
   getJournalData,
@@ -22,12 +25,17 @@ import {
   getSchoolModules,
   getWorkoutsData,
   logHabit,
+  matchSuspendedAnkiCards,
   queryKevinOsTable,
   rescheduleTask,
   saveJournalEntry,
+  scheduleAnkiTodayTimeblock,
   scheduleItem,
   scheduleWeekModules,
+  searchAnkiCards,
+  suspendAnkiCards,
   toggleGroceryItem,
+  unsuspendAnkiCards,
 } from '@/lib/kevin-os-tools';
 
 export const dynamic = 'force-dynamic';
@@ -56,10 +64,12 @@ function createKevinOsMcpServer(): McpServer {
     },
     {
       instructions:
-        'You are connected to Kevin-OS, Kevin Nguyen’s personal productivity, medical school (Schulich UWO), health biometrics, habits, workouts, daily journal, and meal prep system. ' +
+        'You are connected to Kevin-OS, Kevin Nguyen’s personal productivity, medical school (Schulich UWO), Anki spaced repetition, health biometrics, habits, workouts, daily journal, and meal prep system. ' +
         'All dates use America/New_York (Eastern Time) in YYYY-MM-DD format. ' +
         'ONLINE MODULE DURATION RULE: For every online school module with a bracketed duration (e.g. "(45 min) ..."), always add 20 minutes and round UP to the nearest 30 minutes (e.g. 45m -> 65m -> 90m, 20m -> 40m -> 60m, 57m -> 77m -> 90m). ' +
-        'When scheduling school modules, always check existing classes and calendars via schedule_week_modules or schedule_item so modules are created as paired Google Calendar [Task] timeblocks + Google Tasks + Supabase records without overlapping Schulich Elentra classes.',
+        'ANKI APPROVAL INBOX RULE (STRICT): Whenever calling add_anki_notes, unsuspend_anki_cards, or suspend_anki_cards, ALWAYS default to requireApproval: true so proposals go to Kevin’s 1-click Approval Inbox on /anki. ONLY set requireApproval: false when Kevin EXPLICITLY says in his current prompt to add/unsuspend/suspend immediately without inbox approval — never choose immediate commit on your own. ' +
+        'ANKI CHECK-IN RULE: During daily/evening check-ins (get_kevin_os_overview or get_anki_overview), always flag if Kevin still has Anki review/learning cards due today (dueCardsAlert === true). ' +
+        'NOTEBOOKLM -> ANKI WORKFLOW: When Kevin references a NotebookLM source (@Gemini Notebook), first call match_suspended_anki_cards with the lecture concepts/summary to find matching suspended cards to unsuspend, and call search_anki_cards to avoid duplicates before proposing new atomic Cloze ({{c1::...}}) or Basic cards via add_anki_notes.',
     }
   );
 
@@ -551,7 +561,225 @@ function createKevinOsMcpServer(): McpServer {
     }
   );
 
-  // 14. Future-Proof Extensible Read-Only Data Table Query
+  // 14. Anki Spaced Repetition & NotebookLM Card Workflows
+  server.registerTool(
+    'get_anki_overview',
+    {
+      title: 'Get Anki Daily Stats & Due Alert',
+      description:
+        'Returns today’s Anki reviews done, remaining review+learning due count, estimated minutes left, retention %, streak, deck breakdown, exam pacing projections, biometrics-retention takeaways, and dueCardsAlert flag.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return jsonToolResult(await getAnkiOverview());
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'search_anki_cards',
+    {
+      title: 'Search Anki Cards',
+      description:
+        'Reads and searches Kevin’s mirrored Anki cards (3,000-5,000 custom Schulich Cloze/Basic cards) by text query, deck, tag, or status (all, due, active, suspended, leech, new).',
+      inputSchema: {
+        query: z.string().optional().describe('Keyword search across front, back, extra, deck, and tags.'),
+        deck: z.string().optional().describe('Optional deck name prefix filter.'),
+        tag: z.string().optional().describe('Optional tag substring filter.'),
+        status: z
+          .enum(['all', 'due', 'active', 'suspended', 'leech', 'new'])
+          .optional()
+          .describe('Card status filter (default: "all").'),
+        limit: z.number().int().min(1).max(60).optional().describe('Max cards to return (default: 25).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await searchAnkiCards(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'match_suspended_anki_cards',
+    {
+      title: 'Match Suspended Anki Cards to NotebookLM / Lecture Content',
+      description:
+        'Matches Kevin’s suspended Anki cards against newly uploaded NotebookLM source summaries, lecture notes, or medical concept lists. Returns ranked suspended cardIds, front snippets, tags, and relevance scores ready to unsuspend.',
+      inputSchema: {
+        sourceTitle: z.string().optional().describe('Lecture or NotebookLM source title.'),
+        sourceSummary: z
+          .string()
+          .optional()
+          .describe('Key notes, summary, or high-yield takeaways extracted from NotebookLM.'),
+        concepts: z
+          .array(z.string())
+          .optional()
+          .describe('Specific medical terms, drugs, organisms, or pathways to match.'),
+        deckFilter: z.string().optional().describe('Optional deck name filter.'),
+        tagFilter: z.string().optional().describe('Optional tag filter.'),
+        maxMatches: z.number().int().min(1).max(50).optional().describe('Max matches (default: 25).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await matchSuspendedAnkiCards(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'unsuspend_anki_cards',
+    {
+      title: 'Unsuspend Anki Cards (Approval Inbox Default)',
+      description:
+        'Stages suspended Anki cardIds in Kevin-OS /anki 1-click Approval Inbox by default (requireApproval: true). ONLY pass requireApproval: false if Kevin explicitly instructed you in his prompt to unsuspend immediately without approval.',
+      inputSchema: {
+        cardIds: z.array(z.number().int().positive()).min(1).describe('Anki cardIds to unsuspend.'),
+        title: z.string().optional().describe('Short label for the Approval Inbox proposal.'),
+        sourceLabel: z.string().optional().describe('Source label (e.g. "NotebookLM: Antibiotics").'),
+        reasoning: z.string().optional().describe('Why these suspended cards match the lecture/source.'),
+        requireApproval: z
+          .boolean()
+          .optional()
+          .describe('MUST remain true (default) unless Kevin explicitly asks to skip Approval Inbox and commit immediately.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await unsuspendAnkiCards(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'suspend_anki_cards',
+    {
+      title: 'Suspend Anki Cards (Approval Inbox Default)',
+      description:
+        'Stages Anki cardIds to suspend in Kevin-OS /anki 1-click Approval Inbox by default (requireApproval: true). ONLY pass requireApproval: false if Kevin explicitly instructed immediate suspension.',
+      inputSchema: {
+        cardIds: z.array(z.number().int().positive()).min(1).describe('Anki cardIds to suspend.'),
+        title: z.string().optional().describe('Short label for the Approval Inbox proposal.'),
+        sourceLabel: z.string().optional().describe('Optional source label.'),
+        reasoning: z.string().optional().describe('Why these cards should be suspended.'),
+        requireApproval: z
+          .boolean()
+          .optional()
+          .describe('MUST remain true (default) unless Kevin explicitly asks to bypass Approval Inbox.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await suspendAnkiCards(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'add_anki_notes',
+    {
+      title: 'Add New Anki Cards from NotebookLM (Approval Inbox Default)',
+      description:
+        'Creates new Cloze ({{c1::...}}) or Basic Anki cards (e.g., from NotebookLM sources) with automatic duplicate checking. Stages in Kevin-OS /anki 1-click Approval Inbox by default (requireApproval: true). ONLY set requireApproval: false if Kevin explicitly tells you to add directly without review.',
+      inputSchema: {
+        deckName: z.string().optional().describe('Default target deck (e.g. "Schulich::Infectious Disease").'),
+        title: z.string().optional().describe('Title for the Approval Inbox batch.'),
+        sourceLabel: z.string().optional().describe('Source label (e.g. "NotebookLM: Week 12 Heme").'),
+        reasoning: z.string().optional().describe('Summary of what knowledge gaps these new cards cover.'),
+        requireApproval: z
+          .boolean()
+          .optional()
+          .describe('MUST remain true (default) unless Kevin explicitly asks to add immediately without Approval Inbox.'),
+        cards: z
+          .array(
+            z.object({
+              deckName: z.string().optional(),
+              modelName: z.enum(['Cloze', 'Basic']).optional(),
+              front: z.string().describe('Cloze text containing {{c1::...}} OR Basic front question.'),
+              back: z.string().optional().describe('Basic card answer (leave empty for Cloze).'),
+              extra: z.string().optional().describe('High-yield mechanism, clinical pearl, or differential.'),
+              tags: z.array(z.string()).optional(),
+            })
+          )
+          .min(1)
+          .max(30),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await addAnkiNotes(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'schedule_anki_timeblock',
+    {
+      title: 'Auto-Schedule Today’s Anki Timeblock & Google Task',
+      description:
+        'Calculates study duration from Kevin’s remaining due Anki cards × average seconds/card, finds non-overlapping open time slot(s) around Google Calendar + Schulich classes, and creates the paired Google Calendar timeblock + Google Task.',
+      inputSchema: {
+        date: z.string().optional().describe('Target date YYYY-MM-DD (defaults to today).'),
+        includeNewCards: z.boolean().optional().describe('Include remaining New cards in time estimate (default: false).'),
+        allowSplit: z.boolean().optional().describe('Split heavy review days (>45 mins) into 2 blocks (default: true).'),
+        calendar: CALENDAR_ENUM.optional().describe('Calendar name (default: "School").'),
+        commit: z
+          .boolean()
+          .optional()
+          .describe('Set true to actually create the Google Calendar timeblock + Google Task; false to preview.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await scheduleAnkiTodayTimeblock(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_anki_leeches',
+    {
+      title: 'Get Anki Leeches & Weak Topics',
+      description:
+        'Lists high-lapse Anki leech cards grouped by topic/deck so Gemini can quiz Kevin or build high-yield comparison tables & mnemonics.',
+      inputSchema: {
+        minLapses: z.number().int().min(2).max(20).optional().describe('Minimum lapse threshold (default: 4).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await getAnkiLeeches(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 15. Future-Proof Extensible Read-Only Data Table Query
   server.registerTool(
     'query_kevin_os_data',
     {

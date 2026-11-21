@@ -23,9 +23,12 @@ import {
   Bot,
   X,
   Zap,
+  Brain,
+  PlayCircle,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { CalendarName } from '@/types/task';
+import { StagedCardMatchRef } from '@/types/anki';
 import { supabase } from '@/lib/supabase';
 import {
   getTodayDateStr,
@@ -156,6 +159,119 @@ export default function SchoolSyncPage() {
       }
     >
   >({});
+
+  // School Sync -> Anki Suspended-Card Unsuspend Pipeline Modal
+  const [ankiMatchModal, setAnkiMatchModal] = useState<{
+    open: boolean;
+    moduleTitle: string;
+    loading: boolean;
+    matches: StagedCardMatchRef[];
+    selectedIds: number[];
+    unsuspending: boolean;
+    feedback: string | null;
+  }>({
+    open: false,
+    moduleTitle: '',
+    loading: false,
+    matches: [],
+    selectedIds: [],
+    unsuspending: false,
+    feedback: null,
+  });
+
+  const openAnkiMatchForModule = async (
+    moduleTitle: string,
+    description = '',
+    onlyOpenIfMatches = false
+  ) => {
+    if (!onlyOpenIfMatches) {
+      setAnkiMatchModal({
+        open: true,
+        moduleTitle,
+        loading: true,
+        matches: [],
+        selectedIds: [],
+        unsuspending: false,
+        feedback: null,
+      });
+    }
+    try {
+      const res = await fetch('/api/anki/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'match_suspended',
+          sourceTitle: moduleTitle,
+          sourceText: description,
+          maxMatches: 25,
+        }),
+      });
+      const data = await res.json();
+      const matches: StagedCardMatchRef[] =
+        data.success && Array.isArray(data.matches) ? data.matches : [];
+      if (onlyOpenIfMatches && matches.length === 0) return;
+
+      const preselected = matches
+        .filter((m) => (m.matchScore || 0) >= 40)
+        .map((m) => m.cardId);
+
+      setAnkiMatchModal({
+        open: true,
+        moduleTitle,
+        loading: false,
+        matches,
+        selectedIds: preselected.length > 0 ? preselected : matches.slice(0, 5).map((m) => m.cardId),
+        unsuspending: false,
+        feedback:
+          matches.length === 0
+            ? data.needsMigration
+              ? 'Run the Anki Supabase migration & Windows Bridge first to unlock automatic suspended-card matching.'
+              : 'No matching suspended Anki cards found for this module.'
+            : null,
+      });
+    } catch {
+      if (!onlyOpenIfMatches) {
+        setAnkiMatchModal((prev) => ({
+          ...prev,
+          loading: false,
+          feedback: 'Could not query Anki card mirror right now.',
+        }));
+      }
+    }
+  };
+
+  const handleUnsuspendMatchedAnkiCards = async () => {
+    if (ankiMatchModal.selectedIds.length === 0) return;
+    setAnkiMatchModal((prev) => ({ ...prev, unsuspending: true, feedback: null }));
+    try {
+      const res = await fetch('/api/anki/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'unsuspend',
+          cardIds: ankiMatchModal.selectedIds,
+          source: 'school_sync',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const count = ankiMatchModal.selectedIds.length;
+        setAnkiMatchModal((prev) => ({
+          ...prev,
+          unsuspending: false,
+          matches: prev.matches.filter((m) => !prev.selectedIds.includes(m.cardId)),
+          selectedIds: [],
+          feedback: `Unsuspended ${count} matching Anki card${count === 1 ? '' : 's'}! Queued for Anki Desktop & AnkiWeb sync.`,
+        }));
+      }
+    } catch {
+      setAnkiMatchModal((prev) => ({
+        ...prev,
+        unsuspending: false,
+        feedback: 'Failed to queue Anki unsuspend action.',
+      }));
+    }
+  };
 
   const handleSchoolRescheduleSuccess = (rescheduled: {
     newDate: string;
@@ -510,6 +626,12 @@ export default function SchoolSyncPage() {
         is_completed: completed,
         updated_at: new Date().toISOString(),
       });
+    }
+
+    // 3. School Sync -> Anki Pipeline: when completing an online module, find matching suspended Anki cards to unsuspend
+    const effectiveCat = overrides[uid] || ev?.category || 'module';
+    if (completed && effectiveCat === 'module' && title && title !== 'Untitled') {
+      openAnkiMatchForModule(title, ev?.description || '', true);
     }
   };
 
@@ -1576,6 +1698,18 @@ export default function SchoolSyncPage() {
                             </>
                           )}
 
+                          {/* Find & Unsuspend Matching Anki Cards */}
+                          {isModule && (
+                            <button
+                              onClick={() => openAnkiMatchForModule(event.summary, event.description, false)}
+                              title="Find and unsuspend matching Anki cards for this module"
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-purple-300 hover:text-purple-200 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 transition shadow-sm cursor-pointer"
+                            >
+                              <Brain className="h-3.5 w-3.5" />
+                              <span>Anki</span>
+                            </button>
+                          )}
+
                           {/* Dedicated 1-Click Assignment Due Date Task Button */}
                           {isAssignment && !event.isScheduled && (
                             <button
@@ -1858,6 +1992,145 @@ export default function SchoolSyncPage() {
           }}
           onSuccess={handleSchoolRescheduleSuccess}
         />
+      )}
+
+      {/* School Sync -> Anki Matching Suspended Cards Modal */}
+      {ankiMatchModal.open && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-[#121218] border border-purple-500/40 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-purple-500/20 border border-purple-500/35 flex items-center justify-center shrink-0">
+                  <Brain className="h-5 w-5 text-purple-300" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">
+                    Unsuspend Matching Anki Cards
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5 line-clamp-1">
+                    Module: {ankiMatchModal.moduleTitle}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAnkiMatchModal((prev) => ({ ...prev, open: false }))}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {ankiMatchModal.feedback && (
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs text-cyan-200">
+                {ankiMatchModal.feedback}
+              </div>
+            )}
+
+            {ankiMatchModal.loading ? (
+              <div className="py-12 text-center text-xs text-zinc-400">
+                <RefreshCw className="h-6 w-6 text-purple-400 animate-spin mx-auto mb-2" />
+                Scanning your suspended Anki cards for matching medical concepts...
+              </div>
+            ) : ankiMatchModal.matches.length > 0 ? (
+              <>
+                <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                  {ankiMatchModal.matches.map((m) => {
+                    const checked = ankiMatchModal.selectedIds.includes(m.cardId);
+                    return (
+                      <label
+                        key={m.cardId}
+                        className={`flex items-start gap-2.5 p-3 rounded-xl border text-xs cursor-pointer transition ${
+                          checked
+                            ? 'bg-purple-500/10 border-purple-500/40'
+                            : 'bg-[#0F1017] border-zinc-800 hover:border-zinc-700'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setAnkiMatchModal((prev) => ({
+                              ...prev,
+                              selectedIds: checked
+                                ? prev.selectedIds.filter((id) => id !== m.cardId)
+                                : [...prev.selectedIds, m.cardId],
+                            }))
+                          }
+                          className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-700 bg-zinc-900 text-purple-500"
+                        />
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="text-white leading-snug">{m.frontSnippet}</div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                            {m.matchScore !== undefined && (
+                              <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono">
+                                {m.matchScore}% match
+                              </span>
+                            )}
+                            <span className="text-zinc-500 font-mono">{m.deckName}</span>
+                            {m.matchedTerms && m.matchedTerms.length > 0 && (
+                              <span className="text-cyan-400/80">
+                                {m.matchedTerms.slice(0, 4).join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+                  <button
+                    onClick={() =>
+                      setAnkiMatchModal((prev) => ({
+                        ...prev,
+                        selectedIds:
+                          prev.selectedIds.length === prev.matches.length
+                            ? []
+                            : prev.matches.map((m) => m.cardId),
+                      }))
+                    }
+                    className="text-xs text-zinc-400 hover:text-white cursor-pointer"
+                  >
+                    {ankiMatchModal.selectedIds.length === ankiMatchModal.matches.length
+                      ? 'Deselect all'
+                      : 'Select all'}
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setAnkiMatchModal((prev) => ({ ...prev, open: false }))}
+                      className="px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 cursor-pointer"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={handleUnsuspendMatchedAnkiCards}
+                      disabled={ankiMatchModal.unsuspending || ankiMatchModal.selectedIds.length === 0}
+                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-400 hover:to-cyan-400 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      <PlayCircle className="h-3.5 w-3.5" />
+                      <span>
+                        {ankiMatchModal.unsuspending
+                          ? 'Unsuspending...'
+                          : `Unsuspend Selected (${ankiMatchModal.selectedIds.length})`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setAnkiMatchModal((prev) => ({ ...prev, open: false }))}
+                  className="px-3.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-900 border border-zinc-800 cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

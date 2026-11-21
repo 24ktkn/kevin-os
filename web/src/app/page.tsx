@@ -29,6 +29,8 @@ import {
   CalendarCheck,
   ListTodo,
   Layers,
+  Brain,
+  Inbox,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { TaskItem, CalendarName } from '@/types/task';
@@ -91,9 +93,52 @@ export default function HomePage() {
   const [loadingHealth, setLoadingHealth] = useState(true);
   const [loadingHabits, setLoadingHabits] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(true);
+  const [ankiSummary, setAnkiSummary] = useState<{
+    needsMigration: boolean;
+    bridgeOnline: boolean;
+    habitCompletedToday: boolean;
+    pendingProposalsCount: number;
+    reviewsToday: number;
+    reviewDueRemaining: number;
+    learningRemaining: number;
+    totalDueRemaining: number;
+    retentionPct: number;
+    streakDays: number;
+    estimatedMinsRemaining: number;
+    avgSecsPerCard: number;
+  } | null>(null);
+  const [schedulingAnkiHome, setSchedulingAnkiHome] = useState(false);
+  const [ankiHomeMsg, setAnkiHomeMsg] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState<string | null>(null);
   const [togglingHabit, setTogglingHabit] = useState<string | null>(null);
+
+  // Fetch Anki Daily Summary
+  const fetchAnki = useCallback(async () => {
+    try {
+      const res = await fetch('/api/anki/stats');
+      const json = await res.json();
+      if (json.success) {
+        const t = json.today;
+        setAnkiSummary({
+          needsMigration: Boolean(json.needsMigration),
+          bridgeOnline: Boolean(json.bridgeOnline),
+          habitCompletedToday: Boolean(json.habitCompletedToday),
+          pendingProposalsCount: json.pendingProposalsCount || 0,
+          reviewsToday: t?.reviews_today || 0,
+          reviewDueRemaining: t?.review_due_remaining || 0,
+          learningRemaining: t?.learning_remaining || 0,
+          totalDueRemaining: t?.total_due_remaining || 0,
+          retentionPct: t?.retention_pct || 0,
+          streakDays: t?.streak_days || 0,
+          estimatedMinsRemaining: json.studyPlan?.rawEstimatedMins || 0,
+          avgSecsPerCard: t?.avg_secs_per_card || 8.5,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load Anki summary:', err);
+    }
+  }, []);
 
   // Fetch Health Biometrics
   const fetchHealth = useCallback(async () => {
@@ -213,7 +258,7 @@ export default function HomePage() {
   // Load all initial data (fast initial paint + background cloud sync)
   const loadAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
+    await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks(), fetchAnki()]);
     setRefreshing(false);
 
     // Background sync with Google Calendar & Google Tasks to pull in any external updates
@@ -237,7 +282,7 @@ export default function HomePage() {
         }
       })
       .catch(() => {});
-  }, [fetchHealth, fetchHabits, fetchTodayTasks]);
+  }, [fetchHealth, fetchHabits, fetchTodayTasks, fetchAnki]);
 
   // Explicit 1-click "Sync Health & Calendar" button handler: awaits both Google APIs first, then refreshes UI
   const handleManualSyncAll = useCallback(async () => {
@@ -253,7 +298,7 @@ export default function HomePage() {
           .catch(() => null),
       ]);
 
-      await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks()]);
+      await Promise.all([fetchHealth(), fetchHabits(), fetchTodayTasks(), fetchAnki()]);
 
       const healthDays = healthSyncRes?.syncedCount ?? 0;
       const calSynced =
@@ -824,6 +869,125 @@ export default function HomePage() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* 🧠 Daily Anki Summary & Quick Timeblock */}
+      <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-[#131424] via-[#14141B] to-[#0F1722] p-4 sm:p-5 shadow-lg space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+              <Brain className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  Daily Anki Summary
+                </h2>
+                {ankiSummary?.habitCompletedToday && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    Habit Checked ✅
+                  </span>
+                )}
+                {ankiSummary && ankiSummary.pendingProposalsCount > 0 && (
+                  <Link
+                    href="/anki"
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-200 border border-indigo-400/40 flex items-center gap-1 hover:bg-indigo-500/30 transition"
+                  >
+                    <Inbox className="h-3 w-3" />
+                    {ankiSummary.pendingProposalsCount} Gemini Proposal{ankiSummary.pendingProposalsCount === 1 ? '' : 's'}
+                  </Link>
+                )}
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {!ankiSummary || ankiSummary.needsMigration
+                  ? 'Connect your Windows Anki Bridge to mirror Schulich cards, auto-check your Anki habit & sync with Gemini.'
+                  : ankiSummary.totalDueRemaining > 0
+                  ? `${ankiSummary.totalDueRemaining} cards due (${ankiSummary.reviewDueRemaining} rev + ${ankiSummary.learningRemaining} lrn) · ~${ankiSummary.estimatedMinsRemaining}m remaining at ${ankiSummary.avgSecsPerCard}s/card`
+                  : ankiSummary.reviewsToday > 0
+                  ? `All scheduled reviews done! ${ankiSummary.reviewsToday} reviewed today (${ankiSummary.retentionPct}% retention).`
+                  : 'Waiting for today’s Anki sync snapshot from Windows Bridge.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {ankiSummary && !ankiSummary.needsMigration && ankiSummary.totalDueRemaining > 0 && (
+              <button
+                onClick={async () => {
+                  setSchedulingAnkiHome(true);
+                  setAnkiHomeMsg(null);
+                  try {
+                    const res = await fetch('/api/anki/schedule-today', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ commit: true, allowSplit: true, calendar: 'School' }),
+                    });
+                    const data = await res.json();
+                    if (data.success && Array.isArray(data.scheduledBlocks) && data.scheduledBlocks.length > 0) {
+                      const first = data.scheduledBlocks[0];
+                      setAnkiHomeMsg(
+                        `Scheduled ${data.scheduledBlocks.length} Anki block(s) starting ${first.startTime} (${first.durationMins}m) on Google Calendar & Tasks!`
+                      );
+                      fetchTodayTasks();
+                    } else {
+                      setAnkiHomeMsg(data.message || data.error || 'Nothing scheduled.');
+                    }
+                  } finally {
+                    setSchedulingAnkiHome(false);
+                  }
+                }}
+                disabled={schedulingAnkiHome}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+              >
+                <Zap className={`h-3.5 w-3.5 ${schedulingAnkiHome ? 'animate-pulse' : ''}`} />
+                <span>{schedulingAnkiHome ? 'Scheduling...' : 'Auto-Schedule Today'}</span>
+              </button>
+            )}
+
+            <Link
+              href="/anki"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-semibold text-cyan-300 transition"
+            >
+              <span>Open Anki</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {ankiSummary && !ankiSummary.needsMigration && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Due Remaining</div>
+              <div className="text-base font-bold text-cyan-300 font-mono">
+                {ankiSummary.totalDueRemaining}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Reviewed Today</div>
+              <div className="text-base font-bold text-white font-mono">
+                {ankiSummary.reviewsToday}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Retention</div>
+              <div className="text-base font-bold text-emerald-400 font-mono">
+                {ankiSummary.retentionPct ? `${ankiSummary.retentionPct}%` : '—'}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Anki Streak</div>
+              <div className="text-base font-bold text-amber-300 font-mono">
+                🔥 {ankiSummary.streakDays}d
+              </div>
+            </div>
+          </div>
+        )}
+
+        {ankiHomeMsg && (
+          <div className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs text-cyan-200">
+            ✨ {ankiHomeMsg}
           </div>
         )}
       </section>

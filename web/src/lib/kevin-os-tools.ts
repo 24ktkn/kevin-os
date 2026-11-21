@@ -43,6 +43,17 @@ import { GET as habitsGet, POST as habitsPost } from '@/app/api/habits/route';
 import { GET as workoutsGet } from '@/app/api/workouts/route';
 import { GET as journalGet, POST as journalPost } from '@/app/api/journal/route';
 import { GET as mealsGet, POST as mealsPost } from '@/app/api/meals/route';
+import { GET as ankiStatsGet } from '@/app/api/anki/stats/route';
+import { GET as ankiCardsGet, POST as ankiCardsPost } from '@/app/api/anki/cards/route';
+import { POST as ankiMatchPost } from '@/app/api/anki/match/route';
+import { POST as ankiScheduleTodayPost } from '@/app/api/anki/schedule-today/route';
+import { GET as ankiLeechesGet } from '@/app/api/anki/leeches/route';
+import {
+  findPotentialDuplicateCard,
+  isMissingAnkiTableError,
+  stripClozeMarkup,
+} from '@/lib/anki-utils';
+import { AnkiCard, StagedCardMatchRef, StagedNewCardDraft } from '@/types/anki';
 
 const INTERNAL_ORIGIN = 'http://localhost:3000';
 
@@ -50,11 +61,17 @@ const KNOWN_SAFE_TABLES = [
   'tasks',
   'school_items',
   'biometrics',
+  'health_metrics',
   'habits',
   'workout_logs',
   'journal_entries',
   'costco_meal_items',
   'location_log',
+  'anki_daily_stats',
+  'anki_cards',
+  'anki_action_queue',
+  'anki_staged_proposals',
+  'anki_sync_state',
 ] as const;
 
 const BLOCKED_TABLE_PATTERNS = /auth|token|secret|password|credential|session|oauth|pg_|sql_|storage|vault/i;
@@ -195,11 +212,12 @@ export async function getKevinOsOverview(params: { syncFirst?: boolean } = {}) {
     }
   }
 
-  const [agenda, healthRes, habitsRes, mealsRes] = await Promise.all([
+  const [agenda, healthRes, habitsRes, mealsRes, ankiRes] = await Promise.all([
     getScheduleAndTasks({ startDate: todayStr, endDate: todayStr, includeCompleted: true, syncFirst: false }),
     healthGet(makeInternalReq('/api/health')).then((r) => r.json()).catch(() => null),
     habitsGet().then((r) => r.json()).catch(() => null),
     mealsGet(makeInternalReq('/api/meals')).then((r) => r.json()).catch(() => null),
+    ankiStatsGet().then((r) => r.json()).catch(() => null),
   ]);
 
   const habits = Array.isArray(habitsRes?.habits)
@@ -214,6 +232,9 @@ export async function getKevinOsOverview(params: { syncFirst?: boolean } = {}) {
   const groceryItems = Array.isArray(mealsRes?.groceryItems) ? mealsRes.groceryItems : [];
   const uncheckedGroceries = groceryItems.filter((g: { isChecked?: boolean }) => !g.isChecked).length;
 
+  const ankiToday = ankiRes?.today || null;
+  const dueRemaining = ankiToday ? Number(ankiToday.total_due_remaining || 0) : 0;
+
   return {
     date: todayStr,
     timezone: DEFAULT_TIMEZONE,
@@ -221,6 +242,28 @@ export async function getKevinOsOverview(params: { syncFirst?: boolean } = {}) {
     todayAgenda: agenda,
     latestHealth: healthRes?.data || null,
     habitsToday: habits,
+    ankiToday: ankiRes?.success && !ankiRes?.needsMigration && ankiToday
+      ? {
+          reviewsToday: ankiToday.reviews_today,
+          reviewDueRemaining: ankiToday.review_due_remaining,
+          learningRemaining: ankiToday.learning_remaining,
+          newRemaining: ankiToday.new_remaining,
+          totalDueRemaining: dueRemaining,
+          estimatedMinsRemaining: ankiRes.studyPlan?.rawEstimatedMins ?? 0,
+          retentionPct: ankiToday.retention_pct,
+          streakDays: ankiToday.streak_days,
+          habitAutoChecked: Boolean(ankiRes.habitCompletedToday),
+          pendingProposalsCount: ankiRes.pendingProposalsCount ?? 0,
+          bridgeOnline: Boolean(ankiRes.bridgeOnline),
+          dueCardsAlert: dueRemaining > 0,
+          alertMessage:
+            dueRemaining > 0
+              ? `Heads up: You still have ${dueRemaining} Anki review/learning cards due today (~${ankiRes.studyPlan?.rawEstimatedMins ?? 15} mins).`
+              : ankiToday.reviews_today > 0
+              ? 'All scheduled Anki reviews for today are complete!'
+              : 'No Anki due cards synced yet today.',
+        }
+      : null,
     mealPrep: mealsRes?.success
       ? {
           activeTrip: mealsRes.activeTrip,
@@ -1336,4 +1379,440 @@ export async function queryKevinOsTable(params: {
     count: safeRows.length,
     rows: safeRows,
   };
+}
+
+/**
+ * 16. Anki Overview & Daily Check-In Stats
+ */
+export async function getAnkiOverview() {
+  const res = await ankiStatsGet();
+  const data = await res.json();
+  if (!data?.success) return data;
+  if (data.needsMigration) {
+    return {
+      success: false,
+      needsMigration: true,
+      message:
+        'Anki tables have not been created in Supabase yet. Run web/supabase_migrations/add_anki_tables.sql and start anki-bridge/sync.mjs.',
+    };
+  }
+  const t = data.today;
+  const dueRemaining = Number(t?.total_due_remaining || 0);
+  return {
+    success: true,
+    date: t?.date,
+    bridgeOnline: data.bridgeOnline,
+    lastSyncedAt: t?.synced_at || data.syncState?.last_heartbeat_at || null,
+    reviewsToday: t?.reviews_today || 0,
+    reviewDueRemaining: t?.review_due_remaining || 0,
+    learningRemaining: t?.learning_remaining || 0,
+    newRemaining: t?.new_remaining || 0,
+    totalDueRemaining: dueRemaining,
+    estimatedMinsRemaining: data.studyPlan?.rawEstimatedMins || 0,
+    recommendedStudyBlocks: data.studyPlan?.blocks || [],
+    retentionPct: t?.retention_pct || 0,
+    matureRetentionPct: t?.mature_retention_pct || 0,
+    avgSecsPerCard: t?.avg_secs_per_card || 8.5,
+    streakDays: t?.streak_days || 0,
+    totalCards: t?.total_cards || 0,
+    activeCards: t?.active_cards || 0,
+    suspendedCards: t?.suspended_cards || 0,
+    matureCards: t?.mature_cards || 0,
+    leechCards: t?.leech_cards || 0,
+    habitAutoChecked: Boolean(data.habitCompletedToday),
+    pendingProposalsCount: data.pendingProposalsCount || 0,
+    pendingActionsCount: data.pendingActionsCount || 0,
+    dueCardsAlert: dueRemaining > 0,
+    alertMessage:
+      dueRemaining > 0
+        ? `You still have ${dueRemaining} Anki review/learning cards due today (~${data.studyPlan?.rawEstimatedMins || 15} mins).`
+        : 'All scheduled Anki reviews for today are complete!',
+    deckBreakdown: (t?.deck_breakdown || []).slice(0, 20),
+    examProjections: (data.examProjections || []).map(
+      (p: {
+        target: { name: string; examDate: string };
+        daysUntilExam: number;
+        cardsToUnlock: number;
+        recommendedNewPerDay: number;
+        peakDailyReviews: number;
+      }) => ({
+        exam: p.target.name,
+        examDate: p.target.examDate,
+        daysUntilExam: p.daysUntilExam,
+        cardsToUnlock: p.cardsToUnlock,
+        recommendedNewPerDay: p.recommendedNewPerDay,
+        peakDailyReviews: p.peakDailyReviews,
+      })
+    ),
+    biometricsTakeaways: data.biometricsInsights?.takeaways || [],
+  };
+}
+
+/**
+ * 17. Search Kevin's Anki cards (current, suspended, due, or leeches)
+ */
+export async function searchAnkiCards(params: {
+  query?: string;
+  deck?: string;
+  tag?: string;
+  status?: 'all' | 'due' | 'active' | 'suspended' | 'leech' | 'new';
+  limit?: number;
+} = {}) {
+  const qs = new URLSearchParams();
+  if (params.query) qs.set('q', params.query);
+  if (params.deck) qs.set('deck', params.deck);
+  if (params.tag) qs.set('tag', params.tag);
+  if (params.status) qs.set('status', params.status);
+  qs.set('limit', String(Math.min(60, Math.max(1, params.limit || 25))));
+
+  const res = await ankiCardsGet(makeInternalReq(`/api/anki/cards?${qs.toString()}`));
+  const data = await res.json();
+  if (!data?.success) return data;
+
+  return {
+    success: true,
+    needsMigration: Boolean(data.needsMigration),
+    total: data.total || 0,
+    decks: data.decks || [],
+    cards: (data.cards || []).map((c: AnkiCard) => ({
+      cardId: c.card_id,
+      noteId: c.note_id,
+      deckName: c.deck_name,
+      modelName: c.model_name,
+      front: c.front_text,
+      back: c.back_text,
+      extra: c.extra_text,
+      tags: c.tags,
+      suspended: c.suspended,
+      queue: c.queue,
+      dueDate: c.due_date,
+      intervalDays: c.interval_days,
+      reps: c.reps,
+      lapses: c.lapses,
+    })),
+  };
+}
+
+/**
+ * 18. Match suspended Anki cards against NotebookLM sources / lecture concepts
+ */
+export async function matchSuspendedAnkiCards(params: {
+  sourceTitle?: string;
+  sourceSummary?: string;
+  concepts?: string[];
+  deckFilter?: string;
+  tagFilter?: string;
+  maxMatches?: number;
+}) {
+  const res = await ankiMatchPost(
+    makeInternalReq('/api/anki/match', 'POST', {
+      mode: 'match_suspended',
+      sourceTitle: params.sourceTitle,
+      sourceText: params.sourceSummary,
+      concepts: params.concepts,
+      deckFilter: params.deckFilter,
+      tagFilter: params.tagFilter,
+      maxMatches: params.maxMatches || 25,
+      useAiExpansion: true,
+    })
+  );
+  return res.json();
+}
+
+/**
+ * 19. Unsuspend Anki cards — defaults to 1-Click Approval Inbox unless Kevin explicitly overrides
+ */
+export async function unsuspendAnkiCards(params: {
+  cardIds: number[];
+  title?: string;
+  sourceLabel?: string;
+  reasoning?: string;
+  requireApproval?: boolean;
+}) {
+  const sb = supabaseAdmin || supabase;
+  const cardIds = (params.cardIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (cardIds.length === 0) {
+    return { success: false, error: 'Provide at least one positive Anki cardId.' };
+  }
+
+  // Default ALWAYS stages in Approval Inbox unless user explicitly asks to bypass review
+  const requireApproval = params.requireApproval !== false;
+
+  if (!requireApproval) {
+    const res = await ankiCardsPost(
+      makeInternalReq('/api/anki/cards', 'POST', {
+        action: 'unsuspend',
+        cardIds,
+        source: 'gemini_mcp',
+      })
+    );
+    return res.json();
+  }
+
+  if (!sb) return { success: false, error: 'Supabase not configured.' };
+  const { data: matchedRows, error: fetchErr } = await sb
+    .from('anki_cards')
+    .select('card_id, note_id, deck_name, front_text, tags')
+    .in('card_id', cardIds);
+
+  if (fetchErr && isMissingAnkiTableError(fetchErr)) {
+    return { success: false, needsMigration: true, error: 'Run Supabase Anki migration first.' };
+  }
+
+  const matches: StagedCardMatchRef[] = (matchedRows || []).map((r) => ({
+    cardId: Number(r.card_id),
+    noteId: Number(r.note_id),
+    deckName: String(r.deck_name || 'Schulich'),
+    frontSnippet: stripClozeMarkup(String(r.front_text || '')).slice(0, 180),
+    tags: Array.isArray(r.tags) ? r.tags : [],
+  }));
+
+  const deckName = matches[0]?.deckName || 'Schulich';
+  const { data: proposal, error: pErr } = await sb
+    .from('anki_staged_proposals')
+    .insert({
+      proposal_type: 'unsuspend_cards',
+      title: params.title || `Unsuspend ${cardIds.length} matching card(s)`,
+      source_label: params.sourceLabel || 'Gemini / NotebookLM',
+      deck_name: deckName,
+      payload: { cardIds, matches },
+      reasoning:
+        params.reasoning ||
+        'Matched against uploaded NotebookLM source content; staged for 1-click approval on /anki.',
+      status: 'pending',
+    })
+    .select('*')
+    .single();
+
+  if (pErr) return { success: false, error: pErr.message };
+
+  return {
+    success: true,
+    stagedInApprovalInbox: true,
+    proposalId: proposal.id,
+    cardCount: cardIds.length,
+    message: `Staged ${cardIds.length} card(s) to unsuspend in Kevin-OS /anki Approval Inbox (1-click approve to sync to Anki).`,
+  };
+}
+
+/**
+ * 20. Suspend Anki cards — defaults to 1-Click Approval Inbox unless Kevin explicitly overrides
+ */
+export async function suspendAnkiCards(params: {
+  cardIds: number[];
+  title?: string;
+  sourceLabel?: string;
+  reasoning?: string;
+  requireApproval?: boolean;
+}) {
+  const sb = supabaseAdmin || supabase;
+  const cardIds = (params.cardIds || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (cardIds.length === 0) {
+    return { success: false, error: 'Provide at least one positive Anki cardId.' };
+  }
+
+  const requireApproval = params.requireApproval !== false;
+  if (!requireApproval) {
+    const res = await ankiCardsPost(
+      makeInternalReq('/api/anki/cards', 'POST', {
+        action: 'suspend',
+        cardIds,
+        source: 'gemini_mcp',
+      })
+    );
+    return res.json();
+  }
+
+  if (!sb) return { success: false, error: 'Supabase not configured.' };
+  const { data: matchedRows } = await sb
+    .from('anki_cards')
+    .select('card_id, note_id, deck_name, front_text, tags')
+    .in('card_id', cardIds);
+
+  const matches: StagedCardMatchRef[] = (matchedRows || []).map((r) => ({
+    cardId: Number(r.card_id),
+    noteId: Number(r.note_id),
+    deckName: String(r.deck_name || 'Schulich'),
+    frontSnippet: stripClozeMarkup(String(r.front_text || '')).slice(0, 180),
+    tags: Array.isArray(r.tags) ? r.tags : [],
+  }));
+
+  const { data: proposal, error: pErr } = await sb
+    .from('anki_staged_proposals')
+    .insert({
+      proposal_type: 'suspend_cards',
+      title: params.title || `Suspend ${cardIds.length} card(s)`,
+      source_label: params.sourceLabel || 'Gemini',
+      deck_name: matches[0]?.deckName || 'Schulich',
+      payload: { cardIds, matches },
+      reasoning: params.reasoning || 'Staged card suspension for 1-click approval on /anki.',
+      status: 'pending',
+    })
+    .select('*')
+    .single();
+
+  if (pErr) return { success: false, error: pErr.message };
+
+  return {
+    success: true,
+    stagedInApprovalInbox: true,
+    proposalId: proposal.id,
+    cardCount: cardIds.length,
+    message: `Staged ${cardIds.length} card(s) to suspend in Kevin-OS /anki Approval Inbox.`,
+  };
+}
+
+/**
+ * 21. Add new Cloze/Basic Anki notes (e.g. from NotebookLM) — defaults to 1-Click Approval Inbox
+ */
+export async function addAnkiNotes(params: {
+  deckName?: string;
+  title?: string;
+  sourceLabel?: string;
+  reasoning?: string;
+  requireApproval?: boolean;
+  cards: Array<{
+    deckName?: string;
+    modelName?: 'Cloze' | 'Basic';
+    front: string;
+    back?: string;
+    extra?: string;
+    tags?: string[];
+  }>;
+}) {
+  const sb = supabaseAdmin || supabase;
+  if (!sb) return { success: false, error: 'Supabase not configured.' };
+  if (!Array.isArray(params.cards) || params.cards.length === 0) {
+    return { success: false, error: 'Provide at least one card to add.' };
+  }
+
+  const defaultDeck = (params.deckName || 'Schulich').trim();
+  const requireApproval = params.requireApproval !== false;
+
+  const { data: existingCards, error: exErr } = await sb
+    .from('anki_cards')
+    .select('card_id, front_text, deck_name')
+    .limit(5000);
+
+  if (exErr && isMissingAnkiTableError(exErr)) {
+    return { success: false, needsMigration: true, error: 'Run Supabase Anki migration first.' };
+  }
+
+  const existingList = (existingCards || []) as Pick<
+    AnkiCard,
+    'card_id' | 'front_text' | 'deck_name'
+  >[];
+
+  const normalizedDrafts: StagedNewCardDraft[] = params.cards
+    .filter((c) => c && typeof c.front === 'string' && c.front.trim().length > 2)
+    .slice(0, 30)
+    .map((c) => {
+      const front = c.front.trim();
+      const modelName = c.modelName || (/\{\{c\d+::/.test(front) ? 'Cloze' : 'Basic');
+      const tags = Array.isArray(c.tags)
+        ? c.tags.map((t) => String(t).trim().replace(/\s+/g, '_')).filter(Boolean)
+        : ['source::notebooklm'];
+      return {
+        deckName: (c.deckName || defaultDeck).trim(),
+        modelName,
+        front,
+        back: (c.back || '').trim(),
+        extra: (c.extra || '').trim(),
+        tags,
+        duplicateWarning: findPotentialDuplicateCard(stripClozeMarkup(front), existingList),
+      };
+    });
+
+  if (normalizedDrafts.length === 0) {
+    return { success: false, error: 'No valid card drafts provided.' };
+  }
+
+  if (!requireApproval) {
+    const added = [];
+    for (const draft of normalizedDrafts) {
+      const res = await ankiCardsPost(
+        makeInternalReq('/api/anki/cards', 'POST', {
+          action: 'add_note',
+          deckName: draft.deckName,
+          modelName: draft.modelName,
+          front: draft.front,
+          back: draft.back,
+          extra: draft.extra,
+          tags: draft.tags,
+          source: 'gemini_mcp',
+        })
+      );
+      added.push(await res.json());
+    }
+    return {
+      success: true,
+      stagedInApprovalInbox: false,
+      queuedCount: added.length,
+      duplicateWarnings: normalizedDrafts
+        .map((d) => d.duplicateWarning)
+        .filter(Boolean),
+      message: `Queued ${added.length} new Anki card(s) directly to Anki Desktop sync queue.`,
+    };
+  }
+
+  const { data: proposal, error: pErr } = await sb
+    .from('anki_staged_proposals')
+    .insert({
+      proposal_type: 'new_cards',
+      title:
+        params.title || `Add ${normalizedDrafts.length} new card(s) to ${defaultDeck}`,
+      source_label: params.sourceLabel || 'Gemini / NotebookLM',
+      deck_name: defaultDeck,
+      payload: { cards: normalizedDrafts },
+      reasoning:
+        params.reasoning ||
+        'Drafted from NotebookLM / lecture notes; staged in Kevin-OS /anki 1-Click Approval Inbox.',
+      status: 'pending',
+    })
+    .select('*')
+    .single();
+
+  if (pErr) return { success: false, error: pErr.message };
+
+  return {
+    success: true,
+    stagedInApprovalInbox: true,
+    proposalId: proposal.id,
+    cardCount: normalizedDrafts.length,
+    duplicateWarnings: normalizedDrafts.map((d) => d.duplicateWarning).filter(Boolean),
+    message: `Staged ${normalizedDrafts.length} new card(s) in Kevin-OS /anki Approval Inbox for your 1-click review & sync.`,
+  };
+}
+
+/**
+ * 22. Auto-schedule today's Anki timeblock + Google Task around Kevin's classes/calendar
+ */
+export async function scheduleAnkiTodayTimeblock(params: {
+  date?: string;
+  includeNewCards?: boolean;
+  allowSplit?: boolean;
+  calendar?: CalendarName;
+  commit?: boolean;
+} = {}) {
+  const res = await ankiScheduleTodayPost(
+    makeInternalReq('/api/anki/schedule-today', 'POST', {
+      date: params.date,
+      includeNewCards: Boolean(params.includeNewCards),
+      allowSplit: params.allowSplit !== false,
+      calendar: params.calendar || 'School',
+      commit: Boolean(params.commit),
+    })
+  );
+  return res.json();
+}
+
+/**
+ * 23. Get Anki leeches / weak topics grouped for remediation
+ */
+export async function getAnkiLeeches(params: { minLapses?: number } = {}) {
+  const minLapses = Math.max(2, params.minLapses || 4);
+  const res = await ankiLeechesGet(
+    makeInternalReq(`/api/anki/leeches?minLapses=${minLapses}`)
+  );
+  return res.json();
 }
