@@ -217,6 +217,37 @@ export function formatCompletedCalendarSummary(title: string, completed: boolean
 }
 
 /**
+ * Extracts the bracketed duration in minutes from an online module title (e.g. "(45 min) ..." -> 45).
+ */
+export function extractModuleBracketMins(title?: string | null): number | null {
+  if (!title) return null;
+  const match = title.match(/\(\s*(\d+)\s*(?:mins?|minutes?)\s*\)/i);
+  if (!match) return null;
+  const parsed = parseInt(match[1], 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Computes the recommended timeblock duration for an online module:
+ * adds 20 minutes to the bracketed/raw duration and rounds UP to the nearest 30-minute increment.
+ * Examples: 45m -> 65m -> 90m; 20m -> 40m -> 60m; 10m -> 30m -> 30m; 57m -> 77m -> 90m; 79m -> 99m -> 120m.
+ */
+export function computeRecommendedModuleDuration(
+  rawMinsOrTitle: number | string | null | undefined,
+  fallbackRawMins = 30
+): number {
+  let rawMins: number;
+  if (typeof rawMinsOrTitle === 'number' && Number.isFinite(rawMinsOrTitle) && rawMinsOrTitle > 0) {
+    rawMins = rawMinsOrTitle;
+  } else if (typeof rawMinsOrTitle === 'string') {
+    rawMins = extractModuleBracketMins(rawMinsOrTitle) ?? fallbackRawMins;
+  } else {
+    rawMins = fallbackRawMins;
+  }
+  return Math.ceil((Math.max(1, Math.round(rawMins)) + 20) / 30) * 30;
+}
+
+/**
  * Cleans a task or event title for UI display (removes leading task prefixes/emojis while preserving case).
  */
 export function cleanDisplayTitle(str?: string): string {

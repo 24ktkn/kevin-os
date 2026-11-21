@@ -20,6 +20,9 @@ import {
   ListTodo,
   CalendarCheck,
   CalendarClock,
+  Bot,
+  X,
+  Zap,
 } from 'lucide-react';
 import { SchoolEvent, SchoolCategory } from '@/types/school';
 import { CalendarName } from '@/types/task';
@@ -30,6 +33,8 @@ import {
   getCalendarDateString,
   cleanTaskTitle,
   titlesMatch,
+  extractModuleBracketMins,
+  computeRecommendedModuleDuration,
 } from '@/lib/date-utils';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
 import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
@@ -57,6 +62,34 @@ function formatScheduledDate(dateStr?: string): string {
 }
 
 const CALENDAR_NAMES: CalendarName[] = ['School', 'Kevin Nguyen', 'Family', 'Volunteering'];
+
+function getModuleRawDuration(event?: SchoolEvent | null): number {
+  if (!event) return 45;
+  const bracket = extractModuleBracketMins(event.summary);
+  if (bracket !== null) return bracket;
+  return event.duration && event.duration > 0 ? event.duration : 45;
+}
+
+function getRecommendedBlockDuration(event?: SchoolEvent | null): number {
+  if (!event) return 60;
+  if (event.category === 'module') {
+    return computeRecommendedModuleDuration(getModuleRawDuration(event));
+  }
+  return event.duration || 60;
+}
+
+interface AiModuleRecommendation {
+  uid: string;
+  title: string;
+  rawSummary: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  rawDurationMins: number;
+  durationMins: number;
+  calendar: CalendarName;
+  reasoning: string;
+}
 
 interface DbSchoolRow {
   uid: string;
@@ -96,6 +129,33 @@ export default function SchoolSyncPage() {
     Record<string, { date: string; time: string; duration: number; calendar: string }>
   >({});
   const [reschedulingSchoolItem, setReschedulingSchoolItem] = useState<SchoolEvent | null>(null);
+
+  // AI Recommended Module Scheduler state (batch + per-card)
+  const [aiStartDate, setAiStartDate] = useState<string>(() => getTodayDateStr());
+  const [aiEndDate, setAiEndDate] = useState<string>(() => addDaysToDateStr(getTodayDateStr(), 6));
+  const [aiMaxPerDay, setAiMaxPerDay] = useState<number>(3);
+  const [aiIncludeOverdue, setAiIncludeOverdue] = useState<boolean>(true);
+  const [loadingAiRecs, setLoadingAiRecs] = useState<boolean>(false);
+  const [aiRecommendations, setAiRecommendations] = useState<AiModuleRecommendation[]>([]);
+  const [aiRecommendMsg, setAiRecommendMsg] = useState<string | null>(null);
+  const [aiRecommendError, setAiRecommendError] = useState<string | null>(null);
+  const [committingRecUid, setCommittingRecUid] = useState<string | null>(null);
+  const [committingAllAi, setCommittingAllAi] = useState<boolean>(false);
+  const [recommendingUid, setRecommendingUid] = useState<string | null>(null);
+  const [autoAddingUid, setAutoAddingUid] = useState<string | null>(null);
+  const [cardAiHints, setCardAiHints] = useState<
+    Record<
+      string,
+      {
+        date: string;
+        startTime: string;
+        endTime: string;
+        rawDurationMins: number;
+        durationMins: number;
+        reasoning: string;
+      }
+    >
+  >({});
 
   const handleSchoolRescheduleSuccess = (rescheduled: {
     newDate: string;
@@ -466,14 +526,20 @@ export default function SchoolSyncPage() {
       ? '11:59 PM'
       : eventDateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
+    const effectiveCategory = (defaultEvent && (overrides[uid] || defaultEvent.category)) || 'module';
+    const defaultDuration = isTaskOnly
+      ? 0
+      : getRecommendedBlockDuration(defaultEvent ? { ...defaultEvent, category: effectiveCategory } : null);
+
     const existing = formState[uid] || {
       date: getCalendarDateString(eventDateObj),
       time: isTaskOnly ? defaultTimeStr : '10:00 AM',
-      duration: isTaskOnly ? 0 : defaultEvent?.duration || 60,
+      duration: defaultDuration,
       calendar: 'School',
     };
 
     setSchedulingId(uid);
+    mutationSeqRef.current += 1;
 
     try {
       // 1. Call backend route
@@ -501,9 +567,14 @@ export default function SchoolSyncPage() {
       }
 
       // 2. Update local state
-      const updated = { ...scheduledItems, [uid]: { ...existing, isTaskOnly } };
-      setScheduledItems(updated);
-      localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+      setScheduledItems((prev) => {
+        const updated = { ...prev, [uid]: { ...existing, isTaskOnly } };
+        try {
+          localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+      setAiRecommendations((prev) => prev.filter((r) => r.uid !== uid));
       setExpandedId(null);
 
       // 3. Upsert to Supabase
@@ -511,7 +582,7 @@ export default function SchoolSyncPage() {
         await supabase.from('school_items').upsert({
           uid,
           title: defaultEvent?.summary || 'Untitled',
-          category: overrides[uid] || defaultEvent?.category || 'module',
+          category: effectiveCategory,
           is_scheduled: true,
           scheduled_date: existing.date,
           scheduled_time: existing.time,
@@ -524,6 +595,286 @@ export default function SchoolSyncPage() {
       console.error('Failed to schedule:', err);
     } finally {
       setSchedulingId(null);
+    }
+  };
+
+  // Batch AI Recommended Module Scheduler: scans Google Calendar + Schulich classes for open non-overlapping slots
+  const handleGenerateBatchRecommendations = async () => {
+    setLoadingAiRecs(true);
+    setAiRecommendError(null);
+    setAiRecommendMsg(null);
+    try {
+      const res = await fetch('/api/school/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'batch',
+          startDate: aiStartDate,
+          endDate: aiEndDate,
+          includeOverdueModules: aiIncludeOverdue,
+          maxModulesPerDay: aiMaxPerDay,
+          commit: false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setAiRecommendError(data.error || 'Could not generate AI schedule recommendations.');
+        return;
+      }
+
+      const slots: AiModuleRecommendation[] = Array.isArray(data.plannedSlots)
+        ? data.plannedSlots.map(
+            (s: {
+              uid: string;
+              title: string;
+              rawSummary?: string;
+              date: string;
+              startTime: string;
+              endTime?: string;
+              rawDurationMins?: number;
+              durationMins: number;
+              reasoning?: string;
+            }) => ({
+              uid: s.uid,
+              title: s.title,
+              rawSummary: s.rawSummary || s.title,
+              date: s.date,
+              startTime: s.startTime,
+              endTime: s.endTime || '',
+              rawDurationMins: s.rawDurationMins || 45,
+              durationMins: s.durationMins,
+              calendar: 'School' as CalendarName,
+              reasoning: s.reasoning || 'Recommended open slot avoiding classes and existing events.',
+            })
+          )
+        : [];
+
+      setAiRecommendations(slots);
+      if (slots.length === 0) {
+        setAiRecommendMsg(
+          data.message || 'All incomplete online modules in this range are already scheduled.'
+        );
+      } else {
+        const skippedNote =
+          data.skippedCount && data.skippedCount > 0
+            ? ` (${data.skippedCount} skipped due to full days)`
+            : '';
+        setAiRecommendMsg(
+          `Found ${slots.length} non-overlapping timeblock${slots.length === 1 ? '' : 's'} using your +20m rounded-up-to-30m rule${skippedNote}. Review or click Add All below.`
+        );
+      }
+    } catch (err) {
+      setAiRecommendError(
+        err instanceof Error ? err.message : 'Network error generating AI recommendations.'
+      );
+    } finally {
+      setLoadingAiRecs(false);
+    }
+  };
+
+  // Commit a single recommendation from the AI batch list to Google Calendar + Google Tasks + Supabase
+  const commitRecommendationRow = async (rec: AiModuleRecommendation): Promise<boolean> => {
+    mutationSeqRef.current += 1;
+    const scheduleRes = await fetch('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: rec.rawSummary || rec.title,
+        description: `AI Recommended Module Timeblock (${rec.rawDurationMins}m module -> ${rec.durationMins}m block). ${rec.reasoning}`,
+        date: rec.date,
+        time: rec.startTime,
+        duration: rec.durationMins,
+        calendar: rec.calendar,
+        skipCalendar: false,
+      }),
+    });
+    const schedData = await scheduleRes.json();
+    if (!scheduleRes.ok || !schedData.success) {
+      throw new Error(schedData.error || `Failed to schedule ${rec.title}`);
+    }
+    if (schedData.taskError) {
+      setTasksAuthError(true);
+    }
+
+    setScheduledItems((prev) => {
+      const updated = {
+        ...prev,
+        [rec.uid]: {
+          date: rec.date,
+          time: rec.startTime,
+          duration: rec.durationMins,
+          calendar: rec.calendar,
+          isTaskOnly: false,
+        },
+      };
+      try {
+        localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    if (supabase) {
+      await supabase.from('school_items').upsert({
+        uid: rec.uid,
+        title: rec.rawSummary || rec.title,
+        category: overrides[rec.uid] || 'module',
+        is_completed: false,
+        is_scheduled: true,
+        scheduled_date: rec.date,
+        scheduled_time: rec.startTime,
+        duration_mins: rec.durationMins,
+        target_calendar: rec.calendar,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    setAiRecommendations((prev) => prev.filter((item) => item.uid !== rec.uid));
+    return true;
+  };
+
+  const handleCommitSingleRecommendation = async (rec: AiModuleRecommendation) => {
+    setCommittingRecUid(rec.uid);
+    setAiRecommendError(null);
+    try {
+      await commitRecommendationRow(rec);
+      setAiRecommendMsg(
+        `Added "${rec.title}" (${rec.durationMins}m) on ${formatScheduledDate(rec.date)} at ${rec.startTime} to Google Calendar & Google Tasks.`
+      );
+    } catch (err) {
+      setAiRecommendError(
+        err instanceof Error ? err.message : 'Failed to add recommended module.'
+      );
+    } finally {
+      setCommittingRecUid(null);
+    }
+  };
+
+  const handleCommitAllRecommendations = async () => {
+    if (aiRecommendations.length === 0) return;
+    setCommittingAllAi(true);
+    setAiRecommendError(null);
+    const snapshot = [...aiRecommendations];
+    let addedCount = 0;
+    const failedTitles: string[] = [];
+
+    try {
+      for (const rec of snapshot) {
+        setCommittingRecUid(rec.uid);
+        try {
+          await commitRecommendationRow(rec);
+          addedCount += 1;
+        } catch {
+          failedTitles.push(rec.title);
+        }
+      }
+      if (addedCount > 0) {
+        setAiRecommendMsg(
+          `Scheduled ${addedCount} online module${addedCount === 1 ? '' : 's'} onto Google Calendar & Google Tasks!`
+        );
+      }
+      if (failedTitles.length > 0) {
+        setAiRecommendError(`Could not schedule: ${failedTitles.join(', ')}`);
+      }
+    } finally {
+      setCommittingRecUid(null);
+      setCommittingAllAi(false);
+    }
+  };
+
+  // Per-card AI recommendation (preview or 1-click auto-add to Google Calendar & Google Tasks)
+  const handleRecommendSingleModule = async (event: SchoolEvent, autoCommit = false) => {
+    if (autoCommit) {
+      setAutoAddingUid(event.uid);
+    } else {
+      setRecommendingUid(event.uid);
+    }
+    setAiRecommendError(null);
+
+    try {
+      const eventDateStr = getCalendarDateString(new Date(event.dateObj));
+      const todayStr = getTodayDateStr();
+      const preferredDate = eventDateStr >= todayStr ? eventDateStr : todayStr;
+      const existingCalendar = (formState[event.uid]?.calendar || 'School') as CalendarName;
+
+      const res = await fetch('/api/school/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'single',
+          uid: event.uid,
+          title: event.summary,
+          rawSummary: event.summary,
+          description: event.description,
+          rawDurationMins: getModuleRawDuration(event),
+          preferredDate,
+          searchDays: 7,
+          calendar: existingCalendar,
+          autoCommit,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setAiRecommendError(data.error || 'Could not find an AI recommended slot.');
+        return;
+      }
+      if (data.taskError) {
+        setTasksAuthError(true);
+      }
+
+      if (autoCommit && data.committed) {
+        mutationSeqRef.current += 1;
+        setScheduledItems((prev) => {
+          const updated = {
+            ...prev,
+            [event.uid]: {
+              date: data.date,
+              time: data.startTime,
+              duration: data.durationMins,
+              calendar: data.calendar || existingCalendar,
+              isTaskOnly: false,
+            },
+          };
+          try {
+            localStorage.setItem('kevin_school_scheduled', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+        setAiRecommendations((prev) => prev.filter((r) => r.uid !== event.uid));
+        setExpandedId(null);
+        setAiRecommendMsg(
+          `AI Auto-Scheduled "${data.title}" (${data.rawDurationMins}m → ${data.durationMins}m) on ${formatScheduledDate(data.date)} at ${data.startTime} to Google Calendar & Google Tasks.`
+        );
+      } else {
+        setFormState((prev) => ({
+          ...prev,
+          [event.uid]: {
+            date: data.date,
+            time: data.startTime,
+            duration: data.durationMins,
+            calendar: data.calendar || existingCalendar,
+          },
+        }));
+        setCardAiHints((prev) => ({
+          ...prev,
+          [event.uid]: {
+            date: data.date,
+            startTime: data.startTime,
+            endTime: data.endTime || '',
+            rawDurationMins: data.rawDurationMins,
+            durationMins: data.durationMins,
+            reasoning: data.reasoning || 'Open slot selected avoiding classes & existing events.',
+          },
+        }));
+        setExpandedId(event.uid);
+      }
+    } catch (err) {
+      setAiRecommendError(
+        err instanceof Error ? err.message : 'Failed to request AI slot recommendation.'
+      );
+    } finally {
+      setRecommendingUid(null);
+      setAutoAddingUid(null);
     }
   };
 
@@ -776,6 +1127,303 @@ export default function SchoolSyncPage() {
           </div>
         )}
 
+        {/* AI Recommended Module Scheduler Panel (Active Modules Tab) */}
+        {activeTab === 0 && (
+          <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-[#141422] via-[#121218] to-[#0E1520] p-5 shadow-lg shadow-indigo-950/20 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+                  <Bot className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-white tracking-tight">
+                      AI Recommended Module Scheduler
+                    </h2>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                      Rule: +20m → ceil 30m
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Reviews all Google Calendars &amp; Schulich lectures to recommend open non-overlapping timeblocks (e.g. 45m module → 90m block) and adds them to Google Calendar &amp; Google Tasks.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  onClick={handleGenerateBatchRecommendations}
+                  disabled={loadingAiRecs || committingAllAi}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 disabled:opacity-60 transition shadow-md shadow-indigo-500/20 cursor-pointer"
+                >
+                  {loadingAiRecs ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  <span>
+                    {loadingAiRecs ? 'Scanning Calendar...' : 'Recommend Timeslots'}
+                  </span>
+                </button>
+
+                {aiRecommendations.length > 0 && (
+                  <button
+                    onClick={handleCommitAllRecommendations}
+                    disabled={committingAllAi || loadingAiRecs}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-emerald-950 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-60 transition shadow-md shadow-emerald-500/20 cursor-pointer"
+                  >
+                    {committingAllAi ? (
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="h-3.5 w-3.5" />
+                    )}
+                    <span>
+                      {committingAllAi
+                        ? 'Adding to Google...'
+                        : `Auto-Add All (${aiRecommendations.length})`}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Scheduler Window Controls */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 text-xs">
+              <div>
+                <label className="text-zinc-400 block mb-1">From Date</label>
+                <input
+                  type="date"
+                  value={aiStartDate}
+                  onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                  onChange={(e) => setAiStartDate(e.target.value)}
+                  className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-400 [color-scheme:dark] cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-400 block mb-1">To Date</label>
+                <input
+                  type="date"
+                  value={aiEndDate}
+                  onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                  onChange={(e) => setAiEndDate(e.target.value)}
+                  className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-400 [color-scheme:dark] cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-400 block mb-1">Max Modules / Day</label>
+                <select
+                  value={aiMaxPerDay}
+                  onChange={(e) => setAiMaxPerDay(parseInt(e.target.value, 10) || 3)}
+                  className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-400"
+                >
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n} per day
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-end pb-1">
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={aiIncludeOverdue}
+                    onChange={(e) => setAiIncludeOverdue(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-cyan-500 focus:ring-indigo-500"
+                  />
+                  <span>Include overdue modules</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Status Banners */}
+            {aiRecommendError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs flex items-center justify-between gap-2">
+                <span>{aiRecommendError}</span>
+                <button
+                  onClick={() => setAiRecommendError(null)}
+                  className="text-rose-400 hover:text-rose-200"
+                  aria-label="Dismiss error"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {aiRecommendMsg && (
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-cyan-200 text-xs flex items-center justify-between gap-2">
+                <span>{aiRecommendMsg}</span>
+                <button
+                  onClick={() => setAiRecommendMsg(null)}
+                  className="text-cyan-400 hover:text-cyan-200"
+                  aria-label="Dismiss message"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Recommended Timeblocks Preview List */}
+            {aiRecommendations.length > 0 && (
+              <div className="space-y-2.5 pt-1">
+                <div className="flex items-center justify-between text-xs text-zinc-400">
+                  <span className="font-medium text-indigo-300">
+                    {aiRecommendations.length} recommended timeblock{aiRecommendations.length === 1 ? '' : 's'} ready to add
+                  </span>
+                  <button
+                    onClick={() => setAiRecommendations([])}
+                    className="text-zinc-500 hover:text-zinc-300 transition"
+                  >
+                    Clear suggestions
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {aiRecommendations.map((rec) => {
+                    const isRowBusy = committingRecUid === rec.uid;
+                    return (
+                      <div
+                        key={rec.uid}
+                        className="rounded-xl border border-indigo-500/25 bg-[#0F1019] p-3.5 space-y-2.5"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-white leading-snug">
+                                {rec.rawSummary}
+                              </span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                                {rec.rawDurationMins}m → {rec.durationMins}m block
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-zinc-400 leading-relaxed">
+                              ✨ {rec.reasoning}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0 self-start">
+                            <button
+                              onClick={() => handleCommitSingleRecommendation(rec)}
+                              disabled={isRowBusy || committingAllAi}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-60 transition cursor-pointer"
+                            >
+                              {isRowBusy ? (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <CalendarCheck className="h-3.5 w-3.5" />
+                              )}
+                              <span>{isRowBusy ? 'Adding...' : 'Add to Cal & Tasks'}</span>
+                            </button>
+                            <button
+                              onClick={() =>
+                                setAiRecommendations((prev) =>
+                                  prev.filter((item) => item.uid !== rec.uid)
+                                )
+                              }
+                              disabled={isRowBusy || committingAllAi}
+                              className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition"
+                              title="Dismiss this suggestion"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Inline Editable Slot Fields */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-0.5">Date</label>
+                            <input
+                              type="date"
+                              value={rec.date}
+                              onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                              onChange={(e) =>
+                                setAiRecommendations((prev) =>
+                                  prev.map((item) =>
+                                    item.uid === rec.uid
+                                      ? { ...item, date: e.target.value }
+                                      : item
+                                  )
+                                )
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-1 text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark] cursor-pointer"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-0.5">Start Time</label>
+                            <input
+                              type="text"
+                              value={rec.startTime}
+                              onChange={(e) =>
+                                setAiRecommendations((prev) =>
+                                  prev.map((item) =>
+                                    item.uid === rec.uid
+                                      ? { ...item, startTime: e.target.value }
+                                      : item
+                                  )
+                                )
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-1 text-white font-mono focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-0.5">Duration (Mins)</label>
+                            <input
+                              type="number"
+                              min={15}
+                              max={360}
+                              step={15}
+                              value={rec.durationMins}
+                              onChange={(e) =>
+                                setAiRecommendations((prev) =>
+                                  prev.map((item) =>
+                                    item.uid === rec.uid
+                                      ? { ...item, durationMins: parseInt(e.target.value, 10) || rec.durationMins }
+                                      : item
+                                  )
+                                )
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-1 text-white font-mono focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-zinc-500 block mb-0.5">Calendar</label>
+                            <select
+                              value={rec.calendar}
+                              onChange={(e) =>
+                                setAiRecommendations((prev) =>
+                                  prev.map((item) =>
+                                    item.uid === rec.uid
+                                      ? { ...item, calendar: e.target.value as CalendarName }
+                                      : item
+                                  )
+                                )
+                              }
+                              className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2 py-1 text-white focus:outline-none focus:border-cyan-500"
+                            >
+                              {CALENDAR_NAMES.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Event List */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24 space-y-3">
@@ -794,6 +1442,10 @@ export default function SchoolSyncPage() {
               const dateObj = new Date(event.dateObj);
               const isExpanded = expandedId === event.uid;
               const isAssignment = event.category === 'assignment';
+              const isModule = event.category === 'module';
+              const rawModuleMins = getModuleRawDuration(event);
+              const recBlockMins = getRecommendedBlockDuration(event);
+              const cardHint = cardAiHints[event.uid];
               const formattedDate = dateObj.toLocaleDateString('en-US', {
                 weekday: 'short',
                 month: 'short',
@@ -807,7 +1459,12 @@ export default function SchoolSyncPage() {
               const currentForm = formState[event.uid] || {
                 date: event.scheduledDate || getCalendarDateString(dateObj),
                 time: event.scheduledTime || (isAssignment ? formattedTime : '10:00 AM'),
-                duration: event.scheduledDuration && event.scheduledDuration > 0 ? event.scheduledDuration : isAssignment ? 60 : event.duration,
+                duration:
+                  event.scheduledDuration && event.scheduledDuration > 0
+                    ? event.scheduledDuration
+                    : isAssignment
+                    ? 60
+                    : recBlockMins,
                 calendar: event.scheduledCalendar || 'School',
               };
 
@@ -863,7 +1520,9 @@ export default function SchoolSyncPage() {
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5 text-zinc-400" />
-                          {formattedTime} {!isAssignment && `(${event.duration} mins)`}
+                          {isModule
+                            ? `${formattedTime} (${rawModuleMins}m → ${recBlockMins}m rec. block)`
+                            : `${formattedTime}${!isAssignment ? ` (${event.duration} mins)` : ''}`}
                         </span>
                         {event.location && (
                           <span className="text-zinc-500 text-xs truncate max-w-xs">
@@ -884,6 +1543,39 @@ export default function SchoolSyncPage() {
                         </button>
                       ) : (
                         <>
+                          {/* Dedicated AI Slot & Auto-Add Buttons for Unscheduled Online Modules */}
+                          {isModule && !event.isScheduled && (
+                            <>
+                              <button
+                                onClick={() => handleRecommendSingleModule(event, false)}
+                                disabled={recommendingUid === event.uid || autoAddingUid === event.uid}
+                                title={`Recommend an open ${recBlockMins}m timeblock from your Google Calendar`}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-indigo-200 bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/35 disabled:opacity-60 transition shadow-sm cursor-pointer"
+                              >
+                                {recommendingUid === event.uid ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                )}
+                                <span>{recommendingUid === event.uid ? 'Finding Slot...' : 'AI Slot'}</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleRecommendSingleModule(event, true)}
+                                disabled={autoAddingUid === event.uid || recommendingUid === event.uid}
+                                title={`Auto-schedule a ${recBlockMins}m timeblock directly to Google Calendar & Google Tasks`}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-300 hover:text-cyan-200 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 disabled:opacity-60 transition shadow-sm cursor-pointer"
+                              >
+                                {autoAddingUid === event.uid ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Zap className="h-3.5 w-3.5" />
+                                )}
+                                <span>{autoAddingUid === event.uid ? 'Auto-Adding...' : 'AI Auto-Add'}</span>
+                              </button>
+                            </>
+                          )}
+
                           {/* Dedicated 1-Click Assignment Due Date Task Button */}
                           {isAssignment && !event.isScheduled && (
                             <button
@@ -998,13 +1690,47 @@ export default function SchoolSyncPage() {
 
                       {/* Timeblock Scheduler Form */}
                       <div className="p-3.5 rounded-xl bg-[#0F0F14] border border-zinc-800/90 space-y-3">
-                        <div className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
+                        <div className="text-xs font-semibold text-zinc-300 flex flex-wrap items-center justify-between gap-2">
                           <span>
                             {isAssignment
                               ? '📅 Timeblock Study / Working Session on Google Calendar'
                               : '📅 Timeblock & Add to Google Tasks'}
                           </span>
+                          {isModule && (
+                            <button
+                              onClick={() => handleRecommendSingleModule(event, false)}
+                              disabled={recommendingUid === event.uid}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium text-indigo-300 hover:text-indigo-200 bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 transition cursor-pointer"
+                            >
+                              {recommendingUid === event.uid ? (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-3 w-3" />
+                              )}
+                              <span>
+                                {recommendingUid === event.uid ? 'Scanning...' : 'Find AI Open Slot'}
+                              </span>
+                            </button>
+                          )}
                         </div>
+
+                        {cardHint && (
+                          <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs space-y-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-semibold text-indigo-200 flex items-center gap-1.5">
+                                <Bot className="h-3.5 w-3.5 text-cyan-400" />
+                                AI Recommendation: {formatScheduledDate(cardHint.date)} • {cardHint.startTime}
+                                {cardHint.endTime ? ` – ${cardHint.endTime}` : ''} ({cardHint.durationMins}m)
+                              </span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                                {cardHint.rawDurationMins}m + 20m → {cardHint.durationMins}m
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-zinc-300 leading-relaxed">
+                              {cardHint.reasoning}
+                            </p>
+                          </div>
+                        )}
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                           <div>
@@ -1045,7 +1771,11 @@ export default function SchoolSyncPage() {
 
                           <div>
                             <label className="text-zinc-400 block mb-1">
-                              {isAssignment ? 'Working Session Duration (Mins)' : 'Duration (Mins)'}
+                              {isAssignment
+                                ? 'Working Session Duration (Mins)'
+                                : isModule
+                                ? `Duration (Mins) · Auto: ${rawModuleMins}m + 20m → ${recBlockMins}m`
+                                : 'Duration (Mins)'}
                             </label>
                             <input
                               type="number"

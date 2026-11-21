@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ProposedTask, CalendarBusyBlock, AIScheduleResponse } from '@/types/ai';
 import { CalendarName } from '@/types/task';
-import { getTodayDateStr, format24hTo12h, parseTimeToHoursMinutes, DEFAULT_TIMEZONE } from '@/lib/date-utils';
+import {
+  getTodayDateStr,
+  format24hTo12h,
+  parseTimeToHoursMinutes,
+  DEFAULT_TIMEZONE,
+  extractModuleBracketMins,
+  computeRecommendedModuleDuration,
+} from '@/lib/date-utils';
 import { hasIntervalConflict, findFirstEmptySlot } from '@/lib/ai-rollover-scheduler';
 
 export const dynamic = 'force-dynamic';
@@ -97,7 +104,7 @@ ${tasksInput}
 
 YOUR OBJECTIVES:
 1. Identify each distinct task.
-2. Estimate a reasonable duration in minutes (if the user specified a duration like "30m", "45m", "1h", prioritize that).
+2. Estimate a reasonable duration in minutes. IMPORTANT RULE FOR ONLINE SCHOOL MODULES: if a task has a bracketed module duration like "(45 min) ...", add 20 minutes and round UP to the nearest 30 minutes (e.g., 45m -> 65m -> 90m; 20m -> 40m -> 60m; 57m -> 77m -> 90m). For non-module tasks, prioritize any explicit duration like "30m" or "1h".
 3. Assign the best calendar category from: ["Kevin Nguyen", "Family", "School", "Volunteering"]. (Default: "Kevin Nguyen").
 4. Fit the tasks into available free timeblocks between 08:00 and 22:00. DO NOT overlap with existing events or with each other. Leave 5-10 minute buffers when practical.
 5. Return ONLY a valid JSON array. No markdown fences, no explanatory text.
@@ -171,7 +178,10 @@ JSON FORMAT:
 
     const scheduledTasks: ProposedTask[] = parsedTasks.map((t) => {
       const cal = validCalendars.has(t.calendar) ? t.calendar : 'Kevin Nguyen';
-      const dur = Math.max(15, parseInt(String(t.durationMins || 30), 10));
+      const bracketMins = extractModuleBracketMins(t.itemName);
+      const dur = bracketMins
+        ? computeRecommendedModuleDuration(bracketMins)
+        : Math.max(15, parseInt(String(t.durationMins || 30), 10));
       const parsedStart = parseTimeToHoursMinutes(t.startTime24h || '09:00');
       const proposedStartMins = parsedStart.hours * 60 + parsedStart.minutes;
       const proposedEndMins = proposedStartMins + dur;

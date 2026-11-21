@@ -5,6 +5,8 @@ import {
   addDaysToDateStr,
   cleanDisplayTitle,
   cleanTaskTitle,
+  computeRecommendedModuleDuration,
+  extractModuleBracketMins,
   format24hTo12h,
   getProductivityDateStr,
   getTimezoneOffsetStr,
@@ -21,6 +23,7 @@ import {
   BusyInterval,
   RolloverTaskCandidate,
   findFirstEmptySlot,
+  getCurrentEasternMinsRoundedUp,
   hasIntervalConflict,
   planRolloverTimeSlotsWithAI,
 } from '@/lib/ai-rollover-scheduler';
@@ -506,7 +509,12 @@ export async function scheduleItem(params: {
   repeat?: string;
 }) {
   const targetDate = params.date || getTodayDateStr();
-  const durationMins = Math.max(5, params.durationMins || 60);
+  const bracketMins = extractModuleBracketMins(params.title);
+  const durationMins = params.durationMins
+    ? Math.max(5, params.durationMins)
+    : bracketMins
+      ? computeRecommendedModuleDuration(bracketMins)
+      : 60;
   const calendar: CalendarName = params.calendar || 'School';
   let assignedTime = params.time?.trim() || '';
   let slotReasoning: string | undefined;
@@ -619,10 +627,14 @@ export async function scheduleWeekModules(params: {
     };
   }
 
-  // Round duration nicely up to nearest 15 mins (minimum 30 mins, matching Kevin's standard study blocks)
-  const computeBlockDuration = (rawMins: number) => {
-    const safe = Math.max(15, rawMins || 45);
-    return Math.ceil(safe / 15) * 15;
+  // Online module duration rule: +20 minutes buffer, then rounded UP to the nearest 30 minutes
+  // (e.g. 45m -> 65m -> 90m; 20m -> 40m -> 60m; 57m -> 77m -> 90m)
+  const computeBlockDuration = (rawSummary: string, fallbackDurationMins: number) => {
+    const rawMins = extractModuleBracketMins(rawSummary) ?? fallbackDurationMins ?? 45;
+    return {
+      rawDurationMins: rawMins,
+      blockDurationMins: computeRecommendedModuleDuration(rawMins),
+    };
   };
 
   // Track occupied intervals & assigned module count per day
@@ -632,6 +644,7 @@ export async function scheduleWeekModules(params: {
     string,
     Array<{
       mod: (typeof targetModules)[number];
+      rawDurationMins: number;
       blockDurationMins: number;
     }>
   >();
@@ -646,23 +659,32 @@ export async function scheduleWeekModules(params: {
     dayCandidatesMap.set(d, []);
   }
 
-  // Compute remaining daytime open minutes on a day (8 AM - 10 PM)
+  const nowEasternMins = getCurrentEasternMinsRoundedUp();
+  const effectiveEarliestForDay = (d: string) =>
+    d === todayStr ? Math.max(earliestStartMins, nowEasternMins) : earliestStartMins;
+
+  // Compute remaining daytime open minutes on a day (effectiveStart - 10 PM)
   const estimateFreeMins = (d: string) => {
+    const dayStart = effectiveEarliestForDay(d);
+    if (dayStart >= 22 * 60) return 0;
     const occ = occupiedByDay.get(d) || [];
     let busyTotal = 0;
     for (const b of occ) {
-      const s = Math.max(earliestStartMins, b.startMins);
+      const s = Math.max(dayStart, b.startMins);
       const e = Math.min(22 * 60, b.endMins);
       if (e > s) busyTotal += e - s;
     }
-    return Math.max(0, 22 * 60 - earliestStartMins - busyTotal);
+    return Math.max(0, 22 * 60 - dayStart - busyTotal);
   };
 
   // Assign each module to the best day (>= releaseDate when within window) with free capacity
   const skipped: Array<{ uid: string; title: string; reason: string }> = [];
 
   for (const mod of targetModules) {
-    const blockDur = computeBlockDuration(mod.durationMins);
+    const { rawDurationMins, blockDurationMins: blockDur } = computeBlockDuration(
+      mod.rawSummary,
+      mod.durationMins
+    );
     const eligibleDays = days.filter((d) => d >= mod.releaseDate && d >= todayStr);
     const candidateDays = eligibleDays.length > 0 ? eligibleDays : days.filter((d) => d >= todayStr);
     const searchDays = candidateDays.length > 0 ? candidateDays : days;
@@ -677,11 +699,19 @@ export async function scheduleWeekModules(params: {
       });
 
     let placedDay: string | null = null;
+    let placedStartMins = earliestStartMins;
     for (const d of rankedDays) {
+      const dayEarliest = effectiveEarliestForDay(d);
+      if (dayEarliest + blockDur > 22 * 60 + 30) continue;
       const occ = occupiedByDay.get(d) || [];
-      const testSlot = findFirstEmptySlot(blockDur, occ, earliestStartMins);
-      if (!hasIntervalConflict(testSlot, testSlot + blockDur, occ, 0) && testSlot + blockDur <= 22 * 60 + 30) {
+      const testSlot = findFirstEmptySlot(blockDur, occ, dayEarliest);
+      if (
+        testSlot >= dayEarliest &&
+        !hasIntervalConflict(testSlot, testSlot + blockDur, occ, 0) &&
+        testSlot + blockDur <= 22 * 60 + 30
+      ) {
         placedDay = d;
+        placedStartMins = testSlot;
         break;
       }
     }
@@ -695,7 +725,15 @@ export async function scheduleWeekModules(params: {
       continue;
     }
 
-    dayCandidatesMap.get(placedDay)!.push({ mod, blockDurationMins: blockDur });
+    occupiedByDay.get(placedDay)!.push({
+      startMins: placedStartMins,
+      endMins: placedStartMins + blockDur,
+    });
+    dayCandidatesMap.get(placedDay)!.push({
+      mod,
+      rawDurationMins,
+      blockDurationMins: blockDur,
+    });
     assignedCountByDay.set(placedDay, (assignedCountByDay.get(placedDay) || 0) + 1);
   }
 
@@ -707,6 +745,7 @@ export async function scheduleWeekModules(params: {
     date: string;
     startTime: string;
     endTime: string;
+    rawDurationMins: number;
     durationMins: number;
     reasoning: string;
     committed?: boolean;
@@ -718,7 +757,7 @@ export async function scheduleWeekModules(params: {
     const entries = dayCandidatesMap.get(d) || [];
     if (entries.length === 0) continue;
 
-    // Sort longest first so 90m blocks get clean wide gaps
+    // Sort longest first so 90m/120m blocks get clean wide gaps
     entries.sort((a, b) => b.blockDurationMins - a.blockDurationMins);
     const busyBlocks = busyByDate.get(d) || [];
     const aiCandidates: RolloverTaskCandidate[] = entries.map((e) => ({
@@ -728,7 +767,9 @@ export async function scheduleWeekModules(params: {
       durationMins: e.blockDurationMins,
     }));
 
-    const slotMap = await planRolloverTimeSlotsWithAI(d, busyBlocks, aiCandidates);
+    const slotMap = await planRolloverTimeSlotsWithAI(d, busyBlocks, aiCandidates, {
+      earliestStartMins: effectiveEarliestForDay(d),
+    });
 
     for (const e of entries) {
       const assigned = slotMap.get(e.mod.uid);
@@ -740,6 +781,7 @@ export async function scheduleWeekModules(params: {
         date: d,
         startTime: assigned.startTime12h,
         endTime: assigned.endTime12h,
+        rawDurationMins: e.rawDurationMins,
         durationMins: assigned.durationMins,
         reasoning: assigned.reasoning,
       });
@@ -756,13 +798,14 @@ export async function scheduleWeekModules(params: {
         })()
   );
 
+  let taskError: string | null = null;
   if (!dryRun) {
     const sb = supabaseAdmin || supabase;
     for (const slot of plannedSlots) {
       const schedRes = await schedulePost(
         makeInternalReq('/api/schedule', 'POST', {
-          title: slot.title,
-          description: `Scheduled via Kevin-OS MCP (${slot.durationMins}m). ${slot.reasoning}`,
+          title: slot.rawSummary || slot.title,
+          description: `Scheduled via Kevin-OS AI Scheduler (${slot.rawDurationMins}m module -> ${slot.durationMins}m block). ${slot.reasoning}`,
           date: slot.date,
           time: slot.startTime,
           duration: slot.durationMins,
@@ -776,6 +819,9 @@ export async function scheduleWeekModules(params: {
       slot.committed = Boolean(schedJson?.success);
       slot.calendarEventId = schedJson?.calendarEventId || null;
       slot.googleTaskId = schedJson?.taskId || null;
+      if (schedJson?.taskError && !taskError) {
+        taskError = String(schedJson.taskError);
+      }
 
       if (sb && slot.committed) {
         await sb.from('school_items').upsert({
@@ -803,6 +849,147 @@ export async function scheduleWeekModules(params: {
     skippedCount: skipped.length,
     plannedSlots,
     skipped,
+    taskError,
+  };
+}
+
+/**
+ * 5b. Recommend (and optionally commit) an AI-selected non-overlapping timeblock for a single online module.
+ * Always applies Kevin's duration rule: (raw/bracketed mins + 20) rounded UP to the nearest 30 minutes.
+ */
+export async function recommendSingleSchoolModule(params: {
+  uid?: string;
+  title: string;
+  rawSummary?: string;
+  description?: string;
+  rawDurationMins?: number;
+  preferredDate?: string;
+  searchDays?: number;
+  calendar?: CalendarName;
+  autoCommit?: boolean;
+}) {
+  const todayStr = getTodayDateStr();
+  const searchDays = Math.min(14, Math.max(1, params.searchDays || 7));
+  const rawStart =
+    params.preferredDate && params.preferredDate >= todayStr ? params.preferredDate : todayStr;
+  const days = enumerateDates(rawStart, addDaysToDateStr(rawStart, searchDays - 1), searchDays);
+
+  const rawDurationMins =
+    extractModuleBracketMins(params.rawSummary || params.title) ??
+    (params.rawDurationMins && params.rawDurationMins > 0 ? params.rawDurationMins : 45);
+  const recommendedDurationMins = computeRecommendedModuleDuration(rawDurationMins);
+  const calendar: CalendarName = params.calendar || 'School';
+
+  const busyByDate = await fetchBusyBlocksForDates(days);
+  const nowEasternMins = getCurrentEasternMinsRoundedUp();
+
+  const fallbackDay =
+    days[0] === todayStr &&
+    nowEasternMins + recommendedDurationMins > 22 * 60 + 30 &&
+    days.length > 1
+      ? days[1]
+      : days[0];
+  let chosenDay = fallbackDay;
+  let chosenBusyBlocks = busyByDate.get(chosenDay) || [];
+
+  for (const d of days) {
+    const earliest = d === todayStr ? Math.max(8 * 60, nowEasternMins) : 8 * 60;
+    if (earliest + recommendedDurationMins > 22 * 60 + 30) continue;
+    const busy = busyByDate.get(d) || [];
+    const slot = findFirstEmptySlot(recommendedDurationMins, busy, earliest);
+    if (
+      slot >= earliest &&
+      !hasIntervalConflict(slot, slot + recommendedDurationMins, busy, 0) &&
+      slot + recommendedDurationMins <= 22 * 60 + 30
+    ) {
+      chosenDay = d;
+      chosenBusyBlocks = busy;
+      break;
+    }
+  }
+
+  const chosenEarliest = chosenDay === todayStr ? Math.max(8 * 60, nowEasternMins) : 8 * 60;
+  const slotMap = await planRolloverTimeSlotsWithAI(
+    chosenDay,
+    chosenBusyBlocks,
+    [
+      {
+        id: params.uid || 'single-module',
+        title: cleanDisplayTitle(params.title),
+        calendar,
+        durationMins: recommendedDurationMins,
+      },
+    ],
+    { earliestStartMins: chosenEarliest }
+  );
+
+  const assigned = slotMap.get(params.uid || 'single-module');
+  const startTime = assigned?.startTime12h || '9:00 AM';
+  const endTime = assigned?.endTime12h || '';
+  const reasoning =
+    assigned?.reasoning ||
+    `Placed in an open ${recommendedDurationMins}m slot on ${chosenDay} (${rawDurationMins}m + 20m buffer, rounded up to nearest 30m).`;
+
+  let committed = false;
+  let calendarEventId: string | null = null;
+  let googleTaskId: string | null = null;
+  let taskError: string | null = null;
+
+  if (params.autoCommit) {
+    const schedRes = await schedulePost(
+      makeInternalReq('/api/schedule', 'POST', {
+        title: params.rawSummary || params.title,
+        description:
+          params.description ||
+          `AI recommended study timeblock (${rawDurationMins}m module -> ${recommendedDurationMins}m block). ${reasoning}`,
+        date: chosenDay,
+        time: startTime,
+        duration: recommendedDurationMins,
+        calendar,
+        skipCalendar: false,
+        skipTask: false,
+        isStandaloneEvent: false,
+      })
+    );
+    const schedJson = await schedRes.json();
+    committed = Boolean(schedJson?.success);
+    calendarEventId = schedJson?.calendarEventId || null;
+    googleTaskId = schedJson?.taskId || null;
+    taskError = schedJson?.taskError ? String(schedJson.taskError) : null;
+
+    const sb = supabaseAdmin || supabase;
+    if (sb && committed && params.uid) {
+      await sb.from('school_items').upsert({
+        uid: params.uid,
+        title: params.rawSummary || params.title,
+        category: 'module',
+        is_completed: false,
+        is_scheduled: true,
+        scheduled_date: chosenDay,
+        scheduled_time: startTime,
+        duration_mins: recommendedDurationMins,
+        target_calendar: calendar,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  return {
+    success: true,
+    uid: params.uid,
+    title: cleanDisplayTitle(params.title),
+    rawSummary: params.rawSummary || params.title,
+    date: chosenDay,
+    startTime,
+    endTime,
+    rawDurationMins,
+    durationMins: recommendedDurationMins,
+    calendar,
+    reasoning,
+    committed,
+    calendarEventId,
+    googleTaskId,
+    taskError,
   };
 }
 

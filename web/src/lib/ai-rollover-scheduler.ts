@@ -185,7 +185,8 @@ async function callGeminiForRollover(prompt: string, apiKey: string): Promise<st
 export async function planRolloverTimeSlotsWithAI(
   targetDate: string,
   busyBlocks: BusyInterval[],
-  candidates: RolloverTaskCandidate[]
+  candidates: RolloverTaskCandidate[],
+  options?: { earliestStartMins?: number }
 ): Promise<Map<string, AssignedRolloverSlot>> {
   const result = new Map<string, AssignedRolloverSlot>();
   if (candidates.length === 0) return result;
@@ -196,8 +197,12 @@ export async function planRolloverTimeSlotsWithAI(
 
   // If rolling over onto today during the daytime (between 8:00 AM and 8:30 PM),
   // prefer empty slots starting from current time onwards so rolled-over tasks are actionable today.
-  const earliestStartMins =
+  const defaultEarliestStartMins =
     isToday && nowMins > DAY_START_MINS && nowMins <= 20 * 60 + 30 ? nowMins : DAY_START_MINS;
+  const earliestStartMins =
+    typeof options?.earliestStartMins === 'number'
+      ? Math.max(DAY_START_MINS, Math.min(22 * 60, options.earliestStartMins))
+      : defaultEarliestStartMins;
 
   const sortedBusy = [...busyBlocks].sort((a, b) => a.startMins - b.startMins);
   const occupied: Array<{ startMins: number; endMins: number }> = sortedBusy.map((b) => ({
@@ -290,7 +295,7 @@ SCHEDULING RULES:
     if (aiPick) {
       const proposedStart = aiPick.startMins;
       const proposedEnd = proposedStart + safeDuration;
-      const withinWindow = proposedStart >= DAY_START_MINS && proposedEnd <= 23 * 60 + 30;
+      const withinWindow = proposedStart >= earliestStartMins && proposedEnd <= 23 * 60 + 30;
       if (withinWindow && !hasIntervalConflict(proposedStart, proposedEnd, occupied)) {
         chosenStartMins = proposedStart;
         reasoning = aiPick.reasoning;

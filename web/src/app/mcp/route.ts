@@ -58,6 +58,7 @@ function createKevinOsMcpServer(): McpServer {
       instructions:
         'You are connected to Kevin-OS, Kevin Nguyen’s personal productivity, medical school (Schulich UWO), health biometrics, habits, workouts, daily journal, and meal prep system. ' +
         'All dates use America/New_York (Eastern Time) in YYYY-MM-DD format. ' +
+        'ONLINE MODULE DURATION RULE: For every online school module with a bracketed duration (e.g. "(45 min) ..."), always add 20 minutes and round UP to the nearest 30 minutes (e.g. 45m -> 65m -> 90m, 20m -> 40m -> 60m, 57m -> 77m -> 90m). ' +
         'When scheduling school modules, always check existing classes and calendars via schedule_week_modules or schedule_item so modules are created as paired Google Calendar [Task] timeblocks + Google Tasks + Supabase records without overlapping Schulich Elentra classes.',
     }
   );
@@ -163,7 +164,7 @@ function createKevinOsMcpServer(): McpServer {
     {
       title: 'Auto-Schedule Week Online Modules',
       description:
-        'Finds unscheduled incomplete online school modules in a date range, schedules them into open daytime slots around all 4 Google Calendars AND Schulich Elentra classes (preserving module durations), and creates paired Google Calendar [Task] blocks, Google Tasks, and Supabase school_items links. Supports dryRun=true to preview before committing.',
+        'Finds unscheduled incomplete online school modules in a date range, schedules them into open daytime slots around all 4 Google Calendars AND Schulich Elentra classes, applying Kevin’s duration rule (+20 minutes added to the bracketed duration, rounded UP to the nearest 30 minutes, e.g. 45m -> 65m -> 90m), and creates paired Google Calendar [Task] blocks, Google Tasks, and Supabase school_items links. Supports dryRun=true to preview before committing.',
       inputSchema: {
         startDate: z
           .string()
