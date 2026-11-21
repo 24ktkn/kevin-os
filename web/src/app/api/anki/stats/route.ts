@@ -4,6 +4,7 @@ import {
   computeAnkiStudyPlan,
   computeBiometricsRetentionInsights,
   computeExamPacing,
+  fetchAllAnkiCards,
   isMissingAnkiTableError,
 } from '@/lib/anki-utils';
 import { getProductivityDateStr, getTodayDateStr } from '@/lib/date-utils';
@@ -51,10 +52,9 @@ export async function GET() {
         .select('date, sleep_hours, hrv, rhr, steps')
         .order('date', { ascending: false })
         .limit(120),
-      sb
-        .from('anki_cards')
-        .select('deck_name, tags, suspended, queue, due_date, interval_days')
-        .limit(6000),
+      fetchAllAnkiCards<
+        Pick<AnkiCard, 'deck_name' | 'tags' | 'suspended' | 'queue' | 'due_date' | 'interval_days'>
+      >('deck_name, tags, suspended, queue, due_date, interval_days'),
     ]);
 
     if (statsRes.error && isMissingAnkiTableError(statsRes.error)) {

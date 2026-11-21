@@ -203,32 +203,50 @@ function computeDueDateForCard(card, todayStr, colTodayDay) {
 
 async function fetchDeckAndCollectionSnapshot(includeFullCards) {
   const todayStr = getProductivityDateStr();
-  const [deckNames, reviewsTodayRaw, byDayRaw] = await Promise.all([
-    ankiInvoke('deckNames'),
+  const [deckMapObj, reviewsTodayRaw, byDayRaw] = await Promise.all([
+    ankiInvoke('deckNamesAndIds', {}, 15_000),
     ankiInvoke('getNumCardsReviewedToday').catch(() => 0),
     ankiInvoke('getNumCardsReviewedByDay').catch(() => []),
   ]);
 
-  const topDecks = Array.isArray(deckNames) ? deckNames : [];
-  const deckStatsMap = topDecks.length > 0 ? await ankiInvoke('getDeckStats', { decks: topDecks }).catch(() => ({})) : {};
+  const deckEntries = Object.entries(deckMapObj || {});
+  const topDecks = deckEntries.map(([name]) => name);
+  const idToFullDeckName = new Map();
+  for (const [fullName, deckId] of deckEntries) {
+    idToFullDeckName.set(String(deckId), fullName);
+  }
 
-  // Compute today's due counts cleanly from non-parent leaf decks or all decks without double-counting
-  const leafDecks = topDecks.filter(
-    (d) => !topDecks.some((other) => other !== d && other.startsWith(`${d}::`))
+  // Fetch getDeckStats in chunks of 60 decks so large nested deck trees (180+ decks) never time out
+  const deckStatsMap = {};
+  for (let i = 0; i < topDecks.length; i += 60) {
+    const chunk = topDecks.slice(i, i + 60);
+    const partial = await ankiInvoke('getDeckStats', { decks: chunk }, 25_000).catch(() => ({}));
+    Object.assign(deckStatsMap, partial || {});
+  }
+
+  // AnkiConnect getDeckStats returns short basename in statObj.name — resolve FULL hierarchical name via deck_id!
+  const leafDecks = new Set(
+    topDecks.filter(
+      (d) => !topDecks.some((other) => other !== d && other.startsWith(`${d}::`))
+    )
   );
   const deckRowsByName = new Map();
   let reviewDueRemaining = 0;
   let learningRemaining = 0;
   let newRemaining = 0;
 
-  for (const statObj of Object.values(deckStatsMap || {})) {
-    if (!statObj || !statObj.name) continue;
-    const isLeaf = leafDecks.includes(statObj.name);
+  for (const [keyId, statObj] of Object.entries(deckStatsMap || {})) {
+    if (!statObj) continue;
+    const fullName =
+      idToFullDeckName.get(String(statObj.deck_id ?? keyId)) ||
+      String(statObj.name || '');
+    if (!fullName) continue;
+
     const nr = Number(statObj.new_count) || 0;
     const lr = Number(statObj.learn_count) || 0;
     const rr = Number(statObj.review_count) || 0;
-    deckRowsByName.set(statObj.name, {
-      deck: statObj.name,
+    deckRowsByName.set(fullName, {
+      deck: fullName,
       newRemaining: nr,
       learningRemaining: lr,
       reviewRemaining: rr,
@@ -237,7 +255,10 @@ async function fetchDeckAndCollectionSnapshot(includeFullCards) {
       matureCards: 0,
       leechCards: 0,
     });
-    if (isLeaf) {
+
+    // Sum only root-level decks (no "::") because Anki's getDeckStats on parent decks already rolls up children accurately
+    // (respecting parent deck daily limits!). Fallback to leaf decks if needed.
+    if (!fullName.includes('::')) {
       newRemaining += nr;
       learningRemaining += lr;
       reviewDueRemaining += rr;
@@ -432,8 +453,8 @@ async function fetchDeckAndCollectionSnapshot(includeFullCards) {
       });
     }
   } else {
-    for (const row of deckRowsByName.values()) {
-      if (leafDecks.includes(row.deck)) totalCards += row.totalCards;
+    for (const [fullName, row] of deckRowsByName.entries()) {
+      if (leafDecks.has(fullName)) totalCards += row.totalCards;
     }
   }
 
@@ -449,14 +470,25 @@ async function fetchDeckAndCollectionSnapshot(includeFullCards) {
     });
   }
 
-  const deckBreakdown = leafDecks
+  const deckBreakdown = Array.from(leafDecks)
     .map((name) => deckRowsByName.get(name))
-    .filter(Boolean)
+    .filter((d) => d && (d.totalCards > 0 || d.reviewRemaining > 0 || d.learningRemaining > 0 || d.newRemaining > 0))
     .sort(
       (a, b) =>
         b.reviewRemaining + b.learningRemaining - (a.reviewRemaining + a.learningRemaining) ||
         b.totalCards - a.totalCards
     );
+
+  // Build historical 90-day review counts from Anki's getNumCardsReviewedByDay for the Heatmap
+  const cutoffDate = addDays(todayStr, -95);
+  const historyDays = Array.isArray(byDayRaw)
+    ? byDayRaw
+        .filter((row) => Array.isArray(row) && row[0] && String(row[0]).slice(0, 10) >= cutoffDate && String(row[0]).slice(0, 10) < todayStr)
+        .map((row) => ({
+          date: String(row[0]).slice(0, 10),
+          reviews_today: Number(row[1]) || 0,
+        }))
+    : [];
 
   return {
     stats: {
@@ -484,6 +516,7 @@ async function fetchDeckAndCollectionSnapshot(includeFullCards) {
       deck_breakdown: deckBreakdown,
       forecast_30d: includeFullCards ? forecast30d : undefined,
     },
+    historyDays: includeFullCards ? historyDays : undefined,
     cards,
   };
 }
@@ -645,11 +678,12 @@ async function runSyncCycle(forceFull = false) {
   const doFullCards = forceFull || nowMs - lastFullCardSyncMs >= FULL_CARD_SYNC_INTERVAL_MS;
   const snapshot = await fetchDeckAndCollectionSnapshot(doFullCards);
 
-  // 4. Push stats + first chunk (or heartbeat) and pull pending cloud actions
+  // 4. Push stats + historical heatmap days and pull pending cloud actions
   let syncRes = await postToKevinOs({
     bridgeVersion: BRIDGE_VERSION,
     ankiWebSynced: didAnkiWebSync,
     stats: snapshot.stats,
+    ...(snapshot.historyDays ? { historyDays: snapshot.historyDays } : {}),
   });
 
   if (doFullCards && Array.isArray(snapshot.cards)) {

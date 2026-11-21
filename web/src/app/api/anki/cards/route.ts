@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import {
+  fetchAllAnkiCards,
   findPotentialDuplicateCard,
   isMissingAnkiTableError,
   maybeAutoCompleteAnkiHabit,
@@ -29,26 +30,24 @@ export async function GET(req: NextRequest) {
     const offset = Math.max(0, parseInt(sp.get('offset') || '0', 10) || 0);
     const todayStr = getTodayDateStr();
 
-    let query = sb.from('anki_cards').select('*');
-    if (deck && deck !== 'ALL') {
-      query = query.ilike('deck_name', `${deck}%`);
-    }
+    const filters: Parameters<typeof fetchAllAnkiCards>[1] = {};
+    if (deck && deck !== 'ALL') filters.deckPrefix = deck;
     if (status === 'suspended') {
-      query = query.eq('suspended', true);
+      filters.suspended = true;
     } else if (status === 'active') {
-      query = query.eq('suspended', false);
+      filters.suspended = false;
     } else if (status === 'leech') {
-      query = query.gte('lapses', 4);
+      filters.minLapses = 4;
     } else if (status === 'new') {
-      query = query.eq('suspended', false).eq('queue', 0);
+      filters.suspended = false;
+      filters.queues = [0];
     } else if (status === 'due' || dueQueue) {
-      query = query
-        .eq('suspended', false)
-        .eq('buried', false)
-        .in('queue', [1, 2, 3]);
+      filters.suspended = false;
+      filters.buried = false;
+      filters.queues = [1, 2, 3];
     }
 
-    const { data, error } = await query.limit(5500);
+    const { data, error } = await fetchAllAnkiCards<AnkiCard>('*', filters);
     if (error) {
       if (isMissingAnkiTableError(error)) {
         return NextResponse.json({
@@ -59,10 +58,11 @@ export async function GET(req: NextRequest) {
           cards: [],
         });
       }
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      const errMsg = error instanceof Error ? error.message : String((error as { message?: string })?.message || 'Query error');
+      return NextResponse.json({ success: false, error: errMsg }, { status: 500 });
     }
 
-    let list = (data || []) as AnkiCard[];
+    let list = data;
 
     // Filter due cards strictly to today or overdue when dueQueue/status=due
     if (status === 'due' || dueQueue) {
@@ -169,15 +169,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: 'Card front/text is required.' }, { status: 400 });
       }
 
-      // Check for potential duplicate
-      const { data: existingCards } = await sb
-        .from('anki_cards')
-        .select('card_id, front_text, deck_name')
-        .limit(5000);
-      const dupWarning = findPotentialDuplicateCard(
-        front,
-        (existingCards || []) as Pick<AnkiCard, 'card_id' | 'front_text' | 'deck_name'>[]
-      );
+      // Check for potential duplicate across all cards
+      const { data: existingCards } = await fetchAllAnkiCards<
+        Pick<AnkiCard, 'card_id' | 'front_text' | 'deck_name'>
+      >('card_id, front_text, deck_name');
+      const dupWarning = findPotentialDuplicateCard(front, existingCards);
 
       const { data: queued, error: qErr } = await sb
         .from('anki_action_queue')

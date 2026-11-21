@@ -9,3 +9,4 @@ web/.next/
 web/.vercel/
 web/*.tsbuildinfo
 generate_ios_secrets.py
+anki-bridge/bridge.log

@@ -49,6 +49,7 @@ import { POST as ankiMatchPost } from '@/app/api/anki/match/route';
 import { POST as ankiScheduleTodayPost } from '@/app/api/anki/schedule-today/route';
 import { GET as ankiLeechesGet } from '@/app/api/anki/leeches/route';
 import {
+  fetchAllAnkiCards,
   findPotentialDuplicateCard,
   isMissingAnkiTableError,
   stripClozeMarkup,
@@ -1689,19 +1690,15 @@ export async function addAnkiNotes(params: {
   const defaultDeck = (params.deckName || 'Schulich').trim();
   const requireApproval = params.requireApproval !== false;
 
-  const { data: existingCards, error: exErr } = await sb
-    .from('anki_cards')
-    .select('card_id, front_text, deck_name')
-    .limit(5000);
+  const { data: existingCards, error: exErr } = await fetchAllAnkiCards<
+    Pick<AnkiCard, 'card_id' | 'front_text' | 'deck_name'>
+  >('card_id, front_text, deck_name');
 
   if (exErr && isMissingAnkiTableError(exErr)) {
     return { success: false, needsMigration: true, error: 'Run Supabase Anki migration first.' };
   }
 
-  const existingList = (existingCards || []) as Pick<
-    AnkiCard,
-    'card_id' | 'front_text' | 'deck_name'
-  >[];
+  const existingList = existingCards;
 
   const normalizedDrafts: StagedNewCardDraft[] = params.cards
     .filter((c) => c && typeof c.front === 'string' && c.front.trim().length > 2)

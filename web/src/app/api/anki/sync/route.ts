@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import {
+  fetchAllAnkiCards,
   isMissingAnkiTableError,
   maybeAutoCompleteAnkiHabit,
   verifyAnkiBridgeRequest,
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
       ankiWebSynced?: boolean;
       fullSyncComplete?: boolean;
       stats?: Partial<AnkiDailyStats>;
+      historyDays?: Array<{ date: string; reviews_today: number }>;
       cards?: Array<Partial<AnkiCard>>;
       pruneExceptCardIds?: number[];
       actionResults?: Array<{
@@ -148,6 +150,35 @@ export async function POST(req: NextRequest) {
       habitNote = habitRes.reason;
     }
 
+    // 1b. Backfill historical review counts for the 84-day Heatmap (never overwrites existing richer rows)
+    if (Array.isArray(body.historyDays) && body.historyDays.length > 0) {
+      const validHistory = body.historyDays.filter(
+        (h) => h && typeof h.date === 'string' && h.date.length === 10 && h.date < todayStr
+      );
+      if (validHistory.length > 0) {
+        const { data: existingDates } = await sb
+          .from('anki_daily_stats')
+          .select('date, reviews_today')
+          .in(
+            'date',
+            validHistory.map((h) => h.date)
+          );
+        const existingMap = new Map(
+          (existingDates || []).map((r) => [String(r.date), Number(r.reviews_today) || 0])
+        );
+        const toInsert = validHistory
+          .filter((h) => !existingMap.has(h.date) || existingMap.get(h.date)! < h.reviews_today)
+          .map((h) => ({
+            date: h.date,
+            reviews_today: h.reviews_today,
+            updated_at: nowIso,
+          }));
+        if (toInsert.length > 0) {
+          await sb.from('anki_daily_stats').upsert(toInsert, { onConflict: 'date' });
+        }
+      }
+    }
+
     // 2. Upsert card mirror chunks (3,000-5,000 cards)
     let upsertedCards = 0;
     if (Array.isArray(body.cards) && body.cards.length > 0) {
@@ -196,8 +227,8 @@ export async function POST(req: NextRequest) {
     // Remove deleted/temp optimistic negative card IDs after a complete mirror push
     if (Array.isArray(body.pruneExceptCardIds) && body.pruneExceptCardIds.length > 0) {
       const keepSet = new Set(body.pruneExceptCardIds.map(Number));
-      const { data: existingIds } = await sb.from('anki_cards').select('card_id');
-      const toDelete = (existingIds || [])
+      const { data: existingIds } = await fetchAllAnkiCards<{ card_id: number }>('card_id');
+      const toDelete = existingIds
         .map((r) => Number(r.card_id))
         .filter((id) => !keepSet.has(id));
       for (let i = 0; i < toDelete.length; i += 200) {

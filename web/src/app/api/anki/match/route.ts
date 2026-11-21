@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import {
   expandMedicalConceptsWithAI,
+  fetchAllAnkiCards,
   findPotentialDuplicateCard,
   isMissingAnkiTableError,
   rankMatchingCards,
@@ -143,10 +144,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data: cardsData, error: cErr } = await sb
-      .from('anki_cards')
-      .select('*')
-      .limit(5500);
+    const { data: cardsData, error: cErr } = await fetchAllAnkiCards<AnkiCard>(
+      'card_id, note_id, deck_name, model_name, front_text, back_text, extra_text, tags, suspended'
+    );
 
     if (cErr) {
       if (isMissingAnkiTableError(cErr)) {
@@ -158,10 +158,11 @@ export async function POST(req: NextRequest) {
           draftCards: [],
         });
       }
-      return NextResponse.json({ success: false, error: cErr.message }, { status: 500 });
+      const errMsg = cErr instanceof Error ? cErr.message : String((cErr as { message?: string })?.message || 'Query error');
+      return NextResponse.json({ success: false, error: errMsg }, { status: 500 });
     }
 
-    const allCards = (cardsData || []) as AnkiCard[];
+    const allCards = cardsData;
     const expandedConcepts =
       body.useAiExpansion !== false ? await expandMedicalConceptsWithAI(combinedText) : [];
 

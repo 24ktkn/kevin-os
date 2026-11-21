@@ -69,6 +69,47 @@ export function isMissingAnkiTableError(err: unknown): boolean {
   );
 }
 
+/**
+ * Paginates across Supabase PostgREST's 1,000-row per-request cap so all 8,000+ Anki cards
+ * are read cleanly for searching, suspended-card matching, duplicate checks, and exam pacing.
+ */
+export async function fetchAllAnkiCards<T = AnkiCard>(
+  columns = '*',
+  filters?: {
+    deckPrefix?: string;
+    suspended?: boolean;
+    minLapses?: number;
+    queues?: number[];
+    buried?: boolean;
+  },
+  maxRows = 15_000
+): Promise<{ data: T[]; error: unknown }> {
+  const sb = supabaseAdmin || supabase;
+  if (!sb) return { data: [], error: null };
+
+  const PAGE_SIZE = 1000;
+  const all: T[] = [];
+
+  for (let from = 0; from < maxRows; from += PAGE_SIZE) {
+    let q = sb.from('anki_cards').select(columns).order('card_id', { ascending: true });
+    if (filters?.deckPrefix) q = q.ilike('deck_name', `${filters.deckPrefix}%`);
+    if (typeof filters?.suspended === 'boolean') q = q.eq('suspended', filters.suspended);
+    if (typeof filters?.buried === 'boolean') q = q.eq('buried', filters.buried);
+    if (typeof filters?.minLapses === 'number') q = q.gte('lapses', filters.minLapses);
+    if (Array.isArray(filters?.queues) && filters.queues.length > 0) {
+      q = q.in('queue', filters.queues);
+    }
+
+    const { data, error } = await q.range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: all, error };
+    const rows = (data || []) as T[];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+
+  return { data: all, error: null };
+}
+
 export function stripHtml(html: string): string {
   if (!html) return '';
   return html
