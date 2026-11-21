@@ -48,6 +48,9 @@ export default function AnkiLeechesAndSettings({
   const [defaultDeck, setDefaultDeck] = useState(syncState?.default_deck || 'Schulich');
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
+  const [copiedMacCmd, setCopiedMacCmd] = useState(false);
+
+  const macInstallCmd = `git clone https://github.com/24ktkn/kevin-os.git ~/kevin-os && cd ~/kevin-os/anki-bridge && bash install-mac-bridge.sh`;
 
   const loadLeeches = useCallback(async () => {
     setLoadingLeeches(true);
@@ -262,7 +265,7 @@ export default function AnkiLeechesAndSettings({
           <div className="p-3.5 rounded-xl bg-[#0B0C12] border border-zinc-800 space-y-2 text-xs">
             <div className="font-semibold text-zinc-300 flex items-center gap-1.5">
               <Terminal className="h-3.5 w-3.5 text-cyan-400" />
-              Windows One-Time Setup
+              Windows Desktop Setup (Already Active)
             </div>
             <ol className="list-decimal list-inside space-y-1 text-zinc-400 text-[11px]">
               <li>
@@ -270,10 +273,44 @@ export default function AnkiLeechesAndSettings({
                 <code className="text-cyan-300 bg-zinc-900 px-1 py-0.5 rounded">2055492159</code> (AnkiConnect), then restart Anki.
               </li>
               <li>
-                Double-click <code className="text-cyan-300 bg-zinc-900 px-1 py-0.5 rounded">anki-bridge\start-bridge.bat</code> (or run{' '}
-                <code className="text-cyan-300 bg-zinc-900 px-1 py-0.5 rounded">install-startup-task.ps1</code> for silent startup).
+                Silent startup task <code className="text-cyan-300 bg-zinc-900 px-1 py-0.5 rounded">KevinOS-AnkiBridge</code> runs automatically on login via{' '}
+                <code className="text-cyan-300 bg-zinc-900 px-1 py-0.5 rounded">install-startup-task.ps1</code>.
               </li>
             </ol>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-[#0B0D16] border border-indigo-500/25 space-y-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold text-indigo-200 flex items-center gap-1.5">
+                <Terminal className="h-3.5 w-3.5 text-indigo-400" />
+                MacBook Setup (1-Command LaunchAgent)
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(macInstallCmd);
+                    setCopiedMacCmd(true);
+                    setTimeout(() => setCopiedMacCmd(false), 2000);
+                  } catch {}
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/35 text-[10px] font-semibold cursor-pointer"
+              >
+                {copiedMacCmd ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                <span>{copiedMacCmd ? 'Copied!' : 'Copy Mac Command'}</span>
+              </button>
+            </div>
+            <ol className="list-decimal list-inside space-y-1 text-zinc-400 text-[11px]">
+              <li>
+                Install Anki Desktop + AnkiConnect (<code className="text-cyan-300">2055492159</code>) &amp; Node.js on your MacBook.
+              </li>
+              <li>
+                Open Mac <strong>Terminal</strong>, paste the command below, and enter your Bridge Token when prompted — it automatically installs the silent <code className="text-cyan-300">LaunchAgent</code> (safe alongside Windows via atomic queue locks):
+              </li>
+            </ol>
+            <pre className="text-[10px] font-mono text-cyan-300 bg-zinc-950 border border-zinc-800 rounded-lg p-2 overflow-x-auto">
+              {macInstallCmd}
+            </pre>
           </div>
         </div>
 

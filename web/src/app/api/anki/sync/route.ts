@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json().catch(() => ({}))) as {
       bridgeVersion?: string;
+      deviceId?: string;
       ankiWebSynced?: boolean;
       fullSyncComplete?: boolean;
       stats?: Partial<AnkiDailyStats>;
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     };
 
     const nowIso = new Date().toISOString();
+    const deviceId = (body.deviceId || 'unknown-device').slice(0, 64);
     const todayStr = body.stats?.date || getProductivityDateStr();
     let habitAutoChecked = false;
     let habitNote = '';
@@ -301,13 +303,57 @@ export async function POST(req: NextRequest) {
 
     await sb.from('anki_sync_state').upsert(statePatch, { onConflict: 'id' });
 
-    // 5. Fetch pending cloud actions for the bridge to execute immediately
-    const { data: pendingActions } = await sb
+    // 5. Multi-device safe atomic claim lock (prevents duplicate execution if Windows PC & MacBook poll simultaneously)
+    // 5a. Release any stale 'processing' lease older than 2 minutes (e.g. laptop slept mid-sync)
+    const { data: stuckRows } = await sb
       .from('anki_action_queue')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
+      .select('id, result_json')
+      .eq('status', 'processing')
       .limit(50);
+
+    const staleCutoffMs = Date.now() - 2 * 60_000;
+    const staleIds = (stuckRows || [])
+      .filter((r) => {
+        const claimedAt = (r.result_json as { claimedAt?: string } | null)?.claimedAt;
+        const t = claimedAt ? new Date(claimedAt).getTime() : 0;
+        return !t || t < staleCutoffMs;
+      })
+      .map((r) => r.id);
+
+    if (staleIds.length > 0) {
+      await sb
+        .from('anki_action_queue')
+        .update({ status: 'pending', result_json: null })
+        .in('id', staleIds)
+        .eq('status', 'processing');
+    }
+
+    // 5b. Only claim pending actions during the main poll (skip during chunked card-mirror uploads)
+    const claimedActions = [];
+    const isCardChunkOnly = Array.isArray(body.cards) && !body.stats && !body.actionResults;
+    if (!isCardChunkOnly) {
+      const { data: candidatePending } = await sb
+        .from('anki_action_queue')
+        .select('id')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true })
+        .limit(30);
+
+      for (const cand of candidatePending || []) {
+        const { data: claimed } = await sb
+          .from('anki_action_queue')
+          .update({
+            status: 'processing',
+            result_json: { claimedBy: deviceId, claimedAt: nowIso },
+          })
+          .eq('id', cand.id)
+          .eq('status', 'pending')
+          .select('*');
+        if (claimed && claimed.length > 0) {
+          claimedActions.push(claimed[0]);
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -316,7 +362,7 @@ export async function POST(req: NextRequest) {
       prunedCardsCount,
       habitAutoChecked,
       habitNote,
-      pendingActions: pendingActions || [],
+      pendingActions: claimedActions,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Anki sync error';

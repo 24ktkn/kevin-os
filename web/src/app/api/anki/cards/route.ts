@@ -132,6 +132,7 @@ export async function POST(req: NextRequest) {
         | 'suspend'
         | 'answer_card'
         | 'update_tags'
+        | 'append_extra'
         | 'trigger_sync';
       // add_note
       deckName?: string;
@@ -142,8 +143,10 @@ export async function POST(req: NextRequest) {
       tags?: string[];
       // suspend / unsuspend
       cardIds?: number[];
-      // answer_card
+      // answer_card / append_extra
       cardId?: number;
+      noteId?: number;
+      appendText?: string;
       ease?: 1 | 2 | 3 | 4;
       durationSecs?: number;
       // update_tags
@@ -409,6 +412,57 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: qErr.message }, { status: 500 });
       }
       return NextResponse.json({ success: true, queuedAction: queued });
+    }
+
+    if (body.action === 'append_extra') {
+      const cardId = Number(body.cardId);
+      const noteId = Number(body.noteId);
+      const appendText = (body.appendText || '').trim();
+      if (!Number.isFinite(noteId) || noteId <= 0 || !appendText) {
+        return NextResponse.json(
+          { success: false, error: 'Valid noteId and appendText are required.' },
+          { status: 400 }
+        );
+      }
+
+      const { data: queued, error: qErr } = await sb
+        .from('anki_action_queue')
+        .insert({
+          action_type: 'edit_note',
+          payload: { noteId, appendExtra: appendText },
+          status: 'pending',
+          source,
+        })
+        .select('*')
+        .single();
+
+      if (qErr) {
+        return NextResponse.json({ success: false, error: qErr.message }, { status: 500 });
+      }
+
+      // Optimistically update extra_text on all cards belonging to this note in Supabase
+      const { data: noteCards } = await sb
+        .from('anki_cards')
+        .select('card_id, extra_text')
+        .eq('note_id', noteId);
+
+      for (const nc of noteCards || []) {
+        const nextExtra = nc.extra_text
+          ? `${nc.extra_text}\n\nAI Pearl: ${appendText}`
+          : `AI Pearl: ${appendText}`;
+        await sb
+          .from('anki_cards')
+          .update({ extra_text: nextExtra, updated_at: new Date().toISOString() })
+          .eq('card_id', nc.card_id);
+      }
+
+      return NextResponse.json({
+        success: true,
+        cardId,
+        noteId,
+        queuedAction: queued,
+        message: 'Saved AI pearl to card Extra field (queued to sync to Anki Desktop & AnkiWeb).',
+      });
     }
 
     if (body.action === 'trigger_sync') {

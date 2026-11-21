@@ -2,13 +2,18 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  BookmarkPlus,
+  Bot,
+  Check,
   CheckCircle2,
   Eye,
   Keyboard,
   Layers,
   PauseCircle,
   RefreshCw,
+  Send,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { AnkiCard } from '@/types/anki';
 
@@ -81,6 +86,22 @@ export default function AnkiReviewer({
   const [habitToast, setHabitToast] = useState(false);
   const cardShownAtRef = useRef<number>(0);
 
+  // In-App AI Card Tutor state
+  const [tutorOpen, setTutorOpen] = useState(false);
+  const [tutorLoading, setTutorLoading] = useState(false);
+  const [tutorInput, setTutorInput] = useState('');
+  const [tutorMessages, setTutorMessages] = useState<
+    Array<{ role: 'user' | 'assistant'; text: string; concisePearl?: string; saved?: boolean }>
+  >([]);
+  const [savingPearlIdx, setSavingPearlIdx] = useState<number | null>(null);
+  const [tutorNotice, setTutorNotice] = useState<string | null>(null);
+
+  const resetTutorForNextCard = useCallback(() => {
+    setTutorMessages([]);
+    setTutorInput('');
+    setTutorNotice(null);
+  }, []);
+
   const loadDueQueue = useCallback(async (deckName: string) => {
     setLoading(true);
     try {
@@ -91,12 +112,13 @@ export default function AnkiReviewer({
       if (data.success && Array.isArray(data.cards)) {
         setQueue(data.cards);
         setRevealed(false);
+        resetTutorForNextCard();
         cardShownAtRef.current = Date.now();
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [resetTutorForNextCard]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -141,6 +163,7 @@ export default function AnkiReviewer({
           return ease === 1 ? [...rest, currentCard] : rest;
         });
         setRevealed(false);
+        resetTutorForNextCard();
         setSessionDone((n) => n + 1);
         cardShownAtRef.current = Date.now();
 
@@ -152,7 +175,7 @@ export default function AnkiReviewer({
         setSubmitting(false);
       }
     },
-    [currentCard, submitting, onReviewSubmitted]
+    [currentCard, submitting, onReviewSubmitted, resetTutorForNextCard]
   );
 
   const handleSuspendCurrent = async () => {
@@ -170,10 +193,122 @@ export default function AnkiReviewer({
       });
       setQueue((prev) => prev.slice(1));
       setRevealed(false);
+      resetTutorForNextCard();
       cardShownAtRef.current = Date.now();
       onReviewSubmitted(false);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleAskTutor = async (
+    mode: 'hint' | 'explain' | 'differentials' | 'vignette' | 'mnemonic' | 'chat',
+    customQuestion?: string
+  ) => {
+    if (!currentCard || tutorLoading) return;
+    const questionText = (customQuestion ?? tutorInput).trim();
+    if (mode === 'chat' && !questionText) return;
+
+    setTutorOpen(true);
+    setTutorLoading(true);
+    setTutorNotice(null);
+
+    const userLabel =
+      mode === 'chat'
+        ? questionText
+        : mode === 'hint'
+        ? 'Give me a non-spoiler hint'
+        : mode === 'explain'
+        ? 'Explain the mechanism & clinical context'
+        : mode === 'differentials'
+        ? 'Compare commonly confused differentials'
+        : mode === 'vignette'
+        ? 'Give me a quick clinical vignette'
+        : 'Give me a memorable mnemonic';
+
+    const nextHistory = [...tutorMessages, { role: 'user' as const, text: userLabel }];
+    setTutorMessages(nextHistory);
+    if (mode === 'chat') setTutorInput('');
+
+    try {
+      const res = await fetch('/api/anki/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          revealed,
+          question: mode === 'chat' ? questionText : undefined,
+          history: tutorMessages.map((m) => ({ role: m.role, text: m.text })),
+          card: {
+            deck_name: currentCard.deck_name,
+            model_name: currentCard.model_name,
+            front_text: currentCard.front_text,
+            back_text: currentCard.back_text,
+            extra_text: currentCard.extra_text,
+            tags: currentCard.tags,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.reply) {
+        setTutorMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: data.reply,
+            concisePearl: data.concisePearl || data.reply,
+          },
+        ]);
+      } else {
+        setTutorNotice(data.error || 'Could not reach Gemini AI Tutor right now.');
+      }
+    } catch {
+      setTutorNotice('Network error contacting Gemini AI Tutor.');
+    } finally {
+      setTutorLoading(false);
+    }
+  };
+
+  const handleSavePearlToExtra = async (msgIdx: number, pearlText: string) => {
+    if (!currentCard || !pearlText.trim()) return;
+    setSavingPearlIdx(msgIdx);
+    setTutorNotice(null);
+    try {
+      const res = await fetch('/api/anki/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'append_extra',
+          cardId: currentCard.card_id,
+          noteId: currentCard.note_id,
+          appendText: pearlText.trim(),
+          source: 'kevin_os_ui',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTutorMessages((prev) =>
+          prev.map((m, idx) => (idx === msgIdx ? { ...m, saved: true } : m))
+        );
+        // Update live card extra_text immediately so it displays on screen
+        setQueue((prev) =>
+          prev.map((c, idx) =>
+            idx === 0
+              ? {
+                  ...c,
+                  extra_text: c.extra_text
+                    ? `${c.extra_text}\n\nAI Pearl: ${pearlText.trim()}`
+                    : `AI Pearl: ${pearlText.trim()}`,
+                }
+              : c
+          )
+        );
+        setTutorNotice('Saved to card Extra field — syncing to Anki Desktop & AnkiWeb!');
+      } else {
+        setTutorNotice(data.error || 'Could not save to card Extra field.');
+      }
+    } finally {
+      setSavingPearlIdx(null);
     }
   };
 
@@ -277,9 +412,20 @@ export default function AnkiReviewer({
               <span className="text-zinc-300 font-medium truncate">{currentCard.deck_name}</span>
             </div>
 
-            <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+            <div className="flex items-center gap-2 text-[11px] text-zinc-500">
               <span>Reps: {currentCard.reps}</span>
               <span>Lapses: {currentCard.lapses}</span>
+              <button
+                onClick={() => setTutorOpen((v) => !v)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md border transition cursor-pointer font-medium ${
+                  tutorOpen
+                    ? 'bg-indigo-500/25 text-indigo-200 border-indigo-400/50'
+                    : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                }`}
+                title="Ask Gemini AI Tutor about this card"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Ask AI Tutor
+              </button>
               <button
                 onClick={handleSuspendCurrent}
                 disabled={submitting}
@@ -329,6 +475,154 @@ export default function AnkiReviewer({
               </div>
             )}
           </div>
+
+          {/* In-App Gemini AI Card Tutor Drawer */}
+          {tutorOpen && (
+            <div className="px-5 py-4 border-t border-indigo-500/30 bg-gradient-to-b from-[#131425] to-[#0D0F18] space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-indigo-200">
+                  <Bot className="h-4 w-4 text-cyan-400" />
+                  <span>Gemini AI Card Tutor</span>
+                  <span className="text-[10px] font-normal text-zinc-400">
+                    {revealed ? 'Full context & follow-up Q&A' : 'Non-spoiler hint mode'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setTutorOpen(false)}
+                  className="text-zinc-500 hover:text-white cursor-pointer"
+                  title="Close AI Tutor"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* 1-Click Medical Tutor Pills */}
+              <div className="flex flex-wrap gap-1.5">
+                {!revealed ? (
+                  <button
+                    onClick={() => handleAskTutor('hint')}
+                    disabled={tutorLoading}
+                    className="px-3 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/35 text-[11px] font-medium transition cursor-pointer"
+                  >
+                    💡 Non-Spoiler Hint
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleAskTutor('explain')}
+                      disabled={tutorLoading}
+                      className="px-3 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/30 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      🧬 Explain Mechanism
+                    </button>
+                    <button
+                      onClick={() => handleAskTutor('differentials')}
+                      disabled={tutorLoading}
+                      className="px-3 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border border-indigo-500/30 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      ⚖️ Compare Differentials
+                    </button>
+                    <button
+                      onClick={() => handleAskTutor('vignette')}
+                      disabled={tutorLoading}
+                      className="px-3 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/30 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      🩺 Clinical Vignette
+                    </button>
+                    <button
+                      onClick={() => handleAskTutor('mnemonic')}
+                      disabled={tutorLoading}
+                      className="px-3 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/30 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      🧠 Mnemonic
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Conversation Thread */}
+              {tutorMessages.length > 0 && (
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                  {tutorMessages.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-xl text-xs leading-relaxed ${
+                        m.role === 'user'
+                          ? 'bg-zinc-900/90 border border-zinc-800 text-zinc-300 ml-8'
+                          : 'bg-[#101624] border border-cyan-500/25 text-zinc-100 space-y-2'
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap">{m.text}</div>
+                      {m.role === 'assistant' && m.concisePearl && (
+                        <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[10px] text-zinc-400 line-clamp-1 flex-1">
+                            Pearl: {m.concisePearl}
+                          </span>
+                          <button
+                            onClick={() => handleSavePearlToExtra(idx, m.concisePearl!)}
+                            disabled={m.saved || savingPearlIdx === idx}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition shrink-0 cursor-pointer ${
+                              m.saved
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                : 'bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border-cyan-500/35'
+                            }`}
+                          >
+                            {m.saved ? (
+                              <>
+                                <Check className="h-3 w-3" /> Saved to Extra
+                              </>
+                            ) : (
+                              <>
+                                <BookmarkPlus className="h-3 w-3" />
+                                {savingPearlIdx === idx ? 'Saving...' : 'Save to Card Extra'}
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {tutorLoading && (
+                    <div className="p-2.5 rounded-xl bg-[#101624] border border-zinc-800 text-xs text-cyan-300 flex items-center gap-2">
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Gemini is thinking...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tutorNotice && (
+                <div className="text-[11px] text-cyan-200 bg-cyan-500/10 border border-cyan-500/25 rounded-lg px-3 py-1.5">
+                  ✨ {tutorNotice}
+                </div>
+              )}
+
+              {/* Follow-up Question Input */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleAskTutor('chat');
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  value={tutorInput}
+                  onChange={(e) => setTutorInput(e.target.value)}
+                  placeholder="Ask a follow-up question about this card (e.g. 'Why does this cause hyperkalemia?')..."
+                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
+                />
+                <button
+                  type="submit"
+                  disabled={tutorLoading || !tutorInput.trim()}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  <span>Ask</span>
+                </button>
+              </form>
+            </div>
+          )}
 
           {/* Action Footer */}
           <div className="px-5 py-4 border-t border-zinc-800/80 bg-[#0F0F15] flex flex-col sm:flex-row items-center justify-between gap-3">

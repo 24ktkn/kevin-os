@@ -12,6 +12,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,12 +23,14 @@ const ANKICONNECT_URL = process.env.ANKICONNECT_URL || 'http://127.0.0.1:8765';
 const POLL_INTERVAL_MS = 20_000;
 const FULL_CARD_SYNC_INTERVAL_MS = 3 * 60_000;
 const ANKIWEB_SYNC_INTERVAL_MS = 5 * 60_000;
-const BRIDGE_VERSION = '1.0.0';
+const BRIDGE_VERSION = '1.1.0';
+const DEVICE_ID = `${os.hostname()}-${process.platform}`;
 const TIMEZONE = 'America/New_York';
 
 const args = new Set(process.argv.slice(2));
 const RUN_ONCE = args.has('--once');
 const USE_LOCAL = args.has('--local');
+const PRINT_TOKEN = args.has('--print-token');
 
 function loadEnvFile(filePath) {
   const env = {};
@@ -626,6 +629,32 @@ async function executeQueuedAction(action) {
   if (type === 'edit_note') {
     const noteId = Number(payload.noteId);
     if (!Number.isFinite(noteId) || noteId <= 0) throw new Error('Invalid noteId');
+
+    if (payload.appendExtra && String(payload.appendExtra).trim()) {
+      const notes = await ankiInvoke('notesInfo', { notes: [noteId] });
+      const note = Array.isArray(notes) ? notes[0] : null;
+      if (!note || !note.fields) throw new Error(`Note ${noteId} not found in Anki`);
+      const fieldNames = Object.keys(note.fields);
+      const extraField =
+        fieldNames.find((f) => /back extra|extra|notes|lecture/i.test(f)) ||
+        fieldNames[1] ||
+        fieldNames[0];
+      const existingVal = String(note.fields[extraField]?.value || '').trim();
+      const escaped = String(payload.appendExtra)
+        .trim()
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
+      const appended = existingVal
+        ? `${existingVal}<br><br><b>AI Pearl:</b> ${escaped}`
+        : `<b>AI Pearl:</b> ${escaped}`;
+      await ankiInvoke('updateNoteFields', {
+        note: { id: noteId, fields: { [extraField]: appended } },
+      });
+      return { noteId, field: extraField, appended: true };
+    }
+
     await ankiInvoke('updateNoteFields', {
       note: { id: noteId, fields: payload.fields || {} },
     });
@@ -695,6 +724,7 @@ async function runSyncCycle(forceFull = false) {
   // 4. Push stats + historical heatmap days and pull pending cloud actions
   let syncRes = await postToKevinOs({
     bridgeVersion: BRIDGE_VERSION,
+    deviceId: DEVICE_ID,
     ankiWebSynced: didAnkiWebSync,
     stats: snapshot.stats,
     ...(snapshot.historyDays ? { historyDays: snapshot.historyDays } : {}),
@@ -707,6 +737,7 @@ async function runSyncCycle(forceFull = false) {
     if (snapshot.cards.length === 0) {
       const pRes = await postToKevinOs({
         bridgeVersion: BRIDGE_VERSION,
+        deviceId: DEVICE_ID,
         cards: [],
         pruneExceptCardIds: [],
         fullSyncComplete: true,
@@ -718,6 +749,7 @@ async function runSyncCycle(forceFull = false) {
         const isLast = i + CHUNK_SIZE >= snapshot.cards.length;
         const chunkRes = await postToKevinOs({
           bridgeVersion: BRIDGE_VERSION,
+          deviceId: DEVICE_ID,
           cards: slice,
           ...(isLast ? { pruneExceptCardIds: allIds, fullSyncComplete: true } : {}),
         });
@@ -773,7 +805,11 @@ async function runSyncCycle(forceFull = false) {
 }
 
 async function main() {
-  log(`Starting Kevin-OS Anki Bridge v${BRIDGE_VERSION}`);
+  if (PRINT_TOKEN) {
+    console.log(BRIDGE_TOKEN);
+    return;
+  }
+  log(`Starting Kevin-OS Anki Bridge v${BRIDGE_VERSION} (${DEVICE_ID})`);
   log(`Target Kevin-OS: ${KEVIN_OS_URL}`);
   log(`Local AnkiConnect: ${ANKICONNECT_URL}`);
 
