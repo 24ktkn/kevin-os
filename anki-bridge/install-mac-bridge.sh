@@ -113,11 +113,13 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-# 4. Reload & start LaunchAgent immediately
+# 4. Reload & start LaunchAgent cleanly (sleep 1s after bootout to avoid macOS Error 5 race)
 USER_UID="$(id -u)"
 launchctl bootout "gui/${USER_UID}/${LABEL}" 2>/dev/null || launchctl unload "$PLIST_PATH" 2>/dev/null || true
+pkill -f "$SYNC_SCRIPT" 2>/dev/null || true
+sleep 1
 if ! launchctl bootstrap "gui/${USER_UID}" "$PLIST_PATH" 2>/dev/null; then
-  launchctl load -w "$PLIST_PATH"
+  launchctl kickstart -k "gui/${USER_UID}/${LABEL}" 2>/dev/null || launchctl load -w "$PLIST_PATH"
 fi
 
 echo ""
