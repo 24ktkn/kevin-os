@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   AlertOctagon,
   BarChart3,
+  BookOpen,
   BookOpenCheck,
   Brain,
   CalendarClock,
@@ -33,6 +34,7 @@ import AnkiReviewer from '@/components/anki/AnkiReviewer';
 import AnkiCardBrowser from '@/components/anki/AnkiCardBrowser';
 import AnkiAiStudio from '@/components/anki/AnkiAiStudio';
 import AnkiLeechesAndSettings from '@/components/anki/AnkiLeechesAndSettings';
+import AnkiWorkflowGuide from '@/components/anki/AnkiWorkflowGuide';
 import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
 
 type AnkiTab = 'overview' | 'review' | 'browser' | 'ai' | 'leeches';
@@ -89,6 +91,7 @@ export default function AnkiPage() {
   const [schedResultMsg, setSchedResultMsg] = useState<string | null>(null);
   const [schedBlocks, setSchedBlocks] = useState<ScheduledAnkiBlock[]>([]);
   const [tasksAuthError, setTasksAuthError] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
@@ -248,6 +251,18 @@ export default function AnkiPage() {
             )}
             <span>{bridgeOnline ? 'Anki Bridge Live' : 'Bridge Offline (Queue Ready)'}</span>
           </div>
+
+          <button
+            onClick={() => setShowGuide((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+              showGuide
+                ? 'bg-indigo-500/20 text-indigo-200 border-indigo-400/50'
+                : 'text-zinc-300 hover:text-white bg-zinc-900 border-zinc-800 hover:border-zinc-700'
+            }`}
+          >
+            <BookOpen className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Gemini Guide</span>
+          </button>
 
           <button
             onClick={() => {
@@ -470,6 +485,15 @@ export default function AnkiPage() {
             </div>
           )}
         </section>
+
+        {/* Collapsible Gemini + NotebookLM Workflow Guide Dropdown */}
+        <AnkiWorkflowGuide
+          open={showGuide}
+          onToggle={() => setShowGuide((v) => !v)}
+          onOpenAiInbox={() => setActiveTab('ai')}
+          totalCards={today?.total_cards}
+          suspendedCards={today?.suspended_cards}
+        />
 
         {/* 5 Instant Navigation Tabs */}
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
