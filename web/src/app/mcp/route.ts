@@ -6,6 +6,7 @@ import {
   buildUnauthorizedMcpResponse,
   getMcpCorsHeaders,
   mcpCorsPreflight,
+  recordMcpTrace,
   verifyBearerRequest,
   withMcpCors,
 } from '@/lib/mcp-auth';
@@ -586,6 +587,9 @@ function createKevinOsMcpServer(): McpServer {
 async function handleAuthorizedMcpPost(req: NextRequest): Promise<Response> {
   const auth = verifyBearerRequest(req);
   if (!auth.authorized) {
+    await recordMcpTrace('mcp_post_unauth', 401, {
+      hasAuthHeader: Boolean(req.headers.get('authorization')),
+    });
     return buildUnauthorizedMcpResponse(req);
   }
 
@@ -613,6 +617,7 @@ async function handleAuthorizedMcpPost(req: NextRequest): Promise<Response> {
 
   try {
     const response = await transport.handleRequest(transportReq);
+    await recordMcpTrace('mcp_post_ok', response.status, {});
     return withMcpCors(response);
   } finally {
     await server.close().catch(() => {});
@@ -626,6 +631,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const auth = verifyBearerRequest(req);
   if (!auth.authorized) {
+    await recordMcpTrace('mcp_get_unauth', 401, {});
     return buildUnauthorizedMcpResponse(req);
   }
   // Stateless StreamableHTTP server: standalone server-initiated SSE streams are not used

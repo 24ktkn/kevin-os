@@ -4,7 +4,7 @@ import {
   createAuthorizationCode,
   getConfiguredPasscode,
   isAllowedRedirectUri,
-  parseDynamicClientId,
+  recordMcpTrace,
   verifyPasscode,
 } from '@/lib/mcp-auth';
 
@@ -27,7 +27,6 @@ function renderConsentPage(params: {
   codeChallenge: string;
   codeChallengeMethod: string;
   scope: string;
-  resource: string;
   errorMessage?: string;
   passcodeMissing?: boolean;
 }) {
@@ -72,17 +71,8 @@ function renderConsentPage(params: {
       border-radius: 999px;
       margin-bottom: 14px;
     }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 22px;
-      line-height: 1.25;
-    }
-    p {
-      margin: 0 0 18px;
-      font-size: 13.5px;
-      line-height: 1.5;
-      color: #a1a1aa;
-    }
+    h1 { margin: 0 0 8px; font-size: 22px; line-height: 1.25; }
+    p { margin: 0 0 18px; font-size: 13.5px; line-height: 1.5; color: #a1a1aa; }
     .perms {
       background: #0f0f15;
       border: 1px solid #27272a;
@@ -92,18 +82,8 @@ function renderConsentPage(params: {
       font-size: 12.5px;
       color: #d4d4d8;
     }
-    .perms ul {
-      margin: 6px 0 0;
-      padding-left: 18px;
-      line-height: 1.65;
-    }
-    label {
-      display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: #d4d4d8;
-      margin-bottom: 6px;
-    }
+    .perms ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.65; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #d4d4d8; margin-bottom: 6px; }
     input[type="password"] {
       width: 100%;
       padding: 11px 13px;
@@ -115,9 +95,7 @@ function renderConsentPage(params: {
       margin-bottom: 14px;
       outline: none;
     }
-    input[type="password"]:focus {
-      border-color: #a855f7;
-    }
+    input[type="password"]:focus { border-color: #a855f7; }
     .error {
       background: rgba(239, 68, 68, 0.14);
       border: 1px solid rgba(239, 68, 68, 0.4);
@@ -127,10 +105,7 @@ function renderConsentPage(params: {
       font-size: 12.5px;
       margin-bottom: 14px;
     }
-    .actions {
-      display: flex;
-      gap: 10px;
-    }
+    .actions { display: flex; gap: 10px; }
     button {
       flex: 1;
       padding: 11px 16px;
@@ -140,20 +115,9 @@ function renderConsentPage(params: {
       font-weight: 700;
       cursor: pointer;
     }
-    .approve {
-      background: linear-gradient(135deg, #9333ea, #4f46e5);
-      color: #ffffff;
-    }
-    .deny {
-      background: #27272a;
-      color: #d4d4d8;
-    }
-    .meta {
-      margin-top: 14px;
-      font-size: 11px;
-      color: #71717a;
-      word-break: break-all;
-    }
+    .approve { background: linear-gradient(135deg, #9333ea, #4f46e5); color: #ffffff; }
+    .deny { background: #27272a; color: #d4d4d8; }
+    .meta { margin-top: 14px; font-size: 11px; color: #71717a; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -183,7 +147,6 @@ function renderConsentPage(params: {
       <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}" />
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.codeChallengeMethod)}" />
       <input type="hidden" name="scope" value="${escapeHtml(params.scope)}" />
-      <input type="hidden" name="resource" value="${escapeHtml(params.resource)}" />
       <label for="passcode">Kevin-OS Passcode</label>
       <input id="passcode" name="passcode" type="password" autocomplete="current-password" placeholder="Enter your KEVIN_OS_MCP_PASSCODE" required autofocus />
       <div class="actions">
@@ -214,28 +177,40 @@ export async function GET(req: NextRequest) {
   const codeChallenge = sp.get('code_challenge') || '';
   const codeChallengeMethod = sp.get('code_challenge_method') || 'S256';
   const scope = sp.get('scope') || MCP_SCOPE;
-  const resource = sp.get('resource') || '';
+
+  let redirectHost = '';
+  try {
+    redirectHost = new URL(redirectUri).hostname;
+  } catch {
+    redirectHost = 'invalid';
+  }
 
   if (responseType !== 'code') {
+    await recordMcpTrace('oauth_authorize_get_bad_type', 400, { responseType });
     return new Response('Unsupported response_type. Expected "code".', { status: 400 });
   }
 
-  if (!redirectUri || !isAllowedRedirectUri(redirectUri, clientId)) {
+  if (!redirectUri || !isAllowedRedirectUri(redirectUri)) {
+    await recordMcpTrace('oauth_authorize_get_bad_redirect', 400, { redirectHost });
     return new Response('Invalid or disallowed redirect_uri.', { status: 400 });
   }
 
-  const dcr = parseDynamicClientId(clientId);
-  const clientName = dcr?.client_name || 'Google Gemini';
+  await recordMcpTrace('oauth_authorize_get', 200, {
+    redirectHost,
+    hasState: Boolean(state),
+    hasChallenge: Boolean(codeChallenge),
+    clientIdLen: clientId.length,
+    scope,
+  });
 
   return renderConsentPage({
     clientId,
-    clientName,
+    clientName: 'Google Gemini',
     redirectUri,
     state,
     codeChallenge,
     codeChallengeMethod,
     scope,
-    resource,
     passcodeMissing: !getConfiguredPasscode(),
   });
 }
@@ -249,10 +224,10 @@ export async function POST(req: NextRequest) {
   const codeChallenge = String(form.get('code_challenge') || '');
   const codeChallengeMethod = String(form.get('code_challenge_method') || 'S256');
   const scope = String(form.get('scope') || MCP_SCOPE);
-  const resource = String(form.get('resource') || '');
   const passcode = String(form.get('passcode') || '');
 
-  if (!redirectUri || !isAllowedRedirectUri(redirectUri, clientId)) {
+  if (!redirectUri || !isAllowedRedirectUri(redirectUri)) {
+    await recordMcpTrace('oauth_authorize_post_bad_redirect', 400, {});
     return new Response('Invalid or disallowed redirect_uri.', { status: 400 });
   }
 
@@ -262,52 +237,56 @@ export async function POST(req: NextRequest) {
     target.searchParams.set('error', 'access_denied');
     target.searchParams.set('error_description', 'User cancelled Kevin-OS authorization.');
     if (state) target.searchParams.set('state', state);
+    await recordMcpTrace('oauth_authorize_denied', 302, {});
     return Response.redirect(target.toString(), 302);
   }
 
-  const dcr = parseDynamicClientId(clientId);
-  const clientName = dcr?.client_name || 'Google Gemini';
   const check = verifyPasscode(passcode);
 
   if (!check.configured) {
+    await recordMcpTrace('oauth_authorize_no_passcode_env', 200, {});
     return renderConsentPage({
       clientId,
-      clientName,
+      clientName: 'Google Gemini',
       redirectUri,
       state,
       codeChallenge,
       codeChallengeMethod,
       scope,
-      resource,
       passcodeMissing: true,
     });
   }
 
   if (!check.ok) {
+    await recordMcpTrace('oauth_authorize_wrong_passcode', 200, {});
     return renderConsentPage({
       clientId,
-      clientName,
+      clientName: 'Google Gemini',
       redirectUri,
       state,
       codeChallenge,
       codeChallengeMethod,
       scope,
-      resource,
       errorMessage: 'Incorrect passcode. Please try again.',
     });
   }
 
   const code = createAuthorizationCode({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    code_challenge: codeChallenge || undefined,
-    code_challenge_method: codeChallengeMethod || undefined,
+    clientId,
+    redirectUri,
+    codeChallenge: codeChallenge || undefined,
+    codeChallengeMethod: codeChallengeMethod || undefined,
     scope,
-    resource: resource || undefined,
   });
 
   target.searchParams.set('code', code);
   if (state) target.searchParams.set('state', state);
+
+  await recordMcpTrace('oauth_authorize_approved', 302, {
+    redirectHost: target.hostname,
+    codeLen: code.length,
+    hasState: Boolean(state),
+  });
 
   return Response.redirect(target.toString(), 302);
 }
