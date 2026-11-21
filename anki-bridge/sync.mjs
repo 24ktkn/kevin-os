@@ -642,6 +642,7 @@ async function executeQueuedAction(action) {
 
 let lastFullCardSyncMs = 0;
 let lastAnkiWebSyncMs = 0;
+let lastKnownCardCount = null;
 let ankiWasOffline = false;
 
 async function runSyncCycle(forceFull = false) {
@@ -674,8 +675,21 @@ async function runSyncCycle(forceFull = false) {
     }
   }
 
-  // 3. Collect stats (+ full card index every 3 min)
-  const doFullCards = forceFull || nowMs - lastFullCardSyncMs >= FULL_CARD_SYNC_INTERVAL_MS;
+  // 2b. Fast card-count check (<30ms) so deleted decks/cards prune from Supabase within 20s instead of waiting 3m
+  let cardCountChanged = false;
+  try {
+    const liveIds = await ankiInvoke('findCards', { query: 'deck:*' }, 10_000);
+    if (Array.isArray(liveIds)) {
+      if (lastKnownCardCount !== null && liveIds.length !== lastKnownCardCount) {
+        cardCountChanged = true;
+        log(`Card count changed (${lastKnownCardCount} -> ${liveIds.length}) — triggering immediate mirror & deletion prune.`);
+      }
+    }
+  } catch {}
+
+  // 3. Collect stats (+ full card index every 3 min OR immediately when cards/decks were added/deleted)
+  const doFullCards =
+    forceFull || cardCountChanged || nowMs - lastFullCardSyncMs >= FULL_CARD_SYNC_INTERVAL_MS;
   const snapshot = await fetchDeckAndCollectionSnapshot(doFullCards);
 
   // 4. Push stats + historical heatmap days and pull pending cloud actions
@@ -689,18 +703,31 @@ async function runSyncCycle(forceFull = false) {
   if (doFullCards && Array.isArray(snapshot.cards)) {
     const CHUNK_SIZE = 400;
     const allIds = snapshot.cards.map((c) => c.card_id);
-    for (let i = 0; i < snapshot.cards.length; i += CHUNK_SIZE) {
-      const slice = snapshot.cards.slice(i, i + CHUNK_SIZE);
-      const isLast = i + CHUNK_SIZE >= snapshot.cards.length;
-      await postToKevinOs({
+    let totalPruned = 0;
+    if (snapshot.cards.length === 0) {
+      const pRes = await postToKevinOs({
         bridgeVersion: BRIDGE_VERSION,
-        cards: slice,
-        ...(isLast ? { pruneExceptCardIds: allIds, fullSyncComplete: true } : {}),
+        cards: [],
+        pruneExceptCardIds: [],
+        fullSyncComplete: true,
       });
+      totalPruned = pRes.prunedCardsCount || 0;
+    } else {
+      for (let i = 0; i < snapshot.cards.length; i += CHUNK_SIZE) {
+        const slice = snapshot.cards.slice(i, i + CHUNK_SIZE);
+        const isLast = i + CHUNK_SIZE >= snapshot.cards.length;
+        const chunkRes = await postToKevinOs({
+          bridgeVersion: BRIDGE_VERSION,
+          cards: slice,
+          ...(isLast ? { pruneExceptCardIds: allIds, fullSyncComplete: true } : {}),
+        });
+        if (isLast) totalPruned = chunkRes.prunedCardsCount || 0;
+      }
     }
+    lastKnownCardCount = snapshot.cards.length;
     lastFullCardSyncMs = Date.now();
     log(
-      `Full mirror synced: ${snapshot.cards.length} cards | today=${snapshot.stats.reviews_today} rev, ${snapshot.stats.total_due_remaining} due, ${snapshot.stats.retention_pct}% ret${syncRes.habitAutoChecked ? ' | Anki Habit AUTO-CHECKED ✅' : ''}`
+      `Full mirror synced: ${snapshot.cards.length} cards${totalPruned > 0 ? ` (pruned ${totalPruned} deleted)` : ''} | today=${snapshot.stats.reviews_today} rev, ${snapshot.stats.total_due_remaining} due, ${snapshot.stats.retention_pct}% ret${syncRes.habitAutoChecked ? ' | Anki Habit AUTO-CHECKED ✅' : ''}`
     );
   } else {
     log(

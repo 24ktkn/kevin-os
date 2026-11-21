@@ -225,7 +225,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Remove deleted/temp optimistic negative card IDs after a complete mirror push
-    if (Array.isArray(body.pruneExceptCardIds) && body.pruneExceptCardIds.length > 0) {
+    let prunedCardsCount = 0;
+    if (body.fullSyncComplete && Array.isArray(body.pruneExceptCardIds)) {
       const keepSet = new Set(body.pruneExceptCardIds.map(Number));
       const { data: existingIds } = await fetchAllAnkiCards<{ card_id: number }>('card_id');
       const toDelete = existingIds
@@ -233,6 +234,42 @@ export async function POST(req: NextRequest) {
         .filter((id) => !keepSet.has(id));
       for (let i = 0; i < toDelete.length; i += 200) {
         await sb.from('anki_cards').delete().in('card_id', toDelete.slice(i, i + 200));
+      }
+      prunedCardsCount = toDelete.length;
+
+      // Also clean any pending Approval Inbox proposals referencing deleted cards so they never reappear
+      if (toDelete.length > 0) {
+        const deletedSet = new Set(toDelete);
+        const { data: pendingProps } = await sb
+          .from('anki_staged_proposals')
+          .select('id, proposal_type, payload')
+          .eq('status', 'pending')
+          .in('proposal_type', ['unsuspend_cards', 'suspend_cards']);
+
+        for (const prop of pendingProps || []) {
+          const payload = (prop.payload || {}) as {
+            cardIds?: number[];
+            matches?: Array<{ cardId: number }>;
+          };
+          const origIds = Array.isArray(payload.cardIds) ? payload.cardIds : [];
+          const origMatches = Array.isArray(payload.matches) ? payload.matches : [];
+          const nextIds = origIds.filter((id) => !deletedSet.has(Number(id)));
+          const nextMatches = origMatches.filter((m) => !deletedSet.has(Number(m.cardId)));
+
+          if (nextIds.length !== origIds.length || nextMatches.length !== origMatches.length) {
+            if (nextIds.length === 0 && nextMatches.length === 0) {
+              await sb
+                .from('anki_staged_proposals')
+                .update({ status: 'rejected', reviewed_at: nowIso })
+                .eq('id', prop.id);
+            } else {
+              await sb
+                .from('anki_staged_proposals')
+                .update({ payload: { ...payload, cardIds: nextIds, matches: nextMatches } })
+                .eq('id', prop.id);
+            }
+          }
+        }
       }
     }
 
@@ -276,6 +313,7 @@ export async function POST(req: NextRequest) {
       success: true,
       syncedAt: nowIso,
       upsertedCards,
+      prunedCardsCount,
       habitAutoChecked,
       habitNote,
       pendingActions: pendingActions || [],
