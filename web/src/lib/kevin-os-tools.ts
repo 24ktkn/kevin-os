@@ -59,6 +59,12 @@ import {
   stripClozeMarkup,
 } from '@/lib/anki-utils';
 import { AnkiCard, StagedCardMatchRef, StagedNewCardDraft } from '@/types/anki';
+import {
+  getUnifiedInbox,
+  proposeOrExecuteEmailAction,
+  readUnifiedEmail,
+} from '@/lib/email-hub';
+import { EmailFolderType } from '@/types/email';
 
 const INTERNAL_ORIGIN = 'http://localhost:3000';
 
@@ -80,9 +86,11 @@ const KNOWN_SAFE_TABLES = [
   'portfolio_entries',
   'os_digests',
   'os_settings',
+  'email_messages',
+  'email_actions',
 ] as const;
 
-const BLOCKED_TABLE_PATTERNS = /auth|token|secret|password|credential|session|oauth|pg_|sql_|storage|vault/i;
+const BLOCKED_TABLE_PATTERNS = /auth|token|secret|password|credential|session|oauth|email_accounts|pg_|sql_|storage|vault/i;
 
 function makeInternalReq(pathWithQuery: string, method: 'GET' | 'POST' = 'GET', body?: unknown): NextRequest {
   const url = `${INTERNAL_ORIGIN}${pathWithQuery}`;
@@ -1881,4 +1889,193 @@ export async function addPortfolioEntry(params: {
 }) {
   const res = await portfolioPost(makeInternalReq('/api/portfolio', 'POST', params));
   return res.json();
+}
+
+/**
+ * 28. Unified Email Inbox across Gmail (Cloud), Hotmail/Outlook (Cloud), and @uwo.ca (Thunderbird Bridge)
+ */
+export async function getEmailInbox(params: {
+  account?: string;
+  folder?: EmailFolderType | 'all';
+  unreadOnly?: boolean;
+  limit?: number;
+  syncCloud?: boolean;
+} = {}) {
+  const inbox = await getUnifiedInbox({
+    account: params.account,
+    folder: params.folder || 'inbox',
+    unreadOnly: Boolean(params.unreadOnly),
+    limit: params.limit || 25,
+    liveCloudSync: Boolean(params.syncCloud),
+  });
+  return {
+    success: true,
+    ...inbox,
+    messages: inbox.messages.map((m) => ({
+      id: m.id,
+      provider: m.provider,
+      accountEmail: m.account_email,
+      folder: m.folder_name,
+      subject: m.subject,
+      from: m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email,
+      date: m.date_iso,
+      snippet: m.snippet,
+      isRead: m.is_read,
+      isStarred: m.is_starred,
+      hasAttachments: m.has_attachments,
+    })),
+  };
+}
+
+/**
+ * 29. Search Emails across all connected accounts (runs live Gmail/Hotmail search + Thunderbird cache search)
+ */
+export async function searchEmails(params: {
+  query: string;
+  account?: string;
+  folder?: EmailFolderType | 'all';
+  unreadOnly?: boolean;
+  limit?: number;
+  liveSearch?: boolean;
+}) {
+  const inbox = await getUnifiedInbox({
+    account: params.account,
+    folder: params.folder || 'all',
+    unreadOnly: Boolean(params.unreadOnly),
+    query: params.query,
+    limit: params.limit || 20,
+    liveCloudSync: params.liveSearch !== false,
+  });
+  return {
+    success: true,
+    totalMatches: inbox.messages.length,
+    accounts: inbox.accounts.map((a) => ({
+      email: a.email_address,
+      provider: a.provider,
+      label: a.account_label,
+      unreadCount: a.unreadCount,
+    })),
+    messages: inbox.messages.map((m) => ({
+      id: m.id,
+      provider: m.provider,
+      accountEmail: m.account_email,
+      folder: m.folder_name,
+      subject: m.subject,
+      from: m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email,
+      date: m.date_iso,
+      snippet: m.snippet,
+      isRead: m.is_read,
+      isStarred: m.is_starred,
+    })),
+  };
+}
+
+/**
+ * 30. Read Full Email Body & Thread Context
+ */
+export async function readEmail(params: { messageId: string }) {
+  const { message, threadMessages } = await readUnifiedEmail(params.messageId);
+  if (!message) {
+    return { success: false, error: `Email "${params.messageId}" not found.` };
+  }
+  return {
+    success: true,
+    message,
+    threadCount: threadMessages.length,
+    threadMessages: threadMessages.map((m) => ({
+      id: m.id,
+      from: m.from_name ? `${m.from_name} <${m.from_email}>` : m.from_email,
+      to: m.to_list,
+      date: m.date_iso,
+      subject: m.subject,
+      bodyText: m.body_text || m.snippet,
+    })),
+  };
+}
+
+/**
+ * 31. Create a Draft (new email or reply) across Gmail, Hotmail, or Thunderbird (@uwo.ca)
+ */
+export async function draftEmail(params: {
+  account?: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  bodyText: string;
+  replyToMessageId?: string;
+  replyAll?: boolean;
+  rationale?: string;
+}) {
+  const actionType = params.replyToMessageId ? 'reply_draft' : 'draft';
+  return proposeOrExecuteEmailAction({
+    accountHint: params.account,
+    actionType,
+    payload: {
+      to: params.to,
+      cc: params.cc,
+      bcc: params.bcc,
+      subject: params.subject,
+      bodyText: params.bodyText,
+      replyToMessageId: params.replyToMessageId,
+      replyAll: params.replyAll,
+    },
+    rationale: params.rationale || 'Drafted by Gemini via Kevin-OS MCP',
+    source: 'gemini_mcp',
+  });
+}
+
+/**
+ * 32. Triage / Sort / Trash Emails across Gmail, Hotmail, or Thunderbird (@uwo.ca)
+ */
+export async function triageEmails(params: {
+  action: 'archive' | 'move' | 'delete' | 'mark_read' | 'mark_unread' | 'star' | 'unstar';
+  messageIds: string[];
+  account?: string;
+  targetFolder?: string;
+  rationale?: string;
+}) {
+  return proposeOrExecuteEmailAction({
+    accountHint: params.account,
+    actionType: params.action,
+    payload: {
+      messageIds: params.messageIds,
+      targetFolder: params.targetFolder,
+    },
+    rationale: params.rationale || `Email triage (${params.action}) requested via Gemini MCP`,
+    source: 'gemini_mcp',
+  });
+}
+
+/**
+ * 33. Send Email or Reply across Gmail, Hotmail, or Thunderbird (@uwo.ca)
+ * Defaults to Kevin-OS 1-click Approval Inbox (/email) unless auto_send_allowed is enabled on that account.
+ */
+export async function sendEmail(params: {
+  account?: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  bodyText: string;
+  replyToMessageId?: string;
+  replyAll?: boolean;
+  rationale?: string;
+}) {
+  const actionType = params.replyToMessageId ? 'reply_send' : 'send';
+  return proposeOrExecuteEmailAction({
+    accountHint: params.account,
+    actionType,
+    payload: {
+      to: params.to,
+      cc: params.cc,
+      bcc: params.bcc,
+      subject: params.subject,
+      bodyText: params.bodyText,
+      replyToMessageId: params.replyToMessageId,
+      replyAll: params.replyAll,
+    },
+    rationale: params.rationale || 'Send requested via Gemini MCP',
+    source: 'gemini_mcp',
+  });
 }

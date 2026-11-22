@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kevin-OS Email Bridge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      width: 340px;
+      margin: 0;
+      padding: 14px;
+      background: #0d0d12;
+      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 12px;
+    }
+    h1 {
+      font-size: 14px;
+      margin: 0 0 4px 0;
+      color: #22d3ee;
+    }
+    p.sub {
+      margin: 0 0 12px 0;
+      color: #a1a1aa;
+      font-size: 11px;
+    }
+    .status-box {
+      background: #161620;
+      border: 1px solid #27272a;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+    .pill.ok { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .pill.err { background: rgba(244, 63, 94, 0.2); color: #fb7185; }
+    .pill.idle { background: rgba(161, 161, 170, 0.2); color: #d4d4d8; }
+    label {
+      display: block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #a1a1aa;
+      margin: 8px 0 4px 0;
+      font-weight: 600;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      background: #14141c;
+      border: 1px solid #3f3f46;
+      border-radius: 8px;
+      padding: 7px 9px;
+      color: #ffffff;
+      font-size: 11px;
+      outline: none;
+    }
+    input:focus { border-color: #22d3ee; }
+    .hint {
+      font-size: 10px;
+      color: #71717a;
+      margin-top: 3px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      flex: 1;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: linear-gradient(90deg, #06b6d4, #6366f1);
+      color: #ffffff;
+    }
+    .btn-secondary {
+      background: #27272a;
+      color: #e4e4e7;
+    }
+    .error-msg {
+      color: #fb7185;
+      font-size: 11px;
+      margin-top: 6px;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h1>Kevin-OS Email Bridge</h1>
+  <p class="sub">Syncs Thunderbird accounts (@uwo.ca) to Kevin-OS &amp; Gemini MCP</p>
+
+  <div class="status-box" id="statusBox">
+    <div>Status: <span class="pill idle" id="statePill">Loading...</span></div>
+    <div id="accountsLine" style="margin-top:4px; color:#d4d4d8;">Accounts: —</div>
+    <div id="syncMeta" style="color:#a1a1aa; font-size:11px;">Last sync: —</div>
+    <div id="errorLine" class="error-msg" style="display:none;"></div>
+  </div>
+
+  <label for="bridgeToken">Kevin-OS Bridge Token (from /email page)</label>
+  <input id="bridgeToken" type="password" placeholder="Paste your Kevin-OS bridge token..." />
+
+  <label for="emailFilter">Account Filter (Optional)</label>
+  <input id="emailFilter" type="text" placeholder="e.g. uwo.ca (leave blank for all Thunderbird accounts)" />
+  <div class="hint">Tip: type <code>uwo.ca</code> so Gmail/Hotmail stay cloud-only while school email bridges via Thunderbird.</div>
+
+  <label for="deviceName">Device Label</label>
+  <input id="deviceName" type="text" placeholder="Windows-Desktop or MacBook" />
+
+  <label for="serverUrl">Kevin-OS URL</label>
+  <input id="serverUrl" type="text" value="https://kevin-os-xr4m.vercel.app" />
+
+  <div class="row">
+    <button class="btn-primary" id="saveSyncBtn">Save &amp; Sync Now</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -15,8 +15,10 @@ import {
   addPortfolioEntry,
   completeTask,
   deleteTask,
+  draftEmail,
   getAnkiLeeches,
   getAnkiOverview,
+  getEmailInbox,
   getHabitsData,
   getHealthSummary,
   getJournalData,
@@ -31,14 +33,18 @@ import {
   logHabit,
   matchSuspendedAnkiCards,
   queryKevinOsTable,
+  readEmail,
   rescheduleTask,
   saveJournalEntry,
   scheduleAnkiTodayTimeblock,
   scheduleItem,
   scheduleWeekModules,
   searchAnkiCards,
+  searchEmails,
+  sendEmail,
   suspendAnkiCards,
   toggleGroceryItem,
+  triageEmails,
   unsuspendAnkiCards,
 } from '@/lib/kevin-os-tools';
 
@@ -875,6 +881,198 @@ function createKevinOsMcpServer(): McpServer {
     async (args) => {
       try {
         return jsonToolResult(await addPortfolioEntry(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 28. Unified Email Inbox (Gmail Cloud + Hotmail/Outlook Cloud + @uwo.ca Thunderbird Bridge)
+  server.registerTool(
+    'get_email_inbox',
+    {
+      title: 'Get Unified Email Inbox (Gmail, Hotmail & School @uwo.ca)',
+      description:
+        'Reads Kevin’s unified inbox across all connected email accounts: Gmail (cloud 24/7), Hotmail/Outlook.com (cloud 24/7), and Western/Schulich @uwo.ca (via Thunderbird Bridge). Changes automatically mirror into Spark Mail.',
+      inputSchema: {
+        account: z
+          .string()
+          .optional()
+          .describe('Optional filter by email address, label, or alias ("gmail", "hotmail", "outlook", "school", "uwo"). Omit for all accounts.'),
+        folder: z
+          .enum(['all', 'inbox', 'sent', 'drafts', 'archive', 'trash', 'spam', 'custom'])
+          .optional()
+          .describe('Folder filter (default: "inbox").'),
+        unreadOnly: z.boolean().optional().describe('Return only unread messages (default: false).'),
+        limit: z.number().int().min(1).max(60).optional().describe('Max emails to return (default: 25).'),
+        syncCloud: z
+          .boolean()
+          .optional()
+          .describe('If true, triggers a live cloud pull from Gmail & Hotmail APIs before returning (default: false).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await getEmailInbox(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 29. Search Emails
+  server.registerTool(
+    'search_emails',
+    {
+      title: 'Search Emails Across All Accounts',
+      description:
+        'Searches emails across Gmail, Hotmail/Outlook.com (including live server search), and Western/Schulich @uwo.ca (Thunderbird mirror) by keyword, sender, subject, or body.',
+      inputSchema: {
+        query: z.string().describe('Search terms, sender name/email, or subject keywords.'),
+        account: z
+          .string()
+          .optional()
+          .describe('Optional account filter ("gmail", "hotmail", "school", "uwo", or full email address).'),
+        folder: z
+          .enum(['all', 'inbox', 'sent', 'drafts', 'archive', 'trash', 'spam', 'custom'])
+          .optional(),
+        unreadOnly: z.boolean().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        liveSearch: z
+          .boolean()
+          .optional()
+          .describe('Run live Gmail/Microsoft server search in addition to synced cache (default: true).'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await searchEmails(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 30. Read Full Email & Thread
+  server.registerTool(
+    'read_email',
+    {
+      title: 'Read Full Email Body & Thread',
+      description:
+        'Returns the complete plaintext body and thread messages for a specific email ID returned by get_email_inbox or search_emails.',
+      inputSchema: {
+        messageId: z.string().describe('Unified email ID (e.g. "gmail:..." or "microsoft:..." or "thunderbird:...").'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await readEmail(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 31. Draft Email or Reply
+  server.registerTool(
+    'draft_email',
+    {
+      title: 'Create Email Draft or Reply Draft',
+      description:
+        'Creates a real email draft (or threaded reply draft) in Gmail, Hotmail/Outlook.com, or Thunderbird (@uwo.ca). The draft syncs directly to Spark Mail Drafts so Kevin can review or send it from any device.',
+      inputSchema: {
+        account: z
+          .string()
+          .optional()
+          .describe('Which account to draft from ("gmail", "hotmail", "school", "uwo", or full email). Auto-inferred when replyToMessageId is provided.'),
+        to: z.array(z.string()).optional().describe('Recipient email addresses (auto-filled when replying).'),
+        cc: z.array(z.string()).optional().describe('Optional CC email addresses.'),
+        bcc: z.array(z.string()).optional().describe('Optional BCC email addresses.'),
+        subject: z.string().optional().describe('Email subject line (auto-filled with Re: when replying).'),
+        bodyText: z.string().describe('Plaintext body of the draft email.'),
+        replyToMessageId: z
+          .string()
+          .optional()
+          .describe('Optional unified messageId to create a threaded reply draft.'),
+        replyAll: z.boolean().optional().describe('Set true to reply-all when replyToMessageId is set.'),
+        rationale: z.string().optional().describe('Short note explaining why this draft was created.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await draftEmail(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 32. Triage / Sort / Move / Trash Emails
+  server.registerTool(
+    'triage_emails',
+    {
+      title: 'Sort, Archive, Move, Star, Mark Read, or Trash Emails',
+      description:
+        'Organizes emails across Gmail, Hotmail, or Thunderbird (@uwo.ca): archive, move to a folder/label, mark_read, mark_unread, star, unstar, or delete (moves safely to Trash; defaults to 1-click Kevin-OS Approval Inbox unless auto_delete_allowed is enabled on the account).',
+      inputSchema: {
+        action: z
+          .enum(['archive', 'move', 'delete', 'mark_read', 'mark_unread', 'star', 'unstar'])
+          .describe('Action to apply to the specified messageIds.'),
+        messageIds: z
+          .array(z.string())
+          .min(1)
+          .describe('One or more unified email IDs from get_email_inbox / search_emails.'),
+        account: z.string().optional().describe('Optional account hint (auto-inferred from messageIds).'),
+        targetFolder: z
+          .string()
+          .optional()
+          .describe('Target folder or Gmail label name (required when action is "move").'),
+        rationale: z.string().optional().describe('Short reason for this triage/delete action.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await triageEmails(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 33. Send Email or Reply (Protected by Approval Inbox by default)
+  server.registerTool(
+    'send_email',
+    {
+      title: 'Send Email or Reply (Approval-Protected)',
+      description:
+        'Sends an email or threaded reply from Gmail, Hotmail/Outlook.com, or Thunderbird (@uwo.ca). By default queues in Kevin-OS Email Approval Inbox (/email) for 1-click confirmation unless Kevin explicitly enabled auto-send for that account.',
+      inputSchema: {
+        account: z
+          .string()
+          .optional()
+          .describe('Account to send from ("gmail", "hotmail", "school", "uwo", or full email). Auto-inferred on reply.'),
+        to: z.array(z.string()).optional().describe('Recipient email addresses (required for new email).'),
+        cc: z.array(z.string()).optional(),
+        bcc: z.array(z.string()).optional(),
+        subject: z.string().optional().describe('Email subject line.'),
+        bodyText: z.string().describe('Plaintext body of the email to send.'),
+        replyToMessageId: z
+          .string()
+          .optional()
+          .describe('Optional unified messageId to send as a threaded reply.'),
+        replyAll: z.boolean().optional(),
+        rationale: z.string().optional().describe('Short note explaining why this email should be sent.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await sendEmail(args));
       } catch (err) {
         return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
       }

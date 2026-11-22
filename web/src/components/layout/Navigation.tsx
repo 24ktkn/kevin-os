@@ -15,6 +15,7 @@ import {
   HeartPulse,
   Home,
   LayoutGrid,
+  Mail,
   Rocket,
   Search,
   Sparkles,
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'Mission Control', shortName: 'Tasks', href: '/tasks', icon: Rocket, activeMatch: (p) => p.startsWith('/tasks'), group: 'Core' },
   { name: 'School Sync', shortName: 'School', href: '/school', icon: GraduationCap, activeMatch: (p) => p.startsWith('/school'), group: 'Core' },
   { name: 'Anki', href: '/anki', icon: Brain, activeMatch: (p) => p.startsWith('/anki'), group: 'Core' },
+  { name: 'Email Hub', shortName: 'Email', href: '/email', icon: Mail, activeMatch: (p) => p.startsWith('/email'), group: 'Core' },
   { name: 'AI Scheduler', shortName: 'AI Plan', href: '/ai', icon: Bot, activeMatch: (p) => p.startsWith('/ai'), group: 'Core' },
 
   { name: 'Habit Tracker', shortName: 'Habits', href: '/habits', icon: Flame, activeMatch: (p) => p.startsWith('/habits'), group: 'Performance' },

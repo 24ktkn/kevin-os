@@ -1,0 +1,36 @@
+{
+  "manifest_version": 2,
+  "name": "Kevin-OS Email Bridge",
+  "version": "1.0.0",
+  "description": "Bridges Thunderbird accounts (e.g. Western/Schulich @uwo.ca) to Kevin-OS Email Hub & Gemini MCP for reading, drafting, sorting, trashing, and sending.",
+  "author": "Kevin Nguyen",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "kevin-os-bridge@kevinnguyen.local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "accountsRead",
+    "accountsFolders",
+    "messagesRead",
+    "messagesMove",
+    "messagesDelete",
+    "messagesUpdate",
+    "compose",
+    "compose.send",
+    "tabs",
+    "storage",
+    "alarms",
+    "https://kevin-os-xr4m.vercel.app/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_action": {
+    "default_title": "Kevin-OS Email Bridge",
+    "default_popup": "popup.html"
+  }
+}
