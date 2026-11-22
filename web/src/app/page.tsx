@@ -757,247 +757,6 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* ⚡ Habits Command Center */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Flame className="h-5 w-5 text-amber-400" />
-            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Habits Command Center
-            </h2>
-          </div>
-          <span className="text-xs text-zinc-400">Daily Streaks & Consistency</span>
-        </div>
-
-        {loadingHabits ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-64 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {habits.map((habit) => (
-              <div
-                key={habit.name}
-                className="p-4 rounded-2xl bg-[#14141B] border border-zinc-800/90 shadow-xl flex flex-col justify-between space-y-4"
-              >
-                {/* Header */}
-                <div className="flex items-start justify-between pb-3 border-b border-zinc-800/80">
-                  <div>
-                    <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                      <span>{habit.icon}</span>
-                      <span>{habit.name}</span>
-                    </div>
-                    <div className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider mt-0.5">
-                      {habit.monthName} {habit.year}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <div className="text-sm font-black text-emerald-400">
-                        {habit.streak} 🔥
-                      </div>
-                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
-                        Streak
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-black text-cyan-400">
-                        {habit.consistencyRate}%
-                      </div>
-                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
-                        Cons.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Mini Monthly Calendar Grid */}
-                <div>
-                  {/* Days of week header */}
-                  <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
-                    {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((dayChar, idx) => (
-                      <div key={idx} className="text-[10px] font-bold text-zinc-400">
-                        {dayChar}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Month days */}
-                  <div className="grid grid-cols-7 gap-1 text-center">
-                    {habit.days.map((d, dIdx) => {
-                      if (d.dayNumber === 0) {
-                        return <div key={`empty-${dIdx}`} className="aspect-square" />;
-                      }
-
-                      let bgClass = 'bg-[#1C1C24] text-zinc-400 border border-zinc-800/60';
-                      if (d.completed) {
-                        bgClass = 'bg-[#00FF66] text-black font-extrabold shadow-sm shadow-[#00FF66]/20';
-                      }
-
-                      const todayClass = d.isToday ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-[#14141B] font-bold' : '';
-
-                      return (
-                        <div
-                          key={d.dateStr}
-                          title={`${d.dateStr}: ${d.completed ? 'Completed' : 'Incomplete'}`}
-                          className={`aspect-square rounded flex items-center justify-center text-[10px] transition-all ${bgClass} ${todayClass}`}
-                        >
-                          {d.dayNumber}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* 1-Click Toggle Button for Today */}
-                <button
-                  onClick={() => toggleHabit(habit.name, habit.completedToday)}
-                  disabled={togglingHabit === habit.name}
-                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ${
-                    habit.completedToday
-                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/40'
-                      : 'bg-zinc-800/80 text-zinc-200 border border-zinc-700/80 hover:border-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10'
-                  }`}
-                >
-                  {habit.completedToday ? (
-                    <>
-                      <Check className="h-4 w-4" />
-                      <span>Completed Today ✅</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Mark Done</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* 🧠 Daily Anki Summary & Quick Timeblock */}
-      <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-[#131424] via-[#14141B] to-[#0F1722] p-4 sm:p-5 shadow-lg space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
-              <Brain className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight">
-                  Daily Anki Summary
-                </h2>
-                {ankiSummary?.habitCompletedToday && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    Habit Checked ✅
-                  </span>
-                )}
-                {ankiSummary && ankiSummary.pendingProposalsCount > 0 && (
-                  <Link
-                    href="/anki"
-                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-200 border border-indigo-400/40 flex items-center gap-1 hover:bg-indigo-500/30 transition"
-                  >
-                    <Inbox className="h-3 w-3" />
-                    {ankiSummary.pendingProposalsCount} Gemini Proposal{ankiSummary.pendingProposalsCount === 1 ? '' : 's'}
-                  </Link>
-                )}
-              </div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                {!ankiSummary || ankiSummary.needsMigration
-                  ? 'Connect your Windows Anki Bridge to mirror Schulich cards, auto-check your Anki habit & sync with Gemini.'
-                  : ankiSummary.totalDueRemaining > 0
-                  ? `${ankiSummary.totalDueRemaining} cards due (${ankiSummary.reviewDueRemaining} rev + ${ankiSummary.learningRemaining} lrn) · ~${ankiSummary.estimatedMinsRemaining}m remaining at ${ankiSummary.avgSecsPerCard}s/card`
-                  : ankiSummary.reviewsToday > 0
-                  ? `All scheduled reviews done! ${ankiSummary.reviewsToday} reviewed today (${ankiSummary.retentionPct}% retention).`
-                  : 'Waiting for today’s Anki sync snapshot from Windows Bridge.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {ankiSummary && !ankiSummary.needsMigration && ankiSummary.totalDueRemaining > 0 && (
-              <button
-                onClick={async () => {
-                  setSchedulingAnkiHome(true);
-                  setAnkiHomeMsg(null);
-                  try {
-                    const res = await fetch('/api/anki/schedule-today', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ commit: true, allowSplit: true, calendar: 'School' }),
-                    });
-                    const data = await res.json();
-                    if (data.success && Array.isArray(data.scheduledBlocks) && data.scheduledBlocks.length > 0) {
-                      const first = data.scheduledBlocks[0];
-                      setAnkiHomeMsg(
-                        `Scheduled ${data.scheduledBlocks.length} Anki block(s) starting ${first.startTime} (${first.durationMins}m) on Google Calendar & Tasks!`
-                      );
-                      fetchTodayTasks();
-                    } else {
-                      setAnkiHomeMsg(data.message || data.error || 'Nothing scheduled.');
-                    }
-                  } finally {
-                    setSchedulingAnkiHome(false);
-                  }
-                }}
-                disabled={schedulingAnkiHome}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
-              >
-                <Zap className={`h-3.5 w-3.5 ${schedulingAnkiHome ? 'animate-pulse' : ''}`} />
-                <span>{schedulingAnkiHome ? 'Scheduling...' : 'Auto-Schedule Today'}</span>
-              </button>
-            )}
-
-            <Link
-              href="/anki"
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-semibold text-cyan-300 transition"
-            >
-              <span>Open Anki</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-        </div>
-
-        {ankiSummary && !ankiSummary.needsMigration && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Due Remaining</div>
-              <div className="text-base font-bold text-cyan-300 font-mono">
-                {ankiSummary.totalDueRemaining}
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Reviewed Today</div>
-              <div className="text-base font-bold text-white font-mono">
-                {ankiSummary.reviewsToday}
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Retention</div>
-              <div className="text-base font-bold text-emerald-400 font-mono">
-                {ankiSummary.retentionPct ? `${ankiSummary.retentionPct}%` : '—'}
-              </div>
-            </div>
-            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Anki Streak</div>
-              <div className="text-base font-bold text-amber-300 font-mono">
-                🔥 {ankiSummary.streakDays}d
-              </div>
-            </div>
-          </div>
-        )}
-
-        {ankiHomeMsg && (
-          <div className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs text-cyan-200">
-            ✨ {ankiHomeMsg}
-          </div>
-        )}
-      </section>
-
       {/* 📅 Today's Agenda / Critical Tasks Snapshot */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
@@ -1318,6 +1077,247 @@ export default function HomePage() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      {/* ⚡ Habits Command Center */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Flame className="h-5 w-5 text-amber-400" />
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              Habits Command Center
+            </h2>
+          </div>
+          <span className="text-xs text-zinc-400">Daily Streaks & Consistency</span>
+        </div>
+
+        {loadingHabits ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-64 rounded-2xl bg-zinc-900/50 border border-zinc-800 animate-pulse" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {habits.map((habit) => (
+              <div
+                key={habit.name}
+                className="p-4 rounded-2xl bg-[#14141B] border border-zinc-800/90 shadow-xl flex flex-col justify-between space-y-4"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between pb-3 border-b border-zinc-800/80">
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                      <span>{habit.icon}</span>
+                      <span>{habit.name}</span>
+                    </div>
+                    <div className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider mt-0.5">
+                      {habit.monthName} {habit.year}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm font-black text-emerald-400">
+                        {habit.streak} 🔥
+                      </div>
+                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                        Streak
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-black text-cyan-400">
+                        {habit.consistencyRate}%
+                      </div>
+                      <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                        Cons.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mini Monthly Calendar Grid */}
+                <div>
+                  {/* Days of week header */}
+                  <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
+                    {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((dayChar, idx) => (
+                      <div key={idx} className="text-[10px] font-bold text-zinc-400">
+                        {dayChar}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Month days */}
+                  <div className="grid grid-cols-7 gap-1 text-center">
+                    {habit.days.map((d, dIdx) => {
+                      if (d.dayNumber === 0) {
+                        return <div key={`empty-${dIdx}`} className="aspect-square" />;
+                      }
+
+                      let bgClass = 'bg-[#1C1C24] text-zinc-400 border border-zinc-800/60';
+                      if (d.completed) {
+                        bgClass = 'bg-[#00FF66] text-black font-extrabold shadow-sm shadow-[#00FF66]/20';
+                      }
+
+                      const todayClass = d.isToday ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-[#14141B] font-bold' : '';
+
+                      return (
+                        <div
+                          key={d.dateStr}
+                          title={`${d.dateStr}: ${d.completed ? 'Completed' : 'Incomplete'}`}
+                          className={`aspect-square rounded flex items-center justify-center text-[10px] transition-all ${bgClass} ${todayClass}`}
+                        >
+                          {d.dayNumber}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 1-Click Toggle Button for Today */}
+                <button
+                  onClick={() => toggleHabit(habit.name, habit.completedToday)}
+                  disabled={togglingHabit === habit.name}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+                    habit.completedToday
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/40'
+                      : 'bg-zinc-800/80 text-zinc-200 border border-zinc-700/80 hover:border-emerald-500 hover:text-emerald-400 hover:bg-emerald-500/10'
+                  }`}
+                >
+                  {habit.completedToday ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Completed Today ✅</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Mark Done</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 🧠 Daily Anki Summary & Quick Timeblock */}
+      <section className="rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-[#131424] via-[#14141B] to-[#0F1722] p-4 sm:p-5 shadow-lg space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-500 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+              <Brain className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  Daily Anki Summary
+                </h2>
+                {ankiSummary?.habitCompletedToday && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    Habit Checked ✅
+                  </span>
+                )}
+                {ankiSummary && ankiSummary.pendingProposalsCount > 0 && (
+                  <Link
+                    href="/anki"
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-200 border border-indigo-400/40 flex items-center gap-1 hover:bg-indigo-500/30 transition"
+                  >
+                    <Inbox className="h-3 w-3" />
+                    {ankiSummary.pendingProposalsCount} Gemini Proposal{ankiSummary.pendingProposalsCount === 1 ? '' : 's'}
+                  </Link>
+                )}
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                {!ankiSummary || ankiSummary.needsMigration
+                  ? 'Connect your Windows Anki Bridge to mirror Schulich cards, auto-check your Anki habit & sync with Gemini.'
+                  : ankiSummary.totalDueRemaining > 0
+                  ? `${ankiSummary.totalDueRemaining} cards due (${ankiSummary.reviewDueRemaining} rev + ${ankiSummary.learningRemaining} lrn) · ~${ankiSummary.estimatedMinsRemaining}m remaining at ${ankiSummary.avgSecsPerCard}s/card`
+                  : ankiSummary.reviewsToday > 0
+                  ? `All scheduled reviews done! ${ankiSummary.reviewsToday} reviewed today (${ankiSummary.retentionPct}% retention).`
+                  : 'Waiting for today’s Anki sync snapshot from Windows Bridge.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {ankiSummary && !ankiSummary.needsMigration && ankiSummary.totalDueRemaining > 0 && (
+              <button
+                onClick={async () => {
+                  setSchedulingAnkiHome(true);
+                  setAnkiHomeMsg(null);
+                  try {
+                    const res = await fetch('/api/anki/schedule-today', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ commit: true, allowSplit: true, calendar: 'School' }),
+                    });
+                    const data = await res.json();
+                    if (data.success && Array.isArray(data.scheduledBlocks) && data.scheduledBlocks.length > 0) {
+                      const first = data.scheduledBlocks[0];
+                      setAnkiHomeMsg(
+                        `Scheduled ${data.scheduledBlocks.length} Anki block(s) starting ${first.startTime} (${first.durationMins}m) on Google Calendar & Tasks!`
+                      );
+                      fetchTodayTasks();
+                    } else {
+                      setAnkiHomeMsg(data.message || data.error || 'Nothing scheduled.');
+                    }
+                  } finally {
+                    setSchedulingAnkiHome(false);
+                  }
+                }}
+                disabled={schedulingAnkiHome}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+              >
+                <Zap className={`h-3.5 w-3.5 ${schedulingAnkiHome ? 'animate-pulse' : ''}`} />
+                <span>{schedulingAnkiHome ? 'Scheduling...' : 'Auto-Schedule Today'}</span>
+              </button>
+            )}
+
+            <Link
+              href="/anki"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-semibold text-cyan-300 transition"
+            >
+              <span>Open Anki</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {ankiSummary && !ankiSummary.needsMigration && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Due Remaining</div>
+              <div className="text-base font-bold text-cyan-300 font-mono">
+                {ankiSummary.totalDueRemaining}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Reviewed Today</div>
+              <div className="text-base font-bold text-white font-mono">
+                {ankiSummary.reviewsToday}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Retention</div>
+              <div className="text-base font-bold text-emerald-400 font-mono">
+                {ankiSummary.retentionPct ? `${ankiSummary.retentionPct}%` : '—'}
+              </div>
+            </div>
+            <div className="px-3 py-2 rounded-xl bg-[#0E1018] border border-zinc-800/80">
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Anki Streak</div>
+              <div className="text-base font-bold text-amber-300 font-mono">
+                🔥 {ankiSummary.streakDays}d
+              </div>
+            </div>
+          </div>
+        )}
+
+        {ankiHomeMsg && (
+          <div className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs text-cyan-200">
+            ✨ {ankiHomeMsg}
           </div>
         )}
       </section>
