@@ -138,33 +138,77 @@ async function collectFoldersForAccount(account) {
   return flat;
 }
 
-async function listRecentMessagesInFolder(folderRaw, maxCount) {
-  const collected = [];
-  try {
-    let page = await api.messages.list(folderRaw.id || folderRaw);
-    while (page && Array.isArray(page.messages)) {
-      collected.push(...page.messages);
-      if (collected.length >= maxCount || !page.id) break;
-      page = await api.messages.continueList(page.id);
-    }
-  } catch {
-    // fallback passing raw folder object for older TB 115
+async function drainMessageList(firstPage, maxScan = 1500) {
+  const out = [];
+  let page = firstPage;
+  while (page && Array.isArray(page.messages)) {
+    out.push(...page.messages);
+    if (out.length >= maxScan || !page.id) break;
+    page = await api.messages.continueList(page.id);
+  }
+  return out;
+}
+
+async function queryFolderSince(folderRaw, daysBack, maxScan = 800) {
+  const fromDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+  // TB 121+ uses folderId; TB 115 uses folder
+  if (folderRaw.id) {
     try {
-      let page = await api.messages.list(folderRaw);
-      if (page && Array.isArray(page.messages)) {
-        collected.push(...page.messages);
-      }
+      const page = await api.messages.query({ folderId: folderRaw.id, fromDate });
+      return await drainMessageList(page, maxScan);
     } catch {
-      return [];
+      // fall through to legacy folder object query
+    }
+  }
+  try {
+    const page = await api.messages.query({ folder: folderRaw, fromDate });
+    return await drainMessageList(page, maxScan);
+  } catch {
+    return null;
+  }
+}
+
+async function listRecentMessagesInFolder(folderRaw, maxCount) {
+  // Thunderbird's messages.list() returns oldest-first (ascending UID order),
+  // so query recent date windows first to guarantee we always get the NEWEST emails!
+  let collected = [];
+
+  for (const daysBack of [30, 120, 365]) {
+    const recent = await queryFolderSince(folderRaw, daysBack, 1000);
+    if (recent === null) break; // query unsupported, fall back to full list
+    collected = recent;
+    if (collected.length >= maxCount) break;
+  }
+
+  // Fallback for quiet folders (< maxCount emails in last year) or older TB versions
+  if (collected.length < maxCount) {
+    try {
+      const firstPage = await api.messages.list(folderRaw.id || folderRaw);
+      const all = await drainMessageList(firstPage, 5000);
+      if (all.length > collected.length) collected = all;
+    } catch {
+      try {
+        const firstPage = await api.messages.list(folderRaw);
+        const all = await drainMessageList(firstPage, 5000);
+        if (all.length > collected.length) collected = all;
+      } catch {
+        // keep whatever we already collected
+      }
     }
   }
 
-  collected.sort((a, b) => {
+  // Deduplicate by message id and sort strictly NEWEST first
+  const byId = new Map();
+  for (const m of collected) {
+    if (m && m.id != null) byId.set(m.id, m);
+  }
+  const unique = Array.from(byId.values());
+  unique.sort((a, b) => {
     const ta = a.date ? new Date(a.date).getTime() : 0;
     const tb = b.date ? new Date(b.date).getTime() : 0;
     return tb - ta;
   });
-  return collected.slice(0, maxCount);
+  return unique.slice(0, maxCount);
 }
 
 async function getConfig() {
@@ -354,9 +398,9 @@ async function runSyncCycle(actionResultsToReport = []) {
 
       const activeProviderIds = new Set();
       const targetFolders = [
-        { folder: folders.find((f) => f.type === 'inbox'), limit: 40 },
+        { folder: folders.find((f) => f.type === 'inbox'), limit: 60 },
         { folder: folders.find((f) => f.type === 'drafts'), limit: 10 },
-        { folder: folders.find((f) => f.type === 'sent'), limit: 12 },
+        { folder: folders.find((f) => f.type === 'sent'), limit: 15 },
       ].filter((x) => Boolean(x.folder));
 
       for (const { folder, limit } of targetFolders) {
@@ -371,7 +415,7 @@ async function runSyncCycle(actionResultsToReport = []) {
               const full = await api.messages.getFull(m.id);
               cachedBody = extractBodyFromFullPart(full);
               bodyCache.set(provId, cachedBody);
-              if (bodyCache.size > 400) {
+              if (bodyCache.size > 800) {
                 const firstKey = bodyCache.keys().next().value;
                 if (firstKey) bodyCache.delete(firstKey);
               }

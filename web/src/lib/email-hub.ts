@@ -55,7 +55,9 @@ export function toPublicAccount(
 
 export function defaultAccountLabel(provider: string, email: string): string {
   const lower = email.toLowerCase();
-  if (lower.includes('uwo.ca') || lower.includes('.edu')) return 'School';
+  if (lower.includes('uwo.ca')) return 'School (UWO)';
+  if (lower.includes('queensu.ca')) return "Queen's";
+  if (lower.includes('.edu')) return 'School';
   if (lower.includes('hotmail') || lower.includes('outlook') || lower.includes('live.com')) {
     return 'Hotmail / Outlook';
   }
@@ -246,7 +248,7 @@ export async function getUnifiedInbox(params?: {
   pendingApprovalCount: number;
   needsMigration: boolean;
 }> {
-  const limit = Math.min(100, Math.max(1, params?.limit || 30));
+  const limit = Math.min(200, Math.max(1, params?.limit || 30));
 
   if (params?.liveCloudSync) {
     await syncAllCloudAccounts(params.account).catch(() => {});

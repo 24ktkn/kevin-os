@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Kevin-OS Email Bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Bridges Thunderbird accounts (e.g. Western/Schulich @uwo.ca) to Kevin-OS Email Hub & Gemini MCP for reading, drafting, sorting, trashing, and sending.",
   "author": "Kevin Nguyen",
   "browser_specific_settings": {

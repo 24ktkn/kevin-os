@@ -101,12 +101,12 @@ export async function POST(req: NextRequest) {
     let messagesUpserted = 0;
     let messagesPruned = 0;
 
-    // 1. Upsert Thunderbird accounts without clobbering Kevin's safety toggles/labels
+    // 1. Upsert Thunderbird accounts without clobbering Kevin's safety toggles/labels or cloud-connected accounts
+    const cloudConnectedEmails = new Set<string>();
     if (Array.isArray(body.accounts) && body.accounts.length > 0) {
       const { data: existingRows, error: exErr } = await sb
         .from('email_accounts')
-        .select('id, email_address, account_label, permission_mode, auto_send_allowed, auto_delete_allowed')
-        .eq('provider', 'thunderbird');
+        .select('id, provider, email_address, account_label, permission_mode, auto_send_allowed, auto_delete_allowed');
 
       if (exErr && isMissingEmailTableError(exErr)) {
         return NextResponse.json(
@@ -115,17 +115,25 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const existingMap = new Map(
-        (existingRows || []).map((r) => [String(r.email_address).toLowerCase(), r])
-      );
+      const existingTbMap = new Map<string, (typeof existingRows extends Array<infer T> | null ? T : never)>();
+      for (const r of existingRows || []) {
+        const lowerEmail = String(r.email_address).toLowerCase();
+        if (r.provider === 'thunderbird') {
+          existingTbMap.set(lowerEmail, r);
+        } else {
+          cloudConnectedEmails.add(lowerEmail);
+        }
+      }
 
       for (const acc of body.accounts) {
         const email = String(acc.emailAddress || '').trim().toLowerCase();
         if (!email || !email.includes('@')) continue;
+        // Skip accounts already managed directly via 24/7 Cloud OAuth (Gmail / Microsoft Graph)
+        if (cloudConnectedEmails.has(email)) continue;
 
         const id = makeEmailAccountId('thunderbird', email);
         accountEmailToId.set(email, id);
-        const prev = existingMap.get(email);
+        const prev = existingTbMap.get(email);
 
         await sb.from('email_accounts').upsert(
           {
@@ -178,6 +186,7 @@ export async function POST(req: NextRequest) {
       const rows = body.messages
         .map((m) => {
           const email = String(m.accountEmail || '').trim().toLowerCase();
+          if (!email || cloudConnectedEmails.has(email)) return null;
           const accountId = accountEmailToId.get(email) || makeEmailAccountId('thunderbird', email);
           const provId = String(m.providerMessageId || '').trim();
           if (!email || !provId) return null;

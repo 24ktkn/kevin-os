@@ -172,7 +172,7 @@ export default function EmailHubPage() {
         if (unreadOnly) sp.set('unreadOnly', 'true');
         if (searchQuery.trim()) sp.set('q', searchQuery.trim());
         if (live) sp.set('live', 'true');
-        sp.set('limit', '50');
+        sp.set('limit', '100');
 
         const res = await fetch(`/api/email/messages?${sp.toString()}`).then((r) => r.json());
         if (res?.success) {
