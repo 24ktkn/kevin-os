@@ -72,21 +72,34 @@ async function sendNtfyNotification(params: {
   const topic = params.topic.trim();
   if (!topic) return { sent: false, error: 'No ntfy.sh topic configured yet.' };
   const server = (params.server || 'https://ntfy.sh').replace(/\/$/, '');
+  const tags = (params.tags || 'sunrise,brain')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
 
   try {
-    const res = await fetch(`${server}/${encodeURIComponent(topic)}`, {
+    // Publish as JSON to the ntfy server root so UTF-8/emojis in Title/Message never fail Node's ASCII ByteString header check
+    const res = await fetch(`${server}/`, {
       method: 'POST',
       headers: {
-        Title: params.title,
-        Priority: params.priority || 'default',
-        Tags: params.tags || 'sunrise,brain',
-        Click: 'https://kevin-os-xr4m.vercel.app',
-        Actions: 'view, Open Kevin-OS, https://kevin-os-xr4m.vercel.app; view, Open Anki, https://kevin-os-xr4m.vercel.app/anki',
+        'Content-Type': 'application/json; charset=utf-8',
       },
-      body: params.body,
+      body: JSON.stringify({
+        topic,
+        title: params.title,
+        message: params.body,
+        priority: params.priority === 'high' ? 4 : 3,
+        tags,
+        click: 'https://kevin-os-xr4m.vercel.app',
+        actions: [
+          { action: 'view', label: 'Open Kevin-OS', url: 'https://kevin-os-xr4m.vercel.app' },
+          { action: 'view', label: 'Open Anki', url: 'https://kevin-os-xr4m.vercel.app/anki' },
+        ],
+      }),
     });
     if (!res.ok) {
-      return { sent: false, error: `ntfy HTTP ${res.status}` };
+      const errText = await res.text().catch(() => '');
+      return { sent: false, error: `ntfy HTTP ${res.status}${errText ? `: ${errText.slice(0, 120)}` : ''}` };
     }
     return { sent: true };
   } catch (err) {
