@@ -12,6 +12,7 @@ import {
 } from '@/lib/mcp-auth';
 import {
   addAnkiNotes,
+  addPortfolioEntry,
   completeTask,
   deleteTask,
   getAnkiLeeches,
@@ -21,8 +22,11 @@ import {
   getJournalData,
   getKevinOsOverview,
   getMealsAndGroceries,
+  getMorningBriefData,
+  getPortfolioEntries,
   getScheduleAndTasks,
   getSchoolModules,
+  getWeeklyExecutiveReviewData,
   getWorkoutsData,
   logHabit,
   matchSuspendedAnkiCards,
@@ -779,7 +783,105 @@ function createKevinOsMcpServer(): McpServer {
     }
   );
 
-  // 15. Future-Proof Extensible Read-Only Data Table Query
+  // 15. Morning Brief, Sunday Weekly Executive Review & CaRMS Portfolio
+  server.registerTool(
+    'get_morning_brief',
+    {
+      title: 'Get Today’s Morning Brief & Readiness Score',
+      description:
+        'Returns Kevin’s 7:30 AM Morning Brief: Daily Readiness Score (0-100), sleep/HRV, Anki due count & minutes, Exam Taper Mode status, today’s Schulich classes/tasks, and AI game plan.',
+      inputSchema: {
+        refresh: z.boolean().optional().describe('Force regenerate fresh brief instead of using today’s cache.'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await getMorningBriefData(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_weekly_executive_review',
+    {
+      title: 'Get Sunday Weekly Executive Review',
+      description:
+        'Returns Kevin’s 7-day cross-pillar Executive Review: weekly grade, academics/module completion, Anki reviews & retention, Sleep/HRV/Readiness & weight trends, Hevy gym volume/PRs, habit consistency, wins, watchouts, and 3 adjustments for next week.',
+      inputSchema: {
+        weekEnd: z.string().optional().describe('End date YYYY-MM-DD of the 7-day window (defaults to today).'),
+        refresh: z.boolean().optional().describe('Force fresh synthesis instead of cached weekly digest.'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await getWeeklyExecutiveReviewData(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_portfolio_entries',
+    {
+      title: 'Read Med School Portfolio / CaRMS Log',
+      description:
+        'Searches Kevin’s Schulich Med School Portfolio / CaRMS activity log (clinical, research, volunteering, leadership, teaching, shadowing, awards) with hours, verifiers, CanMEDS role coverage, and CV bullets.',
+      inputSchema: {
+        category: z.string().optional().describe('Filter by category (clinical, research, volunteering, leadership, teaching, shadowing, award, extracurricular).'),
+        query: z.string().optional().describe('Keyword search across title, organization, CanMEDS roles, description, and bullets.'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await getPortfolioEntries(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'add_portfolio_entry',
+    {
+      title: 'Add Med School Portfolio / CaRMS Activity',
+      description:
+        'Logs a new clinical, research, shadowing, volunteering, leadership, teaching, or award entry into Kevin’s CaRMS Portfolio with CanMEDS roles, hours, verifier info, and CV bullets.',
+      inputSchema: {
+        category: z
+          .enum(['clinical', 'research', 'volunteering', 'leadership', 'teaching', 'shadowing', 'award', 'extracurricular'])
+          .optional(),
+        title: z.string().describe('Activity or project title.'),
+        organization: z.string().optional(),
+        role: z.string().optional(),
+        start_date: z.string().optional().describe('YYYY-MM-DD'),
+        end_date: z.string().optional().describe('YYYY-MM-DD (omit if ongoing)'),
+        is_ongoing: z.boolean().optional(),
+        hours: z.number().min(0).optional(),
+        verifier_name: z.string().optional(),
+        verifier_contact: z.string().optional(),
+        canmeds_roles: z.array(z.string()).optional(),
+        description: z.string().optional(),
+        carms_bullets: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonToolResult(await addPortfolioEntry(args));
+      } catch (err) {
+        return jsonToolResult({ error: err instanceof Error ? err.message : String(err) }, true);
+      }
+    }
+  );
+
+  // 16. Future-Proof Extensible Read-Only Data Table Query
   server.registerTool(
     'query_kevin_os_data',
     {

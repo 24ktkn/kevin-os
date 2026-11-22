@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID, mirrorHabitToSheets } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { getCalendarDateString, parseSleepDuration } from '@/lib/date-utils';
+import { getOsSettings, isWakeTimeOnTime } from '@/lib/habit-automations';
 
 export const dynamic = 'force-dynamic';
 
@@ -325,24 +326,11 @@ export async function processBiometricRecord(
   };
 
   if (sb) {
-    // Evaluate both habit automations together so we perform at most 1 habits upsert in parallel with biometrics upsert
-    const autoGym = finalDur >= 20 || finalCal >= 150;
-    let autoWake = false;
-
-    if (finalWake && finalWake !== 'No data') {
-      const timeMatch = finalWake.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-      if (timeMatch) {
-        let hour = parseInt(timeMatch[1], 10);
-        const minute = parseInt(timeMatch[2], 10);
-        const explicitAmPm = timeMatch[3]?.toUpperCase();
-        if (explicitAmPm === 'PM' && hour < 12) hour += 12;
-        if (explicitAmPm === 'AM' && hour === 12) hour = 0;
-        const wakeMins = hour * 60 + minute;
-        if (wakeMins <= 8 * 60) {
-          autoWake = true;
-        }
-      }
-    }
+    // Evaluate both habit automations using configurable os_settings (default: Wake <= 6:00 AM ET, Gym >= 20m or >= 150 kcal)
+    const settings = await getOsSettings();
+    const autoGym =
+      finalDur >= settings.gym_min_duration_mins || finalCal >= settings.gym_min_calories;
+    const autoWake = isWakeTimeOnTime(finalWake, settings.wake_cutoff_time);
 
     const needsGymUpdate = autoGym && (!existingHabit || !existingHabit.gym_workout);
     const needsWakeUpdate = autoWake && (!existingHabit || !existingHabit.wake_up_on_time);

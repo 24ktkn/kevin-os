@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleSheetsClient, SPREADSHEET_ID } from '@/lib/google-sheets';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { getCalendarDateString } from '@/lib/date-utils';
+import { autoCheckGymHabitForDates } from '@/lib/habit-automations';
 import { calculateEstimated1RM, resolveMuscleGroup } from '../route';
 
 export const dynamic = 'force-dynamic';
@@ -279,12 +280,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 3. Auto-check 'Gym Workout' habit for every imported workout date in Supabase + Google Sheets
+    const autoCheckedGymDays = await autoCheckGymHabitForDates(Array.from(uniqueDates)).catch(() => 0);
+
     return NextResponse.json({
       success: true,
       importedSetsCount: dbRowsToInsert.length,
       importedWorkoutsCount: uniqueDates.size,
+      autoCheckedGymDays,
       skippedCount,
-      message: `Successfully imported ${dbRowsToInsert.length} sets across ${uniqueDates.size} workout sessions (${skippedCount} duplicates skipped).`,
+      message: `Successfully imported ${dbRowsToInsert.length} sets across ${uniqueDates.size} workout sessions (${skippedCount} duplicates skipped${autoCheckedGymDays > 0 ? `, auto-checked Gym Workout habit for ${autoCheckedGymDays} day(s)` : ''}).`,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

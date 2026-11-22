@@ -7,6 +7,8 @@ import {
   fetchAllAnkiCards,
   isMissingAnkiTableError,
 } from '@/lib/anki-utils';
+import { detectedExamToTarget, getDetectedElentraExams } from '@/lib/elentra-exams';
+import { getOsSettings } from '@/lib/habit-automations';
 import { getProductivityDateStr, getTodayDateStr } from '@/lib/date-utils';
 import { AnkiCard, AnkiDailyStats, AnkiSyncState, ExamTarget } from '@/types/anki';
 
@@ -25,6 +27,8 @@ export async function GET() {
     const todayStr = getProductivityDateStr();
     const calTodayStr = getTodayDateStr();
 
+    const osSettings = await getOsSettings();
+
     const [
       statsRes,
       stateRes,
@@ -33,6 +37,7 @@ export async function GET() {
       habitRes,
       healthRes,
       cardsSummaryRes,
+      taperStatus,
     ] = await Promise.all([
       sb.from('anki_daily_stats').select('*').order('date', { ascending: false }).limit(120),
       sb.from('anki_sync_state').select('*').eq('id', 'default').maybeSingle(),
@@ -48,13 +53,14 @@ export async function GET() {
         .eq('status', 'pending'),
       sb.from('habits').select('date, anki').eq('date', todayStr).maybeSingle(),
       sb
-        .from('health_metrics')
+        .from('biometrics')
         .select('date, sleep_hours, hrv, rhr, steps')
         .order('date', { ascending: false })
         .limit(120),
       fetchAllAnkiCards<
         Pick<AnkiCard, 'deck_name' | 'tags' | 'suspended' | 'queue' | 'due_date' | 'interval_days'>
       >('deck_name, tags, suspended, queue, due_date, interval_days'),
+      getDetectedElentraExams(osSettings.exam_taper_days),
     ]);
 
     if (statsRes.error && isMissingAnkiTableError(statsRes.error)) {
@@ -147,11 +153,28 @@ export async function GET() {
       'deck_name' | 'tags' | 'suspended' | 'queue' | 'due_date' | 'interval_days'
     >[];
 
-    const examTargets: ExamTarget[] = Array.isArray(syncState.exam_targets)
+    const manualTargets: ExamTarget[] = Array.isArray(syncState.exam_targets)
       ? syncState.exam_targets
       : [];
 
-    const examProjections = examTargets
+    // Merge auto-detected upcoming Schulich Elentra major exams (+ next 2 weekly quizzes) with manual exam targets
+    const autoTargets: ExamTarget[] = [
+      ...taperStatus.upcomingMajorExams.slice(0, 6).map(detectedExamToTarget),
+      ...taperStatus.upcomingQuizzes.slice(0, 2).map(detectedExamToTarget),
+    ];
+
+    const mergedTargets: ExamTarget[] = [...manualTargets];
+    for (const at of autoTargets) {
+      const dup = mergedTargets.some(
+        (m) =>
+          m.id === at.id ||
+          (m.examDate === at.examDate &&
+            m.name.toLowerCase().trim() === at.name.toLowerCase().trim())
+      );
+      if (!dup) mergedTargets.push(at);
+    }
+
+    const examProjections = mergedTargets
       .filter((t) => t && t.examDate && t.examDate >= calTodayStr)
       .sort((a, b) => a.examDate.localeCompare(b.examDate))
       .map((target) =>
@@ -179,6 +202,7 @@ export async function GET() {
       studyPlan,
       biometricsInsights,
       examProjections,
+      taperStatus,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to load Anki stats';

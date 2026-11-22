@@ -36,6 +36,7 @@ import AnkiAiStudio from '@/components/anki/AnkiAiStudio';
 import AnkiLeechesAndSettings from '@/components/anki/AnkiLeechesAndSettings';
 import AnkiWorkflowGuide from '@/components/anki/AnkiWorkflowGuide';
 import GoogleTasksReconnectBanner from '@/components/tasks/GoogleTasksReconnectBanner';
+import { ExamTaperStatus } from '@/lib/elentra-exams';
 
 type AnkiTab = 'overview' | 'review' | 'browser' | 'ai' | 'leeches';
 
@@ -82,6 +83,7 @@ export default function AnkiPage() {
     takeaways: [],
   });
   const [examProjections, setExamProjections] = useState<ExamPacingProjection[]>([]);
+  const [taperStatus, setTaperStatus] = useState<ExamTaperStatus | null>(null);
   const [studyDeck, setStudyDeck] = useState<string>('ALL');
 
   // Auto-Schedule Today's Anki Timeblock & Google Task state
@@ -109,6 +111,7 @@ export default function AnkiPage() {
         setStudyPlan(data.studyPlan || null);
         if (data.biometricsInsights) setBiometricsInsights(data.biometricsInsights);
         setExamProjections(data.examProjections || []);
+        setTaperStatus(data.taperStatus || null);
       }
     } catch (err) {
       console.error('Failed to load Anki stats:', err);
@@ -303,6 +306,24 @@ export default function AnkiPage() {
               , then install AnkiConnect (<code className="text-cyan-300">2055492159</code>) and launch{' '}
               <code className="text-cyan-300 bg-zinc-900 px-1.5 py-0.5 rounded">anki-bridge\start-bridge.bat</code>.
             </p>
+          </div>
+        )}
+
+        {/* Auto-Detected Elentra Exam Taper Mode Banner */}
+        {taperStatus?.inTaperMode && taperStatus.nextMajorExam && (
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-[#121218] border border-rose-500/45 text-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <Flame className="h-4.5 w-4.5 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-rose-200 uppercase tracking-wider text-[11px]">
+                  🔥 Exam Taper Mode Active · Auto-Detected from Elentra
+                </div>
+                <p className="text-zinc-200 mt-0.5">{taperStatus.taperMessage}</p>
+              </div>
+            </div>
+            <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-200 border border-rose-500/35 shrink-0">
+              T-{taperStatus.daysUntilNextMajorExam}d ({taperStatus.nextMajorExam.examDate})
+            </span>
           </div>
         )}
 

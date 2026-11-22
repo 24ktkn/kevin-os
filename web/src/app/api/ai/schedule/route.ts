@@ -10,6 +10,8 @@ import {
   computeRecommendedModuleDuration,
 } from '@/lib/date-utils';
 import { hasIntervalConflict, findFirstEmptySlot } from '@/lib/ai-rollover-scheduler';
+import { getDetectedElentraExams } from '@/lib/elentra-exams';
+import { getOsSettings } from '@/lib/habit-automations';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,6 +85,8 @@ export async function POST(req: NextRequest) {
     }
 
     const targetDate = date || getTodayDateStr();
+    const settings = await getOsSettings().catch(() => ({ exam_taper_days: 7 }));
+    const taperStatus = await getDetectedElentraExams(settings.exam_taper_days).catch(() => null);
 
     let formattedSchedule = 'No busy events scheduled between 8:00 AM and 10:00 PM.';
     if (busyBlocks && busyBlocks.length > 0) {
@@ -91,10 +95,15 @@ export async function POST(req: NextRequest) {
         .join('\n');
     }
 
+    const taperPromptBlock =
+      taperStatus?.inTaperMode && taperStatus.nextMajorExam
+        ? `\nEXAM TAPER MODE ACTIVE: ${taperStatus.nextMajorExam.name} is in ${taperStatus.daysUntilNextMajorExam} days (${taperStatus.nextMajorExam.examDate}). Prioritize Anki reviews, exam prep, and high-yield school modules into the best prime morning/early-afternoon open windows first, and place lower-priority errands/volunteering later in the day.\n`
+        : '';
+
     const systemPrompt = `
 You are an expert AI executive assistant and timeblock scheduler.
 The target date for scheduling is ${targetDate}.
-The user's day runs from 8:00 AM to 10:00 PM.
+The user's day runs from 8:00 AM to 10:00 PM.${taperPromptBlock}
 
 CURRENT EXISTING EVENTS FOR ${targetDate} (DO NOT OVERLAP WITH THESE):
 ${formattedSchedule}

@@ -1,0 +1,46 @@
+{
+  "name": "Kevin-OS | Personal Command Center",
+  "short_name": "Kevin-OS",
+  "description": "Personal command center, Schulich med school academic scheduler, Anki spaced repetition, CaRMS portfolio, and health biometrics dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0A0D",
+  "theme_color": "#0A0A0D",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Anki Command Center",
+      "short_name": "Anki",
+      "url": "/anki"
+    },
+    {
+      "name": "School Sync",
+      "short_name": "School",
+      "url": "/school"
+    },
+    {
+      "name": "Mission Control",
+      "short_name": "Tasks",
+      "url": "/tasks"
+    },
+    {
+      "name": "Weekly Review",
+      "short_name": "Review",
+      "url": "/review"
+    }
+  ]
+}

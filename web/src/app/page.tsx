@@ -41,7 +41,9 @@ import {
   titlesMatch,
 } from '@/lib/date-utils';
 import { groupTodayAgendaItems, UnifiedAgendaItem } from '@/lib/agenda-utils';
+import { ReadinessResult } from '@/lib/readiness';
 import RescheduleModal from '@/components/tasks/RescheduleModal';
+import MorningBriefAndReadiness from '@/components/home/MorningBriefAndReadiness';
 
 interface HealthData {
   date: string;
@@ -58,6 +60,7 @@ interface HealthData {
   bodyweight: number;
   workout_calories: number;
   workout_duration: number;
+  readiness?: ReadinessResult;
 }
 
 interface HabitDay {
@@ -585,6 +588,9 @@ export default function HomePage() {
           </Link>
         </div>
       </div>
+
+      {/* 🌅 Daily Readiness Score (0-100) + 7:30 AM Morning Brief & Exam Taper Alert */}
+      <MorningBriefAndReadiness readiness={health?.readiness} />
 
       {/* 🧬 Biometrics Command Center */}
       <section className="space-y-4">

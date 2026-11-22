@@ -48,6 +48,10 @@ import { GET as ankiCardsGet, POST as ankiCardsPost } from '@/app/api/anki/cards
 import { POST as ankiMatchPost } from '@/app/api/anki/match/route';
 import { POST as ankiScheduleTodayPost } from '@/app/api/anki/schedule-today/route';
 import { GET as ankiLeechesGet } from '@/app/api/anki/leeches/route';
+import { GET as morningBriefGet } from '@/app/api/brief/morning/route';
+import { GET as weeklyReviewGet } from '@/app/api/review/weekly/route';
+import { GET as portfolioGet, POST as portfolioPost } from '@/app/api/portfolio/route';
+import { getDetectedElentraExams } from '@/lib/elentra-exams';
 import {
   fetchAllAnkiCards,
   findPotentialDuplicateCard,
@@ -73,6 +77,9 @@ const KNOWN_SAFE_TABLES = [
   'anki_action_queue',
   'anki_staged_proposals',
   'anki_sync_state',
+  'portfolio_entries',
+  'os_digests',
+  'os_settings',
 ] as const;
 
 const BLOCKED_TABLE_PATTERNS = /auth|token|secret|password|credential|session|oauth|pg_|sql_|storage|vault/i;
@@ -213,12 +220,13 @@ export async function getKevinOsOverview(params: { syncFirst?: boolean } = {}) {
     }
   }
 
-  const [agenda, healthRes, habitsRes, mealsRes, ankiRes] = await Promise.all([
+  const [agenda, healthRes, habitsRes, mealsRes, ankiRes, taperStatus] = await Promise.all([
     getScheduleAndTasks({ startDate: todayStr, endDate: todayStr, includeCompleted: true, syncFirst: false }),
     healthGet(makeInternalReq('/api/health')).then((r) => r.json()).catch(() => null),
     habitsGet().then((r) => r.json()).catch(() => null),
     mealsGet(makeInternalReq('/api/meals')).then((r) => r.json()).catch(() => null),
     ankiStatsGet().then((r) => r.json()).catch(() => null),
+    getDetectedElentraExams(7).catch(() => null),
   ]);
 
   const habits = Array.isArray(habitsRes?.habits)
@@ -242,6 +250,8 @@ export async function getKevinOsOverview(params: { syncFirst?: boolean } = {}) {
     syncSummary,
     todayAgenda: agenda,
     latestHealth: healthRes?.data || null,
+    dailyReadiness: healthRes?.readiness || healthRes?.data?.readiness || null,
+    examTaperStatus: taperStatus,
     habitsToday: habits,
     ankiToday: ankiRes?.success && !ankiRes?.needsMigration && ankiToday
       ? {
@@ -1811,5 +1821,64 @@ export async function getAnkiLeeches(params: { minLapses?: number } = {}) {
   const res = await ankiLeechesGet(
     makeInternalReq(`/api/anki/leeches?minLapses=${minLapses}`)
   );
+  return res.json();
+}
+
+/**
+ * 24. Morning Brief (Readiness, Elentra Classes, Anki Due, Taper Mode, AI Coach Note)
+ */
+export async function getMorningBriefData(params: { refresh?: boolean } = {}) {
+  const qs = params.refresh ? '?refresh=true' : '';
+  const res = await morningBriefGet(makeInternalReq(`/api/brief/morning${qs}`));
+  return res.json();
+}
+
+/**
+ * 25. Sunday Weekly Executive Review across all Kevin-OS pillars
+ */
+export async function getWeeklyExecutiveReviewData(params: {
+  weekEnd?: string;
+  refresh?: boolean;
+} = {}) {
+  const sp = new URLSearchParams();
+  if (params.weekEnd) sp.set('weekEnd', params.weekEnd);
+  if (params.refresh) sp.set('refresh', 'true');
+  const qs = sp.toString() ? `?${sp.toString()}` : '';
+  const res = await weeklyReviewGet(makeInternalReq(`/api/review/weekly${qs}`));
+  return res.json();
+}
+
+/**
+ * 26. Read Med School Portfolio / CaRMS Activity Log
+ */
+export async function getPortfolioEntries(params: { category?: string; query?: string } = {}) {
+  const sp = new URLSearchParams();
+  if (params.category) sp.set('category', params.category);
+  if (params.query) sp.set('q', params.query);
+  const qs = sp.toString() ? `?${sp.toString()}` : '';
+  const res = await portfolioGet(makeInternalReq(`/api/portfolio${qs}`));
+  return res.json();
+}
+
+/**
+ * 27. Add a new Med School Portfolio / CaRMS entry
+ */
+export async function addPortfolioEntry(params: {
+  category?: string;
+  title: string;
+  organization?: string;
+  role?: string;
+  start_date?: string;
+  end_date?: string;
+  is_ongoing?: boolean;
+  hours?: number;
+  verifier_name?: string;
+  verifier_contact?: string;
+  canmeds_roles?: string[];
+  description?: string;
+  carms_bullets?: string[];
+  tags?: string[];
+}) {
+  const res = await portfolioPost(makeInternalReq('/api/portfolio', 'POST', params));
   return res.json();
 }

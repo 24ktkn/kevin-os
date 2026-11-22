@@ -7,6 +7,7 @@ import {
   getCalendarDateString,
 } from '@/lib/date-utils';
 import { fetchGoogleHealthDailyRecords } from '@/lib/google-health';
+import { computeDailyReadiness } from '@/lib/readiness';
 import { processBiometricRecord } from './sync/route';
 
 export const dynamic = 'force-dynamic';
@@ -148,6 +149,16 @@ export async function GET(req: NextRequest) {
           const workoutCal = parseFloat(String(target.workout_calories || '0')) || 0;
           const workoutDur = parseFloat(String(target.workout_duration || '0')) || 0;
 
+          // Compute Daily Readiness Score (0-100) using rolling 14-day personal biometrics baseline
+          const { data: recent15 } = await sb
+            .from('biometrics')
+            .select('date, sleep_hours, hrv, rhr, steps, workout_duration, workout_calories')
+            .lte('date', rawDateStr)
+            .order('date', { ascending: false })
+            .limit(15);
+
+          const readiness = computeDailyReadiness(recent15 || [target]);
+
           return NextResponse.json({
             success: true,
             data: {
@@ -165,7 +176,9 @@ export async function GET(req: NextRequest) {
               bodyweight,
               workout_calories: Math.round(workoutCal),
               workout_duration: Math.round(workoutDur),
+              readiness,
             },
+            readiness,
           });
         } else if (!error && requestedDate) {
           return NextResponse.json({ success: true, data: null });

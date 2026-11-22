@@ -1,0 +1,36 @@
+name: Kevin-OS 7:30 AM Morning Brief (ntfy.sh Push)
+
+on:
+  schedule:
+    # Runs at 11:30 UTC (7:30 AM EDT) and 12:30 UTC (7:30 AM EST); Eastern hour guard ensures exact 7:30 AM ET once daily
+    - cron: '30 11 * * *'
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-morning-brief:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check America/New_York 7 AM hour (skip non-matching DST slot)
+        id: tz_check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ET_HOUR=$(TZ="America/New_York" date +%H)
+          echo "Current Eastern hour: $ET_HOUR"
+          if [ "$ET_HOUR" = "07" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger Kevin-OS Morning Brief + ntfy.sh iPhone Push
+        if: steps.tz_check.outputs.should_run == 'true'
+        run: |
+          curl -fsS -X POST "https://kevin-os-xr4m.vercel.app/api/brief/morning?push=true" \
+            -H "Content-Type: application/json" \
+            -H "x-vercel-cron: 1" \
+            -d '{"push":true}'
+          echo ""

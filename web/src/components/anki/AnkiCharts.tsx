@@ -332,36 +332,46 @@ export default function AnkiCharts({
           </form>
         )}
 
-        {/* Saved Exam Selector Pills */}
+        {/* Saved & Auto-Detected Elentra Exam Selector Pills */}
         {examProjections.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {examProjections.map((proj, idx) => (
-              <div
-                key={proj.target.id}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition ${
-                  idx === selectedExamIdx
-                    ? 'bg-indigo-500/20 border-indigo-400/60 text-white'
-                    : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white'
-                }`}
-              >
-                <button
-                  onClick={() => setSelectedExamIdx(idx)}
-                  className="font-semibold flex items-center gap-1.5 cursor-pointer"
+            {examProjections.map((proj, idx) => {
+              const isAutoElentra = proj.target.id.startsWith('elentra-');
+              return (
+                <div
+                  key={proj.target.id}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition ${
+                    idx === selectedExamIdx
+                      ? 'bg-indigo-500/20 border-indigo-400/60 text-white'
+                      : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
                 >
-                  <span>{proj.target.name}</span>
-                  <span className="font-mono text-[11px] text-cyan-300">
-                    {proj.daysUntilExam}d left
-                  </span>
-                </button>
-                <button
-                  onClick={() => handleRemoveExam(proj.target.id)}
-                  className="text-zinc-500 hover:text-rose-400 cursor-pointer"
-                  title="Delete exam target"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                  <button
+                    onClick={() => setSelectedExamIdx(idx)}
+                    className="font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>{proj.target.name}</span>
+                    {isAutoElentra && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                        Elentra
+                      </span>
+                    )}
+                    <span className="font-mono text-[11px] text-cyan-300">
+                      {proj.daysUntilExam}d left
+                    </span>
+                  </button>
+                  {!isAutoElentra && (
+                    <button
+                      onClick={() => handleRemoveExam(proj.target.id)}
+                      className="text-zinc-500 hover:text-rose-400 cursor-pointer"
+                      title="Delete exam target"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
